@@ -407,7 +407,7 @@ function OnboardingCard({
             return (
               <OnboardingRow key={stage.id} stage={stage} idx={idx}
                 isDone={isDone} isSent={isSent} hireName={hire.name}
-                onToggleDone={() => onToggleDone(hire.id, stage.id)}
+               onToggleDone={() => onToggleDone(hire.id, String(stage.id))}
                 onSendMail={() => onSendMail(`mail_${key}`)} />
             )
           })}
