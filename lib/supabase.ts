@@ -13,5 +13,6 @@ export type Employee = {
   exit_date?: string
   division?: string
   team?: string
-  status?: string
-}
+leader?: string
+status?: string
+
