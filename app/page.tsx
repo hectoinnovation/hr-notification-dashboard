@@ -864,7 +864,7 @@ export default function HRDashboard() {
                     mailSent={!!mailSent[`hire_notif_${h.id}`]}
                     onSend={() => sendMail(`hire_notif_${h.id}`)}
                     onEdit={() => openEdit(h)}
-                    onDelete={() => handleDelete(h.id, h.name)}
+                    onDelete={() => handleDelete(String(h.id), h.name)}
                   />
                 ))}
               </div>
