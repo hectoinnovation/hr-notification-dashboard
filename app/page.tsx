@@ -407,7 +407,7 @@ function OnboardingCard({
             return (
               <OnboardingRow key={stage.id} stage={stage} idx={idx}
                 isDone={isDone} isSent={isSent} hireName={hire.name}
-               onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
+                onToggleDone={() => onToggleDone(hire.id, stage.id)}
                 onSendMail={() => onSendMail(`mail_${key}`)} />
             )
           })}
@@ -724,10 +724,10 @@ export default function HRDashboard() {
     } else if (/^(hire|leave)_(cafe|wellness)_/.test(key)) {
       const m = key.match(/^(hire|leave)_(cafe|wellness)_(.+)$/)!
       const [, empType, pointType, empId] = m
-      const emp = employees.find(e => String(e.id) === empId)
+      const emp     = employees.find(e => e.id === empId)
       const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.leave_date ?? null
       const { error } = await supabase.from('point_requests').upsert({
-       employee_id: Number(empId), 
+        employee_id:      empId,
         employee_type:    empType,
         point_type:       pointType,
         base_month:       formatMonth(dateStr),
@@ -864,7 +864,7 @@ export default function HRDashboard() {
                     mailSent={!!mailSent[`hire_notif_${h.id}`]}
                     onSend={() => sendMail(`hire_notif_${h.id}`)}
                     onEdit={() => openEdit(h)}
-                    onDelete={() => handleDelete(String(h.id), h.name)}
+                    onDelete={() => handleDelete(h.id, h.name)}
                   />
                 ))}
               </div>
@@ -906,7 +906,7 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="입사일" date={e.join_date ?? '-'}
-                      baseMonth={formatMonth(e.join_date ?? null)}
+                      baseMonth={formatMonth(e.join_date)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.cafe}
                       defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date)} 일할 계산`}
@@ -1040,3 +1040,4 @@ function EmptyState({ label }: { label: string }) {
     </div>
   )
 }
+
