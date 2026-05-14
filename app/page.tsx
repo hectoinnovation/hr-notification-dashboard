@@ -724,10 +724,10 @@ export default function HRDashboard() {
     } else if (/^(hire|leave)_(cafe|wellness)_/.test(key)) {
       const m = key.match(/^(hire|leave)_(cafe|wellness)_(.+)$/)!
       const [, empType, pointType, empId] = m
-      const emp     = employees.find(e => e.id === empId)
+      const emp = employees.find(e => e.id === Number(empId))
       const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.leave_date ?? null
       const { error } = await supabase.from('point_requests').upsert({
-        employee_id:      empId,
+       employee_id: Number(empId), 
         employee_type:    empType,
         point_type:       pointType,
         base_month:       formatMonth(dateStr),
