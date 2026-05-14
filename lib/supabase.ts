@@ -15,4 +15,5 @@ export type Employee = {
   team?: string
 leader?: string
 status?: string
+}
 
