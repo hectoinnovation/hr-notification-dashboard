@@ -906,7 +906,7 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="입사일" date={e.join_date ?? '-'}
-                      baseMonth={formatMonth(e.join_date)}
+                      baseMonth={formatMonth(e.join_date ?? null)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.cafe}
                       defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date)} 일할 계산`}
