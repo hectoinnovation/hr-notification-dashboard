@@ -405,10 +405,16 @@ function OnboardingCard({
             const isDone = !!stageDone[key]
             const isSent = !!mailSent[`mail_${key}`]
             return (
-              <OnboardingRow key={stage.id} stage={stage} idx={idx}
-                isDone={isDone} isSent={isSent} hireName={hire.name}
-onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
-          })}
+<OnboardingRow
+  key={stage.id}
+  stage={stage}
+  idx={idx}
+  isDone={isDone}
+  isSent={isSent}
+  hireName={hire.name}
+  onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
+onSendMail={() => onSendMail(`mail_${key}`)}
+/>
         </div>
       )}
     </div>
