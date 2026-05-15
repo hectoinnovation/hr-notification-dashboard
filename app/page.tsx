@@ -405,22 +405,23 @@ function OnboardingCard({
             const isDone = !!stageDone[key]
             const isSent = !!mailSent[`mail_${key}`]
             return (
-<OnboardingRow
-  key={stage.id}
-  stage={stage}
-  idx={idx}
-  isDone={isDone}
-  isSent={isSent}
-  hireName={hire.name}
-  onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
-onSendMail={() => onSendMail(`mail_${key}`)}
-/>
+              <OnboardingRow
+                key={stage.id}
+                stage={stage}
+                idx={idx}
+                isDone={isDone}
+                isSent={isSent}
+                hireName={hire.name}
+                onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
+                onSendMail={() => onSendMail(`mail_${key}`)}
+              />
+            )
+          })}
         </div>
       )}
     </div>
   )
 }
-
 // ─── 포인트 카드 ──────────────────────────────────────────────────────────────
 
 function PointCard({
@@ -728,7 +729,7 @@ export default function HRDashboard() {
     } else if (/^(hire|leave)_(cafe|wellness)_/.test(key)) {
       const m = key.match(/^(hire|leave)_(cafe|wellness)_(.+)$/)!
       const [, empType, pointType, empId] = m
-      const emp     = employees.find(e => e.id === empId)
+      const emp = employees.find(e => String(e.id) === String(empId))
       const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.leave_date ?? null
       const { error } = await supabase.from('point_requests').upsert({
         employee_id:      empId,
@@ -868,7 +869,7 @@ export default function HRDashboard() {
                     mailSent={!!mailSent[`hire_notif_${h.id}`]}
                     onSend={() => sendMail(`hire_notif_${h.id}`)}
                     onEdit={() => openEdit(h)}
-                    onDelete={() => handleDelete(h.id, h.name)}
+                    onDelete={() => handleDelete(String(h.id), h.name)}
                   />
                 ))}
               </div>
@@ -910,11 +911,11 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="입사일" date={e.join_date ?? '-'}
-                      baseMonth={formatMonth(e.join_date)}
+                      baseMonth={formatMonth(e.join_date ?? null)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.cafe}
-                      defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date)} 일할 계산`}
-                      autoAmount={lookupExcelAmount(cafeExcel, e.join_date, 'hire')}
+                      defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date ?? null)} 일할 계산`}
+                      autoAmount={lookupExcelAmount(cafeExcel, e.join_date ?? null, 'hire')}
                     />
                   )
                 })}
@@ -936,11 +937,11 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="입사일" date={e.join_date ?? '-'}
-                      baseMonth={formatMonth(e.join_date)}
+                      baseMonth={formatMonth(e.join_date ?? null)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.wellness}
-                      defaultSubject={`[웰니스포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date)} 일할 계산`}
-                      autoAmount={lookupExcelAmount(wellnessExcel, e.join_date, 'hire')}
+                      defaultSubject={`[웰니스포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date ?? null)} 일할 계산`}
+                      autoAmount={lookupExcelAmount(wellnessExcel, e.join_date ?? null, 'hire')}
                     />
                   )
                 })}
@@ -971,7 +972,7 @@ export default function HRDashboard() {
                     mailSent={!!mailSent[`leave_notif_${d.id}`]}
                     onSend={() => sendMail(`leave_notif_${d.id}`)}
                     onEdit={() => openEdit(d)}
-                    onDelete={() => handleDelete(d.id, d.name)}
+                    onDelete={() => handleDelete(String(d.id), d.name)}
                   />
                 ))}
               </div>
@@ -992,11 +993,11 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="퇴사일" date={e.leave_date ?? '-'}
-                      baseMonth={formatMonth(e.leave_date)}
+                      baseMonth={formatMonth(e.leave_date ?? null)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.cafe}
-                      defaultSubject={`[카페포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date)} 일할 계산`}
-                      autoAmount={lookupExcelAmount(cafeExcel, e.leave_date, 'leave')}
+                      defaultSubject={`[카페포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
+                      autoAmount={lookupExcelAmount(cafeExcel, e.leave_date ?? null, 'leave')}
                     />
                   )
                 })}
@@ -1018,11 +1019,11 @@ export default function HRDashboard() {
                   return (
                     <PointCard key={e.id}
                       name={e.name} dateLabel="퇴사일" date={e.leave_date ?? '-'}
-                      baseMonth={formatMonth(e.leave_date)}
+                      baseMonth={formatMonth(e.leave_date ?? null)}
                       mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                       fixedRecipients={FR.wellness}
-                      defaultSubject={`[웰니스포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date)} 일할 계산`}
-                      autoAmount={lookupExcelAmount(wellnessExcel, e.leave_date, 'leave')}
+                      defaultSubject={`[웰니스포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
+                      autoAmount={lookupExcelAmount(wellnessExcel, e.leave_date ?? null, 'leave')}
                     />
                   )
                 })}
@@ -1034,7 +1035,7 @@ export default function HRDashboard() {
         )}
       </div>
     </main>
-  )
+      )
 }
 
 function EmptyState({ label }: { label: string }) {
@@ -1042,5 +1043,5 @@ function EmptyState({ label }: { label: string }) {
     <div className="bg-white rounded-xl border border-dashed border-gray-200 py-10 flex items-center justify-center">
       <p className="text-sm text-gray-400">{label}</p>
     </div>
-  )
+)
 }
