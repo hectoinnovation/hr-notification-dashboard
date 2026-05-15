@@ -194,6 +194,40 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${사유}</td></tr></table>`
 }
 
+// ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
+function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave' }>) {
+  const rows = entries.map(({ emp, type }) => {
+    const isTransfer = type === 'hire' && emp.join_reason === '전적'
+    const label = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
+    const date  = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    return `<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+  }).join('')
+  return `<h3 style="color:#ea580c">[인사 알림] 입퇴사 안내 (${entries.length}명)</h3>
+<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">날짜</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>${rows}</table></div>`
+}
+
+function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
+  const rows = entries.map(({ emp, empType, points, isTransfer }) => {
+    const label  = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+    const date   = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    const total  = isTransfer ? '해당 없음' : (points ? points.totalPoints.toLocaleString() + 'P' : '-')
+    const settle = isTransfer ? '해당 없음' : (points ? points.settlementPoints.toLocaleString() + 'P' : '-')
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr>`
+  }).join('')
+  return `<h3 style="color:#ea580c">[헥토이노베이션] 카페포인트 요청의 건 (${entries.length}명)</h3>
+<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>${rows}</table></div>`
+}
+
+function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; isTransfer: boolean }>) {
+  const rows = entries.map(({ emp, empType, isTransfer }) => {
+    const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+    const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+  }).join('')
+  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
+<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>${rows}</table></div>`
+}
+
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
 function TypeBadge({ type }: { type: string }) {
   const s = type === '입사' ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -368,40 +402,44 @@ function PreviewToggle({ htmlBody }: { htmlBody: string }) {
 }
 
 // ─── 일괄 발송 컨트롤 ────────────────────────────────────────────────────────
-function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult }: {
+function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult, previewHtml }: {
   total: number; selectedCount: number
   onSelectAll: () => void; onDeselectAll: () => void
   onBulkSend: () => void; bulkSending: boolean
   bulkResult: { sent: number; failed: number } | null
+  previewHtml?: string
 }) {
   const cbRef = useRef<HTMLInputElement>(null)
   const allSelected = total > 0 && selectedCount === total
   const someSelected = selectedCount > 0 && selectedCount < total
   useEffect(() => { if (cbRef.current) cbRef.current.indeterminate = someSelected }, [someSelected])
   return (
-    <div className="flex items-center gap-2.5 flex-wrap">
-      <label className="flex items-center gap-2 cursor-pointer select-none">
-        <input ref={cbRef} type="checkbox" checked={allSelected}
-          onChange={e => e.target.checked ? onSelectAll() : onDeselectAll()}
-          className="w-4 h-4 accent-orange-500 cursor-pointer" />
-        <span className="text-xs text-gray-600 font-medium">
-          {selectedCount > 0 ? `${selectedCount}명 선택됨` : '전체 선택'}
-        </span>
-      </label>
-      {selectedCount > 0 && (
-        <button onClick={onBulkSend} disabled={bulkSending}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/>
-          </svg>
-          {bulkSending ? '발송 중…' : `${selectedCount}명 일괄 발송`}
-        </button>
-      )}
-      {bulkResult && (
-        <span className={`text-xs font-semibold px-2 py-1 rounded-lg border ${bulkResult.failed > 0 ? 'text-red-600 bg-red-50 border-red-200' : 'text-emerald-600 bg-emerald-50 border-emerald-200'}`}>
-          {bulkResult.failed > 0 ? `✓ ${bulkResult.sent}건 성공 / ✗ ${bulkResult.failed}건 실패` : `✓ ${bulkResult.sent}건 발송 완료`}
-        </span>
-      )}
+    <div className="space-y-2 bg-orange-50/50 border border-orange-100 rounded-xl px-4 py-3">
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input ref={cbRef} type="checkbox" checked={allSelected}
+            onChange={e => e.target.checked ? onSelectAll() : onDeselectAll()}
+            className="w-4 h-4 accent-orange-500 cursor-pointer" />
+          <span className="text-xs text-gray-600 font-medium">
+            {selectedCount > 0 ? `${selectedCount}명 선택됨` : '전체 선택'}
+          </span>
+        </label>
+        {selectedCount > 0 && (
+          <button onClick={onBulkSend} disabled={bulkSending}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/>
+            </svg>
+            {bulkSending ? '발송 중…' : `${selectedCount}명 통합 메일 발송`}
+          </button>
+        )}
+        {bulkResult && (
+          <span className={`text-xs font-semibold px-2 py-1 rounded-lg border ${bulkResult.failed > 0 ? 'text-red-600 bg-red-50 border-red-200' : 'text-emerald-600 bg-emerald-50 border-emerald-200'}`}>
+            {bulkResult.failed > 0 ? '✗ 발송 실패' : `✓ ${bulkResult.sent}명 통합 발송 완료`}
+          </span>
+        )}
+      </div>
+      {selectedCount > 0 && previewHtml && <PreviewToggle htmlBody={previewHtml} />}
     </div>
   )
 }
@@ -846,15 +884,18 @@ export default function HRDashboard() {
   function selectAll(keys: string[]) { setSelectedKeys(new Set(keys)) }
   function deselectAll() { setSelectedKeys(new Set()) }
 
-  async function handleBulkSend(entries: Array<{ key: string; to: string[]; subject: string; html: string }>) {
+  async function handleBulkSend(to: string[], subject: string, html: string, keys: string[]) {
     setBulkSending(true); setBulkResult(null)
-    let sent = 0, failed = 0
-    for (const { key, to, subject, html } of entries) {
-      if (mailSent[key]) continue
-      const err = await sendMailApi(to, subject, html)
-      if (err) { failed++ } else { sent++; await sendMail(key) }
+    const err = await sendMailApi(to, subject, html)
+    if (err) {
+      setError('일괄 발송 실패: ' + err)
+      setBulkResult({ sent: 0, failed: keys.length })
+    } else {
+      for (const key of keys) await sendMail(key)
+      setBulkResult({ sent: keys.length, failed: 0 })
+      setSelectedKeys(new Set())
     }
-    setBulkSending(false); setBulkResult({ sent, failed }); setSelectedKeys(new Set())
+    setBulkSending(false)
   }
 
   async function fetchAllData() {
@@ -1119,30 +1160,29 @@ export default function HRDashboard() {
                     </button>
                   </div>
                 </div>
-                {filteredNotify.length > 0 && (
-                  <BulkControls
-                    total={filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                    selectedCount={filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                    onSelectAll={() => selectAll(filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
-                    onDeselectAll={deselectAll}
-                    bulkSending={bulkSending} bulkResult={bulkResult}
-                    onBulkSend={() => handleBulkSend(
-                      filteredNotify
-                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
-                        .map(({ emp, type, mailKey }) => {
-                          const isTransfer = type === 'hire' && emp.join_reason === '전적'
-                          const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-                          return {
-                            key: mailKey,
-                            to: (type === 'hire' ? FR.hire : FR.leave).map(r => r.email),
-                            subject: isTransfer ? `[입사 안내] ${emp.name} 님 ${date} 전적`
-                                    : type === 'hire' ? `[입사 안내] ${emp.name} 님 ${date} 입사`
-                                    : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`,
-                            html: makeNotifHtml(emp, type),
-                          }
-                        })
-                    )} />
-                )}
+                {filteredNotify.length > 0 && (() => {
+                  const sel = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
+                  const to = [...new Set([
+                    ...sel.filter(e => e.type === 'hire').flatMap(() => FR.hire.map(r => r.email)),
+                    ...sel.filter(e => e.type === 'leave').flatMap(() => FR.leave.map(r => r.email)),
+                  ])]
+                  return (
+                    <BulkControls
+                      total={filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                      selectedCount={filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                      onSelectAll={() => selectAll(filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      onDeselectAll={deselectAll}
+                      bulkSending={bulkSending} bulkResult={bulkResult}
+                      previewHtml={bulkHtml}
+                      onBulkSend={() => handleBulkSend(
+                        to,
+                        `[인사 알림] 입퇴사 안내 (${sel.length}명)`,
+                        bulkHtml,
+                        sel.map(e => e.mailKey)
+                      )} />
+                  )
+                })()}
                 {filteredNotify.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredNotify} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
                     renderItem={(entry: NotifyEntry) => (
@@ -1176,29 +1216,30 @@ export default function HRDashboard() {
                   <p className="text-xs text-gray-400">{filteredCafe.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
-                {filteredCafe.length > 0 && (
-                  <BulkControls
-                    total={filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                    selectedCount={filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                    onSelectAll={() => selectAll(filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
-                    onDeselectAll={deselectAll}
-                    bulkSending={bulkSending} bulkResult={bulkResult}
-                    onBulkSend={() => handleBulkSend(
-                      filteredCafe
-                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
-                        .map(({ emp, empType, mailKey }) => {
-                          const isTransfer = emp.join_reason === '전적' && empType === 'hire'
-                          const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.leave_date ?? null
-                          const points = isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, empType)
-                          return {
-                            key: mailKey,
-                            to: FR.cafe.map(r => r.email),
-                            subject: '[헥토이노베이션] 카페포인트 요청의 건',
-                            html: makeCafeHtml(emp, empType, points, isTransfer),
-                          }
-                        })
-                    )} />
-                )}
+                {filteredCafe.length > 0 && (() => {
+                  const sel = filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const selWithPoints = sel.map(({ emp, empType, mailKey }) => {
+                    const isTransfer = emp.join_reason === '전적' && empType === 'hire'
+                    const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.leave_date ?? null
+                    return { emp, empType, mailKey, isTransfer, points: isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, empType) }
+                  })
+                  const bulkHtml = sel.length > 0 ? makeBulkCafeHtml(selWithPoints) : ''
+                  return (
+                    <BulkControls
+                      total={filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                      selectedCount={filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                      onSelectAll={() => selectAll(filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      onDeselectAll={deselectAll}
+                      bulkSending={bulkSending} bulkResult={bulkResult}
+                      previewHtml={bulkHtml}
+                      onBulkSend={() => handleBulkSend(
+                        FR.cafe.map(r => r.email),
+                        `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
+                        bulkHtml,
+                        sel.map(e => e.mailKey)
+                      )} />
+                  )
+                })()}
                 {filteredCafe.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
@@ -1220,27 +1261,27 @@ export default function HRDashboard() {
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-gray-400">{filteredWellness.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
-                {filteredWellness.length > 0 && (
-                  <BulkControls
-                    total={filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                    selectedCount={filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                    onSelectAll={() => selectAll(filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
-                    onDeselectAll={deselectAll}
-                    bulkSending={bulkSending} bulkResult={bulkResult}
-                    onBulkSend={() => handleBulkSend(
-                      filteredWellness
-                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
-                        .map(({ emp, empType, mailKey }) => {
-                          const isTransfer = emp.join_reason === '전적' && empType === 'hire'
-                          return {
-                            key: mailKey,
-                            to: FR.wellness.map(r => r.email),
-                            subject: '[헥토이노베이션] 웰니스포인트 요청의 건',
-                            html: makeWellnessHtml(emp, empType, isTransfer),
-                          }
-                        })
-                    )} />
-                )}
+                {filteredWellness.length > 0 && (() => {
+                  const sel = filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const bulkHtml = sel.length > 0 ? makeBulkWellnessHtml(sel.map(({ emp, empType }) => ({
+                    emp, empType, isTransfer: emp.join_reason === '전적' && empType === 'hire'
+                  }))) : ''
+                  return (
+                    <BulkControls
+                      total={filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                      selectedCount={filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                      onSelectAll={() => selectAll(filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      onDeselectAll={deselectAll}
+                      bulkSending={bulkSending} bulkResult={bulkResult}
+                      previewHtml={bulkHtml}
+                      onBulkSend={() => handleBulkSend(
+                        FR.wellness.map(r => r.email),
+                        `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
+                        bulkHtml,
+                        sel.map(e => e.mailKey)
+                      )} />
+                  )
+                })()}
                 {filteredWellness.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredWellness} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
