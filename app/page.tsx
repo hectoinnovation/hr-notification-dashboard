@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, type ReactNode } from 'react'
+import { useState, useEffect, useRef, Fragment, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, type Employee } from '@/lib/supabase'
 
@@ -42,6 +42,7 @@ const EMPTY_FORM: EmployeeForm = {
   department: '', division: '', team: '', leader: '',
   join_reason: '입사', status: 'active',
 }
+const PAGE_SIZE = 10
 
 interface DayPointData { totalPoints: number; settlementPoints: number }
 interface ExcelSheetData {
@@ -363,8 +364,10 @@ function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend
         <p className="text-xs font-semibold text-gray-400 mb-2">고정 수신자</p>
         <div className="flex flex-wrap gap-1.5">
           {fixedRecipients.map(r => (
-            <span key={r.email} className="inline-flex items-center gap-1.5 text-xs font-mono bg-white border border-blue-200 text-blue-700 px-2.5 py-1 rounded-lg shadow-sm">
-              🔒 {r.email} <span className="font-sans font-semibold text-blue-500">({r.label})</span>
+            <span key={r.email} className="inline-flex items-center gap-1 text-xs bg-white border border-blue-200 text-blue-700 px-2 py-1 rounded-lg shadow-sm max-w-full min-w-0">
+              <span className="flex-shrink-0">🔒</span>
+              <span className="font-mono break-all">{r.email}</span>
+              <span className="font-sans font-semibold text-blue-500 flex-shrink-0 ml-0.5">({r.label})</span>
             </span>
           ))}
         </div>
@@ -779,6 +782,102 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
+// ─── 검색 / 필터 / 더보기 ────────────────────────────────────────────────────
+function FilteredList({
+  items, renderItem, getSearchText, getType, getSent,
+  showTypeFilter = false, showSentFilter = true, grid = false, emptyLabel,
+}: {
+  items: Employee[]
+  renderItem: (item: Employee) => ReactNode
+  getSearchText: (item: Employee) => string
+  getType?: (item: Employee) => string
+  getSent?: (item: Employee) => boolean
+  showTypeFilter?: boolean
+  showSentFilter?: boolean
+  grid?: boolean
+  emptyLabel: string
+}) {
+  const [query, setQuery] = useState('')
+  const [typeF, setTypeF] = useState('전체')
+  const [sentF, setSentF] = useState('전체')
+  const [limit, setLimit] = useState(PAGE_SIZE)
+
+  const filtered = items.filter(item => {
+    const q = query.trim().toLowerCase()
+    if (q && !getSearchText(item).toLowerCase().includes(q)) return false
+    if (typeF !== '전체' && getType && getType(item) !== typeF) return false
+    if (showSentFilter && getSent) {
+      if (sentF === '발송완료' && !getSent(item)) return false
+      if (sentF === '미발송'   &&  getSent(item)) return false
+    }
+    return true
+  })
+
+  const shown   = filtered.slice(0, limit)
+  const hasMore = filtered.length > limit
+  const activeFilter = query || typeF !== '전체' || sentF !== '전체'
+
+  return (
+    <div className="space-y-3">
+      {/* 검색 + 필터 바 */}
+      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+        <div className="relative w-full sm:flex-1 min-w-0">
+          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none"
+            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+            <circle cx="7" cy="7" r="4.5" /><path strokeLinecap="round" d="M10 10l3 3" />
+          </svg>
+          <input value={query} onChange={e => { setQuery(e.target.value); setLimit(PAGE_SIZE) }}
+            placeholder="이름, 부서, 실, 팀 검색..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+        </div>
+        <div className="flex gap-1 flex-wrap flex-shrink-0">
+          {showTypeFilter && ['전체', '입사', '전적'].map(t => (
+            <button key={t} onClick={() => { setTypeF(t); setLimit(PAGE_SIZE) }}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors whitespace-nowrap ${typeF === t ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+              {t}
+            </button>
+          ))}
+          {showSentFilter && ['전체', '발송완료', '미발송'].map(s => (
+            <button key={s} onClick={() => { setSentF(s); setLimit(PAGE_SIZE) }}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors whitespace-nowrap ${
+                sentF === s
+                  ? s === '발송완료' ? 'bg-emerald-500 border-emerald-500 text-white'
+                  : s === '미발송'   ? 'bg-red-500 border-red-500 text-white'
+                                    : 'bg-gray-600 border-gray-600 text-white'
+                  : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+              }`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 목록 */}
+      {filtered.length === 0 ? (
+        <EmptyState label={activeFilter ? '검색 결과가 없습니다' : emptyLabel} />
+      ) : (
+        <>
+          {grid ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {shown.map(item => <Fragment key={item.id}>{renderItem(item)}</Fragment>)}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {shown.map(item => <Fragment key={item.id}>{renderItem(item)}</Fragment>)}
+            </div>
+          )}
+          {hasMore && (
+            <button onClick={() => setLimit(l => l + PAGE_SIZE)}
+              className="w-full py-2.5 text-xs font-semibold text-gray-500 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:text-orange-600 transition-colors">
+              더보기 ({limit} / {filtered.length}명 표시 중)
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── 메인 페이지 ──────────────────────────────────────────────────────────────
 export default function HRDashboard() {
   const [employees, setEmployees] = useState<Employee[]>([])
@@ -1014,28 +1113,36 @@ export default function HRDashboard() {
             >
               <div>
                 <SubHead icon="🔔" title="입사자 알림 관리" desc="협업지원실 알림 발송" badge={`${newHires.length}명`} />
-                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="space-y-2">
-                    {newHires.map(h => (
-                      <NotifRow key={h.id} emp={h} type="hire"
-                        mailSent={!!mailSent[`hire_notif_${h.id}`]}
-                        onSend={() => sendMail(`hire_notif_${h.id}`)}
-                        onEdit={() => openEdit(h)}
-                        onDelete={() => handleDelete(String(h.id), h.name)}
-                      />
-                    ))}
-                  </div>
-                )}
+                <FilteredList
+                  items={newHires}
+                  renderItem={h => (
+                    <NotifRow emp={h} type="hire"
+                      mailSent={!!mailSent[`hire_notif_${h.id}`]}
+                      onSend={() => sendMail(`hire_notif_${h.id}`)}
+                      onEdit={() => openEdit(h)}
+                      onDelete={() => handleDelete(String(h.id), h.name)}
+                    />
+                  )}
+                  getSearchText={h => [h.name, h.department, h.division, h.team].filter(Boolean).join(' ')}
+                  getType={h => h.join_reason ?? '입사'}
+                  getSent={h => !!mailSent[`hire_notif_${h.id}`]}
+                  showTypeFilter
+                  emptyLabel="등록된 입사자가 없습니다"
+                />
               </div>
               <div>
                 <SubHead icon="🚀" title="온보딩 단계 관리" desc="카드를 펼쳐 단계별 완료 체크 · 메일 발송" badge={`${newHires.length}명`} />
-                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="space-y-3">
-                    {newHires.map(hire => (
-                      <OnboardingCard key={hire.id} hire={hire} stageDone={stageDone} mailSent={mailSent} onToggleDone={toggleDone} onSendMail={sendMail} />
-                    ))}
-                  </div>
-                )}
+                <FilteredList
+                  items={newHires}
+                  renderItem={hire => (
+                    <OnboardingCard hire={hire} stageDone={stageDone} mailSent={mailSent} onToggleDone={toggleDone} onSendMail={sendMail} />
+                  )}
+                  getSearchText={h => [h.name, h.department, h.division, h.team].filter(Boolean).join(' ')}
+                  getType={h => h.join_reason ?? '입사'}
+                  showTypeFilter
+                  showSentFilter={false}
+                  emptyLabel="등록된 입사자가 없습니다"
+                />
               </div>
             </Section>
 
@@ -1045,18 +1152,20 @@ export default function HRDashboard() {
             >
               <div>
                 <SubHead icon="🔔" title="퇴사자 알림 관리" desc="협업지원실·보안인프라팀 알림 발송" badge={`${departures.length}명`} />
-                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                  <div className="space-y-2">
-                    {departures.map(d => (
-                      <NotifRow key={d.id} emp={d} type="leave"
-                        mailSent={!!mailSent[`leave_notif_${d.id}`]}
-                        onSend={() => sendMail(`leave_notif_${d.id}`)}
-                        onEdit={() => openEdit(d)}
-                        onDelete={() => handleDelete(String(d.id), d.name)}
-                      />
-                    ))}
-                  </div>
-                )}
+                <FilteredList
+                  items={departures}
+                  renderItem={d => (
+                    <NotifRow emp={d} type="leave"
+                      mailSent={!!mailSent[`leave_notif_${d.id}`]}
+                      onSend={() => sendMail(`leave_notif_${d.id}`)}
+                      onEdit={() => openEdit(d)}
+                      onDelete={() => handleDelete(String(d.id), d.name)}
+                    />
+                  )}
+                  getSearchText={d => [d.name, d.department, d.division, d.team].filter(Boolean).join(' ')}
+                  getSent={d => !!mailSent[`leave_notif_${d.id}`]}
+                  emptyLabel="등록된 퇴사자가 없습니다"
+                />
               </div>
             </Section>
 
@@ -1069,45 +1178,51 @@ export default function HRDashboard() {
                 <SubHead icon="☕" title="입사자 카페포인트" desc="입사: 입사자 기준 표 / 전적: 포인트 계산 없음" badge={`${newHires.length}명`}
                   action={<ExcelUploadBtn onParsed={setCafeExcel} />}
                 />
-                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {newHires.map(e => {
-                      const key        = `hire_cafe_${e.id}`
-                      const isTransfer = e.join_reason === '전적'
-                      return (
-                        <PointCard key={e.id} emp={e} type="hire" variant="cafe"
-                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                          fixedRecipients={FR.cafe}
-                          // 입사 → 입사자 기준 / 전적 → null (계산 없음)
-                          points={isTransfer ? null : lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
-                          isTransfer={isTransfer}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
+                <FilteredList
+                  items={newHires}
+                  renderItem={e => {
+                    const key        = `hire_cafe_${e.id}`
+                    const isTransfer = e.join_reason === '전적'
+                    return (
+                      <PointCard emp={e} type="hire" variant="cafe"
+                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                        fixedRecipients={FR.cafe}
+                        points={isTransfer ? null : lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
+                        isTransfer={isTransfer}
+                      />
+                    )
+                  }}
+                  getSearchText={e => [e.name, e.department, e.division, e.team].filter(Boolean).join(' ')}
+                  getType={e => e.join_reason ?? '입사'}
+                  getSent={e => !!mailSent[`hire_cafe_${e.id}`]}
+                  showTypeFilter
+                  grid
+                  emptyLabel="등록된 입사자가 없습니다"
+                />
               </div>
               {/* 퇴사자 카페 */}
               <div>
                 <SubHead icon="🧾" title="퇴사자 카페포인트" desc="퇴사자 기준 표 자동 계산 → 메일 발송" badge={`${departures.length}명`}
                   action={<ExcelUploadBtn onParsed={data => setCafeExcel(prev => ({ ...prev, ...data }))} />}
                 />
-                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {departures.map(e => {
-                      const key = `leave_cafe_${e.id}`
-                      return (
-                        <PointCard key={e.id} emp={e} type="leave" variant="cafe"
-                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                          fixedRecipients={FR.cafe}
-                          // 퇴사 → 퇴사자 기준
-                          points={lookupExcelPoints(cafeExcel, e.leave_date ?? null, 'leave')}
-                          isTransfer={false}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
+                <FilteredList
+                  items={departures}
+                  renderItem={e => {
+                    const key = `leave_cafe_${e.id}`
+                    return (
+                      <PointCard emp={e} type="leave" variant="cafe"
+                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                        fixedRecipients={FR.cafe}
+                        points={lookupExcelPoints(cafeExcel, e.leave_date ?? null, 'leave')}
+                        isTransfer={false}
+                      />
+                    )
+                  }}
+                  getSearchText={e => [e.name, e.department, e.division, e.team].filter(Boolean).join(' ')}
+                  getSent={e => !!mailSent[`leave_cafe_${e.id}`]}
+                  grid
+                  emptyLabel="등록된 퇴사자가 없습니다"
+                />
               </div>
             </Section>
 
@@ -1117,40 +1232,48 @@ export default function HRDashboard() {
             >
               <div>
                 <SubHead icon="💚" title="입사자 웰니스 포인트" desc="입사자 웰니스 포인트 안내 메일 발송" badge={`${newHires.length}명`} />
-                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {newHires.map(e => {
-                      const key        = `hire_wellness_${e.id}`
-                      const isTransfer = e.join_reason === '전적'
-                      return (
-                        <PointCard key={e.id} emp={e} type="hire" variant="wellness"
-                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                          fixedRecipients={FR.wellness}
-                          points={null}
-                          isTransfer={isTransfer}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
+                <FilteredList
+                  items={newHires}
+                  renderItem={e => {
+                    const key        = `hire_wellness_${e.id}`
+                    const isTransfer = e.join_reason === '전적'
+                    return (
+                      <PointCard emp={e} type="hire" variant="wellness"
+                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                        fixedRecipients={FR.wellness}
+                        points={null}
+                        isTransfer={isTransfer}
+                      />
+                    )
+                  }}
+                  getSearchText={e => [e.name, e.department, e.division, e.team].filter(Boolean).join(' ')}
+                  getType={e => e.join_reason ?? '입사'}
+                  getSent={e => !!mailSent[`hire_wellness_${e.id}`]}
+                  showTypeFilter
+                  grid
+                  emptyLabel="등록된 입사자가 없습니다"
+                />
               </div>
               <div>
                 <SubHead icon="💼" title="퇴사자 웰니스 포인트" desc="퇴사자 웰니스 포인트 정산 메일 발송" badge={`${departures.length}명`} />
-                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {departures.map(e => {
-                      const key = `leave_wellness_${e.id}`
-                      return (
-                        <PointCard key={e.id} emp={e} type="leave" variant="wellness"
-                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                          fixedRecipients={FR.wellness}
-                          points={null}
-                          isTransfer={false}
-                        />
-                      )
-                    })}
-                  </div>
-                )}
+                <FilteredList
+                  items={departures}
+                  renderItem={e => {
+                    const key = `leave_wellness_${e.id}`
+                    return (
+                      <PointCard emp={e} type="leave" variant="wellness"
+                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                        fixedRecipients={FR.wellness}
+                        points={null}
+                        isTransfer={false}
+                      />
+                    )
+                  }}
+                  getSearchText={e => [e.name, e.department, e.division, e.team].filter(Boolean).join(' ')}
+                  getSent={e => !!mailSent[`leave_wellness_${e.id}`]}
+                  grid
+                  emptyLabel="등록된 퇴사자가 없습니다"
+                />
               </div>
             </Section>
           </>
