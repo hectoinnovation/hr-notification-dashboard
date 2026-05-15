@@ -81,37 +81,54 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
     if (!ws) continue
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
-    function extractTable(sectionTitle: string): Record<number, DayPointData> {
-      const map: Record<number, DayPointData> = {}
-      const normTitle = normalizeCell(sectionTitle)
-
-      let titleRow = -1
+    // 제목 셀의 (행, 열) 위치 탐색
+    function findTitlePos(title: string): { row: number; col: number } | null {
+      const norm = normalizeCell(title)
       for (let r = 0; r < rows.length; r++) {
-        if ((rows[r] as unknown[]).some(c => normalizeCell(String(c ?? '')).includes(normTitle))) {
-          titleRow = r; break
-        }
-      }
-      if (titleRow === -1) {
-        console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더를 찾지 못했습니다.`)
-        return map
-      }
-      console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더 발견 (row ${titleRow})`)
-
-      let headerRow = -1, dayCol = -1, totalCol = -1, settleCol = -1
-      for (let r = titleRow + 1; r < Math.min(titleRow + 7, rows.length); r++) {
         const row = rows[r] as unknown[]
         for (let c = 0; c < row.length; c++) {
+          if (normalizeCell(String(row[c] ?? '')).includes(norm)) return { row: r, col: c }
+        }
+      }
+      return null
+    }
+
+    const hirePos  = findTitlePos('입사자 기준')
+    const leavePos = findTitlePos('퇴사자 기준')
+
+    // 입사자/퇴사자 표가 좌우로 나란히 있으므로 열 범위로 구분
+    // hire: hirePos.col ~ (leavePos.col - 1)
+    // leave: leavePos.col ~ 끝
+    const hireStartCol  = hirePos?.col  ?? 0
+    const leaveStartCol = leavePos?.col ?? Infinity
+
+    function extractTable(
+      titlePos: { row: number; col: number } | null,
+      colStart: number,
+      colEnd: number,   // exclusive
+    ): Record<number, DayPointData> {
+      const map: Record<number, DayPointData> = {}
+      if (!titlePos) {
+        console.log(`[Excel] ${m}월: 헤더를 찾지 못했습니다. (colStart=${colStart})`)
+        return map
+      }
+      console.log(`[Excel] ${m}월: 헤더 발견 (row ${titlePos.row}, col ${titlePos.col})`)
+
+      let headerRow = -1, dayCol = -1, totalCol = -1, settleCol = -1
+      for (let r = titlePos.row + 1; r < Math.min(titlePos.row + 7, rows.length); r++) {
+        const row = rows[r] as unknown[]
+        for (let c = colStart; c < Math.min(row.length, colEnd); c++) {
           const cell = normalizeCell(String(row[c] ?? ''))
           if (dayCol === -1 && (cell === '일자' || cell === '날짜' || cell.includes('입사일') || cell.includes('퇴사일'))) {
             dayCol = c; headerRow = r
           }
           if (cell.includes('총') && cell.includes('부여')) totalCol = c
-          if (cell.includes('정산포인트'))                   settleCol = c
+          if (cell.includes('정산포인트'))                  settleCol = c
         }
         if (headerRow !== -1) break
       }
       if (headerRow === -1) {
-        console.log(`[Excel] ${m}월 "${sectionTitle}": 컬럼 헤더를 찾지 못했습니다.`)
+        console.log(`[Excel] ${m}월: 컬럼 헤더를 찾지 못했습니다. (colStart=${colStart}, colEnd=${colEnd})`)
         return map
       }
 
@@ -126,13 +143,13 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
           settlementPoints: settleCol !== -1 ? (Number(row[settleCol]) || 0) : 0,
         }
       }
-      console.log(`[Excel] ${m}월 "${sectionTitle}": ${Object.keys(map).length}개 일자 파싱 완료`)
+      console.log(`[Excel] ${m}월 (col ${colStart}~${colEnd === Infinity ? '끝' : colEnd - 1}): ${Object.keys(map).length}개 일자 파싱 완료`)
       return map
     }
 
     result[m] = {
-      hire:  extractTable('입사자 기준'),
-      leave: extractTable('퇴사자 기준'),
+      hire:  extractTable(hirePos,  hireStartCol,  leaveStartCol),  // 왼쪽 표만
+      leave: extractTable(leavePos, leaveStartCol, Infinity),        // 오른쪽 표만
     }
   }
   return result
@@ -295,31 +312,26 @@ function SubHead({ icon, title, desc, badge, action }: {
   )
 }
 
-// ─── 접기/펼치기 섹션 ─────────────────────────────────────────────────────────
-function CollapsibleSection({ icon, title, desc, badge, action, children }: {
+// ─── 섹션 (항상 펼쳐짐) ──────────────────────────────────────────────────────
+function Section({ icon, title, desc, badge, action, children }: {
   icon: string; title: string; desc?: string; badge?: string; action?: ReactNode; children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
   return (
     <section>
-      <div className="flex items-center justify-between gap-3">
-        <button onClick={() => setOpen(p => !p)} className="flex items-center gap-2.5 flex-1 text-left group">
-          <svg className={`w-4 h-4 text-gray-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
-          </svg>
+      <div className="flex items-center justify-between gap-3 mb-5">
+        <div className="flex items-center gap-2.5">
           <span className="text-xl leading-none">{icon}</span>
           <div>
-            <h2 className="text-base font-bold text-gray-800 group-hover:text-orange-600 transition-colors">{title}</h2>
+            <h2 className="text-base font-bold text-gray-800">{title}</h2>
             {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
           </div>
-        </button>
+        </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           {action}
           {badge && <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full whitespace-nowrap">{badge}</span>}
         </div>
       </div>
-      {open && <div className="mt-5 space-y-8">{children}</div>}
+      <div className="space-y-8">{children}</div>
     </section>
   )
 }
@@ -997,7 +1009,7 @@ export default function HRDashboard() {
         {!loading && (
           <>
             {/* ── 입사자 ── */}
-            <CollapsibleSection icon="👋" title="입사자" desc="입사자 알림 및 온보딩 단계 관리" badge={`${newHires.length}명`}
+            <Section icon="👋" title="입사자" desc="입사자 알림 및 온보딩 단계 관리" badge={`${newHires.length}명`}
               action={<button onClick={openAdd} className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">+ 입사자 추가</button>}
             >
               <div>
@@ -1025,10 +1037,10 @@ export default function HRDashboard() {
                   </div>
                 )}
               </div>
-            </CollapsibleSection>
+            </Section>
 
             {/* ── 퇴사자 ── */}
-            <CollapsibleSection icon="🚪" title="퇴사자" desc="퇴사자 알림 관리" badge={`${departures.length}명`}
+            <Section icon="🚪" title="퇴사자" desc="퇴사자 알림 관리" badge={`${departures.length}명`}
               action={<button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }} className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">+ 퇴사자 추가</button>}
             >
               <div>
@@ -1046,10 +1058,10 @@ export default function HRDashboard() {
                   </div>
                 )}
               </div>
-            </CollapsibleSection>
+            </Section>
 
             {/* ── 카페포인트 ── */}
-            <CollapsibleSection icon="☕" title="카페포인트" desc="입사/퇴사/전적 카페포인트 일할 계산 및 메일 발송"
+            <Section icon="☕" title="카페포인트" desc="입사/퇴사/전적 카페포인트 일할 계산 및 메일 발송"
               badge={`${newHires.length + departures.length}명`}
             >
               {/* 입사자 카페 */}
@@ -1097,10 +1109,10 @@ export default function HRDashboard() {
                   </div>
                 )}
               </div>
-            </CollapsibleSection>
+            </Section>
 
             {/* ── 웰니스포인트 ── */}
-            <CollapsibleSection icon="💚" title="웰니스포인트" desc="입사자/퇴사자 웰니스 포인트 메일 발송"
+            <Section icon="💚" title="웰니스포인트" desc="입사자/퇴사자 웰니스 포인트 메일 발송"
               badge={`${newHires.length + departures.length}명`}
             >
               <div>
@@ -1140,7 +1152,7 @@ export default function HRDashboard() {
                   </div>
                 )}
               </div>
-            </CollapsibleSection>
+            </Section>
           </>
         )}
       </div>
