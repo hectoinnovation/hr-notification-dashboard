@@ -20,7 +20,7 @@ const STAGES = [
   { id: 's12', label: '시용평가 일정 및 완료 관리',       timing: '별도 일정',       targets: ['인사팀', '입사자'],   highlight: false },
 ]
 
-// ─── 수신자 타입 & 고정 수신자 ───────────────────────────────────────────────
+// ─── 수신자 & 고정 수신자 ─────────────────────────────────────────────────────
 type Recipient = { email: string; label: string }
 
 const FR = {
@@ -34,16 +34,19 @@ const FR = {
 // ─── 타입 ─────────────────────────────────────────────────────────────────────
 interface EmployeeForm {
   name: string; join_date: string; leave_date: string
-  division: string; team: string; leader: string; status: 'active' | 'resigned'
+  department: string; division: string; team: string; leader: string
+  join_reason: string; status: 'active' | 'resigned'
 }
 const EMPTY_FORM: EmployeeForm = {
-  name: '', join_date: '', leave_date: '', division: '', team: '', leader: '', status: 'active',
+  name: '', join_date: '', leave_date: '',
+  department: '', division: '', team: '', leader: '',
+  join_reason: '입사', status: 'active',
 }
 
 interface DayPointData { totalPoints: number; settlementPoints: number }
 interface ExcelSheetData {
-  hire:  Record<number, DayPointData>
-  leave: Record<number, DayPointData>
+  hire:  Record<number, DayPointData>   // key = 일(day 1-31), 입사자 기준
+  leave: Record<number, DayPointData>   // key = 일(day 1-31), 퇴사자 기준
 }
 
 // ─── 유틸 ─────────────────────────────────────────────────────────────────────
@@ -51,6 +54,11 @@ function formatMonth(dateStr: string | null): string {
   if (!dateStr) return '-'
   const d = new Date(dateStr)
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월`
+}
+
+// 공백·괄호 제거 후 비교 (엑셀 표기 차이 흡수)
+function normalizeCell(s: string) {
+  return s.replace(/\s+/g, '').replace(/[()（）[\]]/g, '')
 }
 
 function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
@@ -62,31 +70,45 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
     if (!ws) continue
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
+    // sectionTitle: '입사자 기준' | '퇴사자 기준'
     function extractTable(sectionTitle: string): Record<number, DayPointData> {
       const map: Record<number, DayPointData> = {}
+      const normTitle = normalizeCell(sectionTitle)
+
+      // ① 섹션 헤더 행 탐색
       let titleRow = -1
       for (let r = 0; r < rows.length; r++) {
-        if ((rows[r] as unknown[]).some(c => String(c ?? '').trim() === sectionTitle)) {
-          titleRow = r; break
-        }
+        const found = (rows[r] as unknown[]).some(c =>
+          normalizeCell(String(c ?? '')).includes(normTitle)
+        )
+        if (found) { titleRow = r; break }
       }
-      if (titleRow === -1) return map
+      if (titleRow === -1) {
+        console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더를 찾지 못했습니다.`)
+        return map
+      }
+      console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더 발견 (row ${titleRow})`)
 
+      // ② 헤더 행(일자/총부여포인트/정산포인트 컬럼) 탐색 — 헤더 아래 최대 6행 내
       let headerRow = -1, dayCol = -1, totalCol = -1, settleCol = -1
-      for (let r = titleRow + 1; r < Math.min(titleRow + 6, rows.length); r++) {
+      for (let r = titleRow + 1; r < Math.min(titleRow + 7, rows.length); r++) {
         const row = rows[r] as unknown[]
         for (let c = 0; c < row.length; c++) {
-          const cell = String(row[c] ?? '').trim()
+          const cell = normalizeCell(String(row[c] ?? ''))
           if (dayCol === -1 && (cell === '일자' || cell === '날짜' || cell.includes('입사일') || cell.includes('퇴사일'))) {
             dayCol = c; headerRow = r
           }
-          if (cell === '총 부여포인트' || cell === '총부여포인트' || (cell.includes('총') && cell.includes('부여'))) totalCol = c
-          if (cell.includes('정산포인트')) settleCol = c
+          if (cell.includes('총') && cell.includes('부여')) totalCol = c
+          if (cell.includes('정산포인트'))                   settleCol = c
         }
         if (headerRow !== -1) break
       }
-      if (headerRow === -1) return map
+      if (headerRow === -1) {
+        console.log(`[Excel] ${m}월 "${sectionTitle}": 컬럼 헤더(일자/총부여포인트/정산포인트)를 찾지 못했습니다.`)
+        return map
+      }
 
+      // ③ 데이터 행 읽기
       for (let r = headerRow + 1; r < rows.length; r++) {
         const row = rows[r] as unknown[]
         const raw = row[dayCol]
@@ -98,23 +120,40 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
           settlementPoints: settleCol !== -1 ? (Number(row[settleCol]) || 0) : 0,
         }
       }
+      console.log(`[Excel] ${m}월 "${sectionTitle}": ${Object.keys(map).length}개 일자 파싱 완료`)
       return map
     }
 
-    result[m] = { hire: extractTable('입사자 기준'), leave: extractTable('퇴사자 기준') }
+    result[m] = {
+      hire:  extractTable('입사자 기준'),  // 입사/전적 → 반드시 이 표 사용
+      leave: extractTable('퇴사자 기준'),  // 퇴사      → 반드시 이 표 사용
+    }
   }
   return result
 }
 
+// type: 'hire' → 입사자기준, 'leave' → 퇴사자기준 (절대 교차 사용 안 함)
 function lookupExcelPoints(
   excelData: Record<number, ExcelSheetData>,
   dateStr: string | null,
-  type: 'hire' | 'leave'
+  type: 'hire' | 'leave',
 ): DayPointData | null {
   if (!dateStr) return null
-  const d = new Date(dateStr)
-  const sheet = excelData[d.getMonth() + 1]
-  return sheet?.[type]?.[d.getDate()] ?? null
+  const d    = new Date(dateStr)
+  const m    = d.getMonth() + 1
+  const day  = d.getDate()
+  const tableLabel = type === 'hire' ? '입사자 기준' : '퇴사자 기준'
+  const sheet = excelData[m]
+  if (!sheet) {
+    console.log(`[포인트 조회] ${m}월 시트 없음 — 엑셀을 업로드했는지 확인하세요.`)
+    return null
+  }
+  const result = sheet[type][day] ?? null
+  console.log(
+    `[포인트 조회] ${m}월 시트 | ${tableLabel} | ${day}일 →`,
+    result ? `총 ${result.totalPoints}P, 정산 ${result.settlementPoints}P` : '해당 행 없음',
+  )
+  return result
 }
 
 // ─── 메일 API ─────────────────────────────────────────────────────────────────
@@ -137,15 +176,21 @@ async function sendMailApi(to: string[], subject: string, html: string): Promise
 
 // ─── HTML 생성 ────────────────────────────────────────────────────────────────
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
-const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left'
-const TD = 'border:1px solid #e5e7eb;padding:8px 12px'
+const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
+const TD = 'border:1px solid #e5e7eb;padding:8px 12px;white-space:nowrap'
+
+function empLabel(emp: Employee) {
+  return [emp.department, emp.division, emp.team].filter(Boolean).join(' ') || '-'
+}
 
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const label = type === 'hire' ? '입사' : '퇴사'
   const date  = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
-<table style="${TS}"><tr><th style="${TH}">${label}일</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td></tr></table>`
+<table style="${TS}">
+<tr><th style="${TH}">${label}일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td></tr>
+</table>`
 }
 
 function makeOnboardingHtml(hireName: string, stageLabel: string) {
@@ -154,21 +199,25 @@ function makeOnboardingHtml(hireName: string, stageLabel: string) {
 }
 
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null) {
-  const label  = type === 'hire' ? '입사' : '퇴사'
+  const 구분   = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
   const date   = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
   const total  = points ? points.totalPoints.toLocaleString() + 'P' : '-'
   const settle = points ? points.settlementPoints.toLocaleString() + 'P' : '-'
   return `<h3 style="color:#ea580c">[카페포인트 ${type === 'hire' ? '안내' : '정산'}] ${emp.name}</h3>
-<table style="${TS}"><tr><th style="${TH}">날짜</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr></table>`
+<table style="${TS}">
+<tr><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr>
+</table>`
 }
 
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave') {
-  const label = type === 'hire' ? '입사' : '퇴사'
-  const date  = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const 사유 = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
+  const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
   return `<h3 style="color:#ea580c">[웰니스 포인트 ${type === 'hire' ? '안내' : '정산'}] ${emp.name}</h3>
-<table style="${TS}"><tr><th style="${TH}">날짜</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">입사 사유</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>`
+<table style="${TS}">
+<tr><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">입사 사유</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${사유}</td></tr>
+</table>`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -180,9 +229,10 @@ function GreenBadge({ label }: { label: string }) {
   )
 }
 function TimingPill({ label }: { label: string }) {
-  const isD = label.startsWith('D')
   return (
-    <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 ${isD ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{label}</span>
+    <span className={`text-xs font-mono font-semibold px-2 py-0.5 rounded-md whitespace-nowrap flex-shrink-0 ${label.startsWith('D') ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+      {label}
+    </span>
   )
 }
 function TargetPill({ label }: { label: string }) {
@@ -200,23 +250,6 @@ function SendBtn({ sent, label = '메일', onClick }: { sent: boolean; label?: s
     </button>
   )
 }
-function SectionHead({ icon, title, desc, badge, action }: { icon: string; title: string; desc?: string; badge?: string; action?: ReactNode }) {
-  return (
-    <div className="flex items-start justify-between mb-5 gap-3">
-      <div className="flex items-center gap-2.5">
-        <span className="text-xl leading-none">{icon}</span>
-        <div>
-          <h2 className="text-base font-bold text-gray-800">{title}</h2>
-          {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
-        </div>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {action}
-        {badge && <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full whitespace-nowrap">{badge}</span>}
-      </div>
-    </div>
-  )
-}
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3 py-1.5 border-b border-gray-50 last:border-0">
@@ -226,15 +259,68 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+// 소제목 (섹션 내 서브 헤더)
+function SubHead({ icon, title, desc, badge, action }: {
+  icon: string; title: string; desc?: string; badge?: string; action?: ReactNode
+}) {
+  return (
+    <div className="flex items-start justify-between mb-4 gap-3">
+      <div className="flex items-center gap-2">
+        <span className="text-base leading-none">{icon}</span>
+        <div>
+          <p className="text-sm font-bold text-gray-700">{title}</p>
+          {desc && <p className="text-xs text-gray-400 mt-0.5">{desc}</p>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {action}
+        {badge && <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{badge}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ─── 접기/펼치기 섹션 ─────────────────────────────────────────────────────────
+function CollapsibleSection({ icon, title, desc, badge, action, children }: {
+  icon: string; title: string; desc?: string; badge?: string
+  action?: ReactNode; children: ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-3">
+        <button
+          onClick={() => setOpen(p => !p)}
+          className="flex items-center gap-2.5 flex-1 text-left group"
+        >
+          <svg
+            className={`w-4 h-4 text-gray-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2.5}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
+          </svg>
+          <span className="text-xl leading-none">{icon}</span>
+          <div>
+            <h2 className="text-base font-bold text-gray-800 group-hover:text-orange-600 transition-colors">{title}</h2>
+            {desc && <p className="text-xs text-gray-500 mt-0.5">{desc}</p>}
+          </div>
+        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {action}
+          {badge && (
+            <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full whitespace-nowrap">{badge}</span>
+          )}
+        </div>
+      </div>
+      {open && <div className="mt-5 space-y-8">{children}</div>}
+    </section>
+  )
+}
+
 // ─── 메일 패널 ────────────────────────────────────────────────────────────────
-function MailPanel({
-  fixedRecipients, defaultSubject, mailSent, htmlBody, onSend,
-}: {
+function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend }: {
   fixedRecipients: readonly Recipient[]
-  defaultSubject: string
-  mailSent: boolean
-  htmlBody: string
-  onSend: () => void
+  defaultSubject: string; mailSent: boolean; htmlBody: string; onSend: () => void
 }) {
   const [subject, setSubject] = useState(defaultSubject)
   const [extra, setExtra]     = useState('')
@@ -293,9 +379,7 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
   const [open, setOpen] = useState(false)
   const isHire = type === 'hire'
   const date = (isHire ? emp.join_date : emp.leave_date) ?? '-'
-  const defaultSubject = isHire
-    ? `[입사 안내] ${emp.name} 님 ${date} 입사`
-    : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`
+  const orgLine = [emp.department, emp.division, emp.team].filter(Boolean).join(' · ') || '-'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -305,7 +389,7 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-gray-900 leading-none">{emp.name}</p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{date} · {emp.division ?? '-'} · {emp.team ?? '-'}</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{date} · {orgLine}</p>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button onClick={() => setOpen(p => !p)}
@@ -313,12 +397,10 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
             <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5" /></svg>
             {mailSent ? '발송완료' : open ? '닫기' : '메일 발송'}
           </button>
-          <button onClick={onEdit} title="수정"
-            className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+          <button onClick={onEdit} className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 2l3 3-8 8H3v-3l8-8z" /></svg>
           </button>
-          <button onClick={onDelete} title="삭제"
-            className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:bg-red-50 hover:text-red-500">
+          <button onClick={onDelete} className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:bg-red-50 hover:text-red-500">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4h10M6 4V2h4v2M5 4v9h6V4" /></svg>
           </button>
         </div>
@@ -327,10 +409,8 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
         <div className="px-4 pb-4">
           <MailPanel
             fixedRecipients={isHire ? FR.hire : FR.leave}
-            defaultSubject={defaultSubject}
-            mailSent={mailSent}
-            htmlBody={makeNotifHtml(emp, type)}
-            onSend={onSend}
+            defaultSubject={isHire ? `[입사 안내] ${emp.name} 님 ${date} 입사` : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`}
+            mailSent={mailSent} htmlBody={makeNotifHtml(emp, type)} onSend={onSend}
           />
         </div>
       )}
@@ -349,7 +429,7 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
     <div className={`border-b border-gray-50 last:border-0 ${isDone ? 'bg-gray-50/70' : ''} ${stage.highlight && !isDone ? 'bg-amber-50/50' : ''}`}>
       <div className="flex items-center gap-3 px-5 py-3">
         <span className="text-xs text-gray-300 font-mono w-5 flex-shrink-0 text-right select-none">{idx + 1}</span>
-        <button onClick={onToggleDone} title="완료 처리"
+        <button onClick={onToggleDone}
           className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isDone ? 'bg-orange-500 border-orange-500' : 'border-gray-300 hover:border-orange-400 bg-white'}`}>
           {isDone && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>
@@ -373,9 +453,7 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
           <MailPanel
             fixedRecipients={FR.onboard}
             defaultSubject={`[온보딩] ${hireName} - ${stage.label}`}
-            mailSent={isSent}
-            htmlBody={makeOnboardingHtml(hireName, stage.label)}
-            onSend={onSendMail}
+            mailSent={isSent} htmlBody={makeOnboardingHtml(hireName, stage.label)} onSend={onSendMail}
           />
         </div>
       )}
@@ -385,15 +463,14 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
 
 // ─── 온보딩 카드 ──────────────────────────────────────────────────────────────
 function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }: {
-  hire: Employee
-  stageDone: Record<string, boolean>
-  mailSent:  Record<string, boolean>
-  onToggleDone: (empId: string, stageId: string) => void
-  onSendMail:   (key: string) => void
+  hire: Employee; stageDone: Record<string, boolean>; mailSent: Record<string, boolean>
+  onToggleDone: (empId: string, stageId: string) => void; onSendMail: (key: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const done = STAGES.filter(s => !!stageDone[`${hire.id}_${s.id}`]).length
   const pct  = Math.round((done / STAGES.length) * 100)
+  const orgLine = [hire.department, hire.division, hire.team].filter(Boolean).join(' ') || '-'
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 px-5 py-4">
@@ -402,7 +479,7 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
             <div className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">{hire.name[0]}</div>
             <div className="min-w-0">
               <p className="font-bold text-gray-900">{hire.name}</p>
-              <p className="text-xs text-gray-500 truncate">{hire.join_date ?? '-'} 입사 · {hire.division ?? '-'} {hire.team ?? '-'}</p>
+              <p className="text-xs text-gray-500 truncate">{hire.join_date ?? '-'} 입사 · {orgLine}</p>
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
@@ -424,13 +501,10 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
       {expanded && (
         <div>
           {STAGES.map((stage, idx) => {
-            const key    = `${hire.id}_${stage.id}`
-            const isDone = !!stageDone[key]
-            const isSent = !!mailSent[`mail_${key}`]
+            const key = `${hire.id}_${stage.id}`
             return (
-              <OnboardingRow
-                key={stage.id} stage={stage} idx={idx}
-                isDone={isDone} isSent={isSent} hireName={hire.name}
+              <OnboardingRow key={stage.id} stage={stage} idx={idx}
+                isDone={!!stageDone[key]} isSent={!!mailSent[`mail_${key}`]} hireName={hire.name}
                 onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
                 onSendMail={() => onSendMail(`mail_${key}`)}
               />
@@ -449,34 +523,32 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   fixedRecipients: readonly Recipient[]; defaultSubject: string
   points: DayPointData | null
 }) {
-  const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-  const typeLabel = type === 'hire' ? '입사' : '퇴사'
-  const htmlBody = variant === 'cafe'
-    ? makeCafeHtml(emp, type, points)
-    : makeWellnessHtml(emp, type)
+  const date     = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const 구분     = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
+  const htmlBody = variant === 'cafe' ? makeCafeHtml(emp, type, points) : makeWellnessHtml(emp, type)
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
       <div className="flex items-start justify-between">
         <div>
           <p className="font-bold text-gray-900">{emp.name}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{typeLabel}일: {date}</p>
-          {emp.team && <p className="text-xs text-gray-400">{emp.division ?? ''} {emp.team}</p>}
+          <p className="text-xs text-gray-400 mt-0.5">{type === 'hire' ? '입사일' : '퇴사일'}: {date}</p>
+          <p className="text-xs text-gray-400">{[emp.department, emp.division, emp.team].filter(Boolean).join(' · ') || '-'}</p>
         </div>
         {mailSent && <GreenBadge label="발송 완료" />}
       </div>
       <div>
         <InfoRow label="기준월"><span className="text-xs font-semibold text-gray-700">{formatMonth(date)}</span></InfoRow>
-        <InfoRow label="구분"><span className="text-xs font-semibold text-gray-700">{typeLabel}</span></InfoRow>
+        <InfoRow label="구분"><span className="text-xs font-semibold text-gray-700">{구분}</span></InfoRow>
         {variant === 'cafe' && (
           <>
             <InfoRow label="총 부여포인트">
-              <span className="text-xs font-bold text-orange-600">
+              <span className={`text-xs font-bold ${points ? 'text-orange-600' : 'text-gray-300'}`}>
                 {points ? points.totalPoints.toLocaleString() + 'P' : '—'}
               </span>
             </InfoRow>
             <InfoRow label="정산포인트(P)">
-              <span className="text-xs font-bold text-blue-600">
+              <span className={`text-xs font-bold ${points ? 'text-blue-600' : 'text-gray-300'}`}>
                 {points ? points.settlementPoints.toLocaleString() + 'P' : '—'}
               </span>
             </InfoRow>
@@ -484,13 +556,8 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
           </>
         )}
       </div>
-      <MailPanel
-        fixedRecipients={fixedRecipients}
-        defaultSubject={defaultSubject}
-        mailSent={mailSent}
-        htmlBody={htmlBody}
-        onSend={onSendMail}
-      />
+      <MailPanel fixedRecipients={fixedRecipients} defaultSubject={defaultSubject}
+        mailSent={mailSent} htmlBody={htmlBody} onSend={onSendMail} />
     </div>
   )
 }
@@ -506,8 +573,7 @@ function ExcelUploadBtn({ onParsed }: { onParsed: (data: Record<number, ExcelShe
     if (!file) return
     setParsing(true)
     try {
-      const buf  = await file.arrayBuffer()
-      const data = parseExcelFile(buf)
+      const data = parseExcelFile(await file.arrayBuffer())
       setFileName(file.name)
       onParsed(data)
     } catch {
@@ -520,9 +586,7 @@ function ExcelUploadBtn({ onParsed }: { onParsed: (data: Record<number, ExcelShe
 
   return (
     <div className="flex items-center gap-2">
-      {fileName && (
-        <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">✓ {fileName}</span>
-      )}
+      {fileName && <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">✓ {fileName}</span>}
       <button onClick={() => ref.current?.click()} disabled={parsing}
         className="inline-flex items-center gap-1.5 text-xs font-semibold bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 2v8M4 7l4 4 4-4M2 12h12v2H2z" /></svg>
@@ -533,7 +597,7 @@ function ExcelUploadBtn({ onParsed }: { onParsed: (data: Record<number, ExcelShe
   )
 }
 
-// ─── 직원 폼 필드 / 모달 ──────────────────────────────────────────────────────
+// ─── 직원 폼 / 모달 ───────────────────────────────────────────────────────────
 function FormField({ label, value, onChange, placeholder, type = 'text', required = false }: {
   label: string; value: string; onChange: (v: string) => void
   placeholder?: string; type?: string; required?: boolean
@@ -557,13 +621,14 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
   if (!show) return null
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
           <h3 className="font-bold text-gray-900">{isEdit ? '직원 정보 수정' : '신규 직원 등록'}</h3>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">✕</button>
         </div>
         <div className="px-6 py-5 space-y-3">
           <FormField label="이름" value={form.name} onChange={v => onChange('name', v)} placeholder="홍길동" required />
+          <FormField label="부서" value={form.department} onChange={v => onChange('department', v)} placeholder="경영지원부서" />
           <div className="grid grid-cols-2 gap-3">
             <FormField label="실" value={form.division} onChange={v => onChange('division', v)} placeholder="경영지원실" />
             <FormField label="팀" value={form.team} onChange={v => onChange('team', v)} placeholder="인사팀" />
@@ -581,6 +646,16 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
               <option value="resigned">퇴사</option>
             </select>
           </div>
+          {form.status === 'active' && (
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">구분 (입사 사유)</label>
+              <select value={form.join_reason} onChange={e => onChange('join_reason', e.target.value)}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
+                <option value="입사">입사</option>
+                <option value="전적">전적</option>
+              </select>
+            </div>
+          )}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
           <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
@@ -615,18 +690,17 @@ export default function HRDashboard() {
 
   const [stageDone, setStageDone] = useState<Record<string, boolean>>({})
   const [mailSent,  setMailSent]  = useState<Record<string, boolean>>({})
-
   const [cafeExcel, setCafeExcel] = useState<Record<number, ExcelSheetData>>({})
 
   const newHires   = employees.filter(e => e.status === 'active')
   const departures = employees.filter(e => e.status === 'resigned')
 
-  const todayStr    = new Date().toISOString().slice(0, 10)
-  const todayHires  = newHires.filter(h  => h.join_date  === todayStr).length
-  const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
+  const todayStr     = new Date().toISOString().slice(0, 10)
+  const todayHires   = newHires.filter(h  => h.join_date  === todayStr).length
+  const todayLeaves  = departures.filter(d => d.leave_date === todayStr).length
   const pendingNotif = newHires.filter(h  => !mailSent[`hire_notif_${h.id}`]).length
                      + departures.filter(d => !mailSent[`leave_notif_${d.id}`]).length
-  const pendingMail = [
+  const pendingMail  = [
     ...newHires.flatMap(e  => [`hire_cafe_${e.id}`,  `hire_wellness_${e.id}`]),
     ...departures.flatMap(e => [`leave_cafe_${e.id}`, `leave_wellness_${e.id}`]),
   ].filter(k => !mailSent[k]).length
@@ -644,15 +718,15 @@ export default function HRDashboard() {
 
     const newDone: Record<string, boolean> = {}
     const newMail: Record<string, boolean> = {}
-    for (const t of (taskRes.data ?? [])) {
+    for (const t of taskRes.data  ?? []) {
       if (t.is_done)   newDone[`${t.employee_id}_${t.stage_id}`]      = true
       if (t.mail_sent) newMail[`mail_${t.employee_id}_${t.stage_id}`] = true
     }
-    for (const n of (notifRes.data ?? [])) {
+    for (const n of notifRes.data ?? []) {
       const k = n.notification_type === 'hire' ? `hire_notif_${n.employee_id}` : `leave_notif_${n.employee_id}`
       if (n.mail_sent) newMail[k] = true
     }
-    for (const p of (pointRes.data ?? [])) {
+    for (const p of pointRes.data ?? []) {
       if (p.mail_sent) newMail[`${p.employee_type}_${p.point_type}_${p.employee_id}`] = true
     }
     setStageDone(newDone); setMailSent(newMail); setLoading(false)
@@ -662,8 +736,15 @@ export default function HRDashboard() {
     if (!form.name.trim()) return
     setSubmitting(true)
     const payload = {
-      name: form.name.trim(), join_date: form.join_date || null, leave_date: form.leave_date || null,
-      division: form.division || null, team: form.team || null, leader: form.leader || null, status: form.status,
+      name:        form.name.trim(),
+      join_date:   form.join_date  || null,
+      leave_date:  form.leave_date || null,
+      department:  form.department || null,
+      division:    form.division   || null,
+      team:        form.team       || null,
+      leader:      form.leader     || null,
+      join_reason: form.status === 'active' ? (form.join_reason || '입사') : null,
+      status:      form.status,
     }
     const { error } = editTarget
       ? await supabase.from('employees').update(payload).eq('id', editTarget.id)
@@ -684,7 +765,17 @@ export default function HRDashboard() {
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }
   function openEdit(emp: Employee) {
     setEditTarget(emp)
-    setForm({ name: emp.name, join_date: emp.join_date ?? '', leave_date: emp.leave_date ?? '', division: emp.division ?? '', team: emp.team ?? '', leader: emp.leader ?? '', status: emp.status })
+    setForm({
+      name:        emp.name,
+      join_date:   emp.join_date   ?? '',
+      leave_date:  emp.leave_date  ?? '',
+      department:  emp.department  ?? '',
+      division:    emp.division    ?? '',
+      team:        emp.team        ?? '',
+      leader:      emp.leader      ?? '',
+      join_reason: emp.join_reason ?? '입사',
+      status:      emp.status,
+    })
     setShowForm(true)
   }
   function closeForm() { setShowForm(false); setEditTarget(null); setForm(EMPTY_FORM) }
@@ -696,7 +787,8 @@ export default function HRDashboard() {
     const stage = STAGES.find(s => s.id === stageId)!
     const { error } = await supabase.from('onboarding_tasks').upsert({
       employee_id: empId, stage_id: stageId, stage_label: stage.label, timing: stage.timing,
-      sort_order: STAGES.indexOf(stage), is_done: newDone, done_at: newDone ? new Date().toISOString() : null,
+      sort_order: STAGES.indexOf(stage), is_done: newDone,
+      done_at: newDone ? new Date().toISOString() : null,
     }, { onConflict: 'employee_id,stage_id' })
     if (error) { setError(error.message); setStageDone(p => ({ ...p, [key]: !newDone })) }
   }
@@ -739,7 +831,6 @@ export default function HRDashboard() {
         dbErr = error?.message ?? null
       }
     }
-
     if (dbErr) { setError(dbErr); setMailSent(p => ({ ...p, [key]: false })) }
   }
 
@@ -753,6 +844,7 @@ export default function HRDashboard() {
         onSubmit={handleSubmit} onClose={closeForm}
       />
 
+      {/* 헤더 */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-screen-xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -775,7 +867,7 @@ export default function HRDashboard() {
         </div>
       </header>
 
-      <div className="max-w-screen-xl mx-auto px-6 py-7 space-y-12">
+      <div className="max-w-screen-xl mx-auto px-6 py-7 space-y-8">
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center justify-between">
@@ -784,12 +876,13 @@ export default function HRDashboard() {
           </div>
         )}
 
+        {/* 요약 카드 */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
             { label: '처리 필요 알림', value: loading ? '…' : pendingNotif, sub: '알림 미발송 건',  icon: '🔔', bg: 'bg-orange-500', ring: 'ring-orange-200' },
-            { label: '오늘 신규 입사자', value: loading ? '…' : todayHires,   sub: `${todayStr} 입사`, icon: '👋', bg: 'bg-blue-500',   ring: 'ring-blue-200'   },
-            { label: '오늘 퇴사자',     value: loading ? '…' : todayLeaves,  sub: `${todayStr} 퇴사`, icon: '📦', bg: 'bg-purple-500', ring: 'ring-purple-200' },
-            { label: '미발송 메일',     value: loading ? '…' : pendingMail,  sub: '포인트 발송 대기', icon: '📧', bg: 'bg-red-500',    ring: 'ring-red-200'    },
+            { label: '오늘 신규 입사자', value: loading ? '…' : todayHires,  sub: `${todayStr} 입사`, icon: '👋', bg: 'bg-blue-500',   ring: 'ring-blue-200'   },
+            { label: '오늘 퇴사자',     value: loading ? '…' : todayLeaves, sub: `${todayStr} 퇴사`, icon: '📦', bg: 'bg-purple-500', ring: 'ring-purple-200' },
+            { label: '미발송 메일',     value: loading ? '…' : pendingMail, sub: '포인트 발송 대기', icon: '📧', bg: 'bg-red-500',    ring: 'ring-red-200'    },
           ].map(c => (
             <div key={c.label} className={`bg-white rounded-xl ring-1 ${c.ring} p-5 flex items-center gap-4 shadow-sm`}>
               <div className={`${c.bg} w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0`}>{c.icon}</div>
@@ -814,139 +907,151 @@ export default function HRDashboard() {
 
         {!loading && (
           <>
-            {/* ── 1. 입사자 알림 ── */}
-            <section>
-              <SectionHead icon="👋" title="입사자 알림 관리" desc="신규 입사자 등록 시 협업지원실 알림 발송" badge={`${newHires.length}명`}
-                action={<button onClick={openAdd} className="text-xs font-semibold text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">+ 입사자 추가</button>}
-              />
-              {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                <div className="space-y-2">
-                  {newHires.map(h => (
-                    <NotifRow key={h.id} emp={h} type="hire"
-                      mailSent={!!mailSent[`hire_notif_${h.id}`]}
-                      onSend={() => sendMail(`hire_notif_${h.id}`)}
-                      onEdit={() => openEdit(h)}
-                      onDelete={() => handleDelete(String(h.id), h.name)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* ── 2. 온보딩 ── */}
-            <section>
-              <SectionHead icon="🚀" title="입사자별 온보딩 관리" desc="카드를 펼쳐 단계별 완료 체크 · 메일 발송" badge={`${newHires.length}명`} />
-              {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                <div className="space-y-3">
-                  {newHires.map(hire => (
-                    <OnboardingCard key={hire.id} hire={hire} stageDone={stageDone} mailSent={mailSent} onToggleDone={toggleDone} onSendMail={sendMail} />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* ── 3. 입사자 카페포인트 ── */}
-            <section>
-              <SectionHead icon="☕" title="입사자 카페포인트 메일 발송 관리" desc="엑셀 업로드 → 일할 계산 금액 자동 입력 → 메일 발송" badge={`${newHires.length}명`}
-                action={<ExcelUploadBtn onParsed={setCafeExcel} />}
-              />
-              {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {newHires.map(e => {
-                    const key = `hire_cafe_${e.id}`
-                    return (
-                      <PointCard key={e.id} emp={e} type="hire" variant="cafe"
-                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                        fixedRecipients={FR.cafe}
-                        defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date ?? null)} 일할 계산`}
-                        points={lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
+            {/* ── 입사자 (접기/펼치기) ── */}
+            <CollapsibleSection icon="👋" title="입사자" desc="입사자 알림 및 온보딩 단계 관리" badge={`${newHires.length}명`}
+              action={<button onClick={openAdd} className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">+ 입사자 추가</button>}
+            >
+              {/* 입사자 알림 */}
+              <div>
+                <SubHead icon="🔔" title="입사자 알림 관리" desc="협업지원실 알림 발송" badge={`${newHires.length}명`} />
+                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
+                  <div className="space-y-2">
+                    {newHires.map(h => (
+                      <NotifRow key={h.id} emp={h} type="hire"
+                        mailSent={!!mailSent[`hire_notif_${h.id}`]}
+                        onSend={() => sendMail(`hire_notif_${h.id}`)}
+                        onEdit={() => openEdit(h)}
+                        onDelete={() => handleDelete(String(h.id), h.name)}
                       />
-                    )
-                  })}
-                </div>
-              )}
-            </section>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* 온보딩 */}
+              <div>
+                <SubHead icon="🚀" title="온보딩 단계 관리" desc="카드를 펼쳐 단계별 완료 체크 · 메일 발송" badge={`${newHires.length}명`} />
+                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
+                  <div className="space-y-3">
+                    {newHires.map(hire => (
+                      <OnboardingCard key={hire.id} hire={hire} stageDone={stageDone} mailSent={mailSent} onToggleDone={toggleDone} onSendMail={sendMail} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
 
-            {/* ── 4. 입사자 웰니스 포인트 ── */}
-            <section>
-              <SectionHead icon="💚" title="입사자 웰니스 포인트 메일 발송 관리" desc="입사자 웰니스 포인트 안내 메일 발송" badge={`${newHires.length}명`} />
-              {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {newHires.map(e => {
-                    const key = `hire_wellness_${e.id}`
-                    return (
-                      <PointCard key={e.id} emp={e} type="hire" variant="wellness"
-                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                        fixedRecipients={FR.wellness}
-                        defaultSubject={`[웰니스포인트 안내] ${e.name} 님 ${e.join_date ?? ''} 입사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.join_date ?? null)} 일할 계산`}
-                        points={null}
+            {/* ── 퇴사자 (접기/펼치기) ── */}
+            <CollapsibleSection icon="🚪" title="퇴사자" desc="퇴사자 알림 관리" badge={`${departures.length}명`}
+              action={<button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }} className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">+ 퇴사자 추가</button>}
+            >
+              <div>
+                <SubHead icon="🔔" title="퇴사자 알림 관리" desc="협업지원실·보안인프라팀 알림 발송" badge={`${departures.length}명`} />
+                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
+                  <div className="space-y-2">
+                    {departures.map(d => (
+                      <NotifRow key={d.id} emp={d} type="leave"
+                        mailSent={!!mailSent[`leave_notif_${d.id}`]}
+                        onSend={() => sendMail(`leave_notif_${d.id}`)}
+                        onEdit={() => openEdit(d)}
+                        onDelete={() => handleDelete(String(d.id), d.name)}
                       />
-                    )
-                  })}
-                </div>
-              )}
-            </section>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
 
-            {/* ── 5. 퇴사자 알림 ── */}
-            <section>
-              <SectionHead icon="🚪" title="퇴사자 알림 관리" desc="퇴사자 등록 시 협업지원실·보안인프라팀 알림 발송" badge={`${departures.length}명`}
-                action={<button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }} className="text-xs font-semibold text-purple-600 hover:text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">+ 퇴사자 추가</button>}
-              />
-              {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                <div className="space-y-2">
-                  {departures.map(d => (
-                    <NotifRow key={d.id} emp={d} type="leave"
-                      mailSent={!!mailSent[`leave_notif_${d.id}`]}
-                      onSend={() => sendMail(`leave_notif_${d.id}`)}
-                      onEdit={() => openEdit(d)}
-                      onDelete={() => handleDelete(String(d.id), d.name)}
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
+            {/* ── 카페포인트 (접기/펼치기) ── */}
+            <CollapsibleSection icon="☕" title="카페포인트" desc="입사자/퇴사자 카페포인트 일할 계산 및 메일 발송"
+              badge={`${newHires.length + departures.length}명`}
+            >
+              {/* 입사자 카페포인트 */}
+              <div>
+                <SubHead icon="☕" title="입사자 카페포인트" desc="입사자 기준 표 자동 계산 → 메일 발송" badge={`${newHires.length}명`}
+                  action={<ExcelUploadBtn onParsed={setCafeExcel} />}
+                />
+                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {newHires.map(e => {
+                      const key = `hire_cafe_${e.id}`
+                      return (
+                        <PointCard key={e.id} emp={e} type="hire" variant="cafe"
+                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                          fixedRecipients={FR.cafe}
+                          defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} ${e.join_reason ?? '입사'} · ${empLabel(e)} ${formatMonth(e.join_date ?? null)} 일할 계산`}
+                          points={lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* 퇴사자 카페포인트 */}
+              <div>
+                <SubHead icon="🧾" title="퇴사자 카페포인트" desc="퇴사자 기준 표 자동 계산 → 메일 발송" badge={`${departures.length}명`}
+                  action={<ExcelUploadBtn onParsed={data => setCafeExcel(prev => ({ ...prev, ...data }))} />}
+                />
+                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {departures.map(e => {
+                      const key = `leave_cafe_${e.id}`
+                      return (
+                        <PointCard key={e.id} emp={e} type="leave" variant="cafe"
+                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                          fixedRecipients={FR.cafe}
+                          defaultSubject={`[카페포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${empLabel(e)} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
+                          points={lookupExcelPoints(cafeExcel, e.leave_date ?? null, 'leave')}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
 
-            {/* ── 6. 퇴사자 카페포인트 ── */}
-            <section>
-              <SectionHead icon="🧾" title="퇴사자 카페포인트 메일 발송 관리" desc="엑셀 업로드 → 일할 계산 금액 자동 입력 → 메일 발송" badge={`${departures.length}명`}
-                action={<ExcelUploadBtn onParsed={data => setCafeExcel(prev => ({ ...prev, ...data }))} />}
-              />
-              {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {departures.map(e => {
-                    const key = `leave_cafe_${e.id}`
-                    return (
-                      <PointCard key={e.id} emp={e} type="leave" variant="cafe"
-                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                        fixedRecipients={FR.cafe}
-                        defaultSubject={`[카페포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
-                        points={lookupExcelPoints(cafeExcel, e.leave_date ?? null, 'leave')}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-            </section>
-
-            {/* ── 7. 퇴사자 웰니스 포인트 ── */}
-            <section>
-              <SectionHead icon="💼" title="퇴사자 웰니스 포인트 메일 발송 관리" desc="퇴사자 웰니스 포인트 정산 메일 발송" badge={`${departures.length}명`} />
-              {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {departures.map(e => {
-                    const key = `leave_wellness_${e.id}`
-                    return (
-                      <PointCard key={e.id} emp={e} type="leave" variant="wellness"
-                        mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
-                        fixedRecipients={FR.wellness}
-                        defaultSubject={`[웰니스포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${e.division ?? ''} ${e.team ?? ''} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
-                        points={null}
-                      />
-                    )
-                  })}
-                </div>
-              )}
-            </section>
+            {/* ── 웰니스포인트 (접기/펼치기) ── */}
+            <CollapsibleSection icon="💚" title="웰니스포인트" desc="입사자/퇴사자 웰니스 포인트 메일 발송"
+              badge={`${newHires.length + departures.length}명`}
+            >
+              {/* 입사자 웰니스 */}
+              <div>
+                <SubHead icon="💚" title="입사자 웰니스 포인트" desc="입사자 웰니스 포인트 안내 메일 발송" badge={`${newHires.length}명`} />
+                {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {newHires.map(e => {
+                      const key = `hire_wellness_${e.id}`
+                      return (
+                        <PointCard key={e.id} emp={e} type="hire" variant="wellness"
+                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                          fixedRecipients={FR.wellness}
+                          defaultSubject={`[웰니스포인트 안내] ${e.name} 님 ${e.join_date ?? ''} ${e.join_reason ?? '입사'} · ${empLabel(e)} ${formatMonth(e.join_date ?? null)} 일할 계산`}
+                          points={null}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* 퇴사자 웰니스 */}
+              <div>
+                <SubHead icon="💼" title="퇴사자 웰니스 포인트" desc="퇴사자 웰니스 포인트 정산 메일 발송" badge={`${departures.length}명`} />
+                {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                    {departures.map(e => {
+                      const key = `leave_wellness_${e.id}`
+                      return (
+                        <PointCard key={e.id} emp={e} type="leave" variant="wellness"
+                          mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
+                          fixedRecipients={FR.wellness}
+                          defaultSubject={`[웰니스포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${empLabel(e)} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
+                          points={null}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
           </>
         )}
       </div>

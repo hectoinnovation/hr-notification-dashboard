@@ -3,7 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export type Employee = {
@@ -12,9 +11,10 @@ export type Employee = {
   join_date?: string
   leave_date?: string
   exit_date?: string
-  division?: string
-  team?: string
+  department?: string   // 부서
+  division?: string     // 실
+  team?: string         // 팀
   leader?: string
-  status: 'active'|'resigned'
+  join_reason?: string  // 입사 | 전적
+  status: 'active' | 'resigned'
 }
-
