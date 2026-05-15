@@ -561,21 +561,25 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
 }
 
 // ─── 엑셀 업로드 버튼 ─────────────────────────────────────────────────────────
-function ExcelUploadBtn({ onParsed }: { onParsed: (data: Record<number, ExcelSheetData>) => void }) {
+function ExcelUploadBtn({ onParsed, savedFileName }: {
+  onParsed: (data: Record<number, ExcelSheetData>, fileName: string) => void
+  savedFileName?: string | null
+}) {
   const ref = useRef<HTMLInputElement>(null)
-  const [fileName, setFileName] = useState<string | null>(null)
-  const [parsing,  setParsing]  = useState(false)
+  const [localName, setLocalName] = useState<string | null>(null)
+  const [parsing,   setParsing]   = useState(false)
+  const displayName = localName ?? savedFileName
   async function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
     setParsing(true)
-    try { const data = parseExcelFile(await file.arrayBuffer()); setFileName(file.name); onParsed(data) }
+    try { const data = parseExcelFile(await file.arrayBuffer()); setLocalName(file.name); onParsed(data, file.name) }
     catch { alert('엑셀 파싱 실패: 파일 형식을 확인해주세요.') }
     finally { setParsing(false); if (ref.current) ref.current.value = '' }
   }
   return (
     <div className="flex items-center gap-2">
-      {fileName && <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">✓ {fileName}</span>}
+      {displayName && <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">✓ {displayName}</span>}
       <button onClick={() => ref.current?.click()} disabled={parsing}
         className="inline-flex items-center gap-1.5 text-xs font-semibold bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 2v8M4 7l4 4 4-4M2 12h12v2H2z"/></svg>
@@ -707,7 +711,8 @@ export default function HRDashboard() {
   const [submitting, setSubmitting] = useState(false)
   const [stageDone,  setStageDone]  = useState<Record<string, boolean>>({})
   const [mailSent,   setMailSent]   = useState<Record<string, boolean>>({})
-  const [cafeExcel,  setCafeExcel]  = useState<Record<number, ExcelSheetData>>({})
+  const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
+  const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
 
   const [activeTab, setActiveTab] = useState<TabId>('notify')
   const [search,    setSearch]    = useState('')
@@ -781,11 +786,12 @@ export default function HRDashboard() {
 
   async function fetchAllData() {
     setLoading(true); setError(null)
-    const [empRes, taskRes, notifRes, pointRes] = await Promise.all([
+    const [empRes, taskRes, notifRes, pointRes, excelRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
       supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent'),
       supabase.from('notifications').select('employee_id,notification_type,mail_sent'),
       supabase.from('point_requests').select('employee_id,employee_type,point_type,mail_sent'),
+      supabase.from('cafe_excel_data').select('file_name,data').eq('id', 'singleton').maybeSingle(),
     ])
     if (empRes.error) { setError(empRes.error.message); setLoading(false); return }
     setEmployees(empRes.data ?? [])
@@ -802,7 +808,20 @@ export default function HRDashboard() {
     for (const p of pointRes.data ?? []) {
       if (p.mail_sent) newMail[`${p.employee_type}_${p.point_type}_${p.employee_id}`] = true
     }
+    if (excelRes.data) {
+      setCafeExcel(excelRes.data.data as Record<number, ExcelSheetData>)
+      setCafeExcelFileName(excelRes.data.file_name ?? null)
+    }
     setStageDone(newDone); setMailSent(newMail); setLoading(false)
+  }
+
+  async function handleCafeExcelUpload(data: Record<number, ExcelSheetData>, fileName: string) {
+    setCafeExcel(data)
+    setCafeExcelFileName(fileName)
+    const { error } = await supabase.from('cafe_excel_data').upsert({
+      id: 'singleton', file_name: fileName, data, uploaded_at: new Date().toISOString(),
+    }, { onConflict: 'id' })
+    if (error) setError('엑셀 저장 실패: ' + error.message)
   }
 
   async function handleSubmit() {
@@ -1056,7 +1075,7 @@ export default function HRDashboard() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-gray-400">{filteredCafe.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
-                  <ExcelUploadBtn onParsed={setCafeExcel} />
+                  <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
                 {filteredCafe.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
