@@ -45,8 +45,8 @@ const EMPTY_FORM: EmployeeForm = {
 
 interface DayPointData { totalPoints: number; settlementPoints: number }
 interface ExcelSheetData {
-  hire:  Record<number, DayPointData>   // key = 일(day 1-31), 입사자 기준
-  leave: Record<number, DayPointData>   // key = 일(day 1-31), 퇴사자 기준
+  hire:  Record<number, DayPointData>   // 입사자 기준 (key = 일)
+  leave: Record<number, DayPointData>   // 퇴사자 기준 (key = 일)
 }
 
 // ─── 유틸 ─────────────────────────────────────────────────────────────────────
@@ -56,9 +56,20 @@ function formatMonth(dateStr: string | null): string {
   return `${d.getFullYear()}년 ${d.getMonth() + 1}월`
 }
 
-// 공백·괄호 제거 후 비교 (엑셀 표기 차이 흡수)
 function normalizeCell(s: string) {
   return s.replace(/\s+/g, '').replace(/[()（）[\]]/g, '')
+}
+
+// 날짜 레이블 (입사일 / 퇴사일 / 전적일)
+function getDateLabel(type: 'hire' | 'leave', isTransfer: boolean): string {
+  if (isTransfer) return '전적일'
+  return type === 'hire' ? '입사일' : '퇴사일'
+}
+
+// 구분 텍스트
+function get구분(emp: Employee, type: 'hire' | 'leave'): string {
+  if (type === 'leave') return '퇴사'
+  return emp.join_reason ?? '입사'  // '입사' | '전적'
 }
 
 function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
@@ -70,18 +81,15 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
     if (!ws) continue
     const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
-    // sectionTitle: '입사자 기준' | '퇴사자 기준'
     function extractTable(sectionTitle: string): Record<number, DayPointData> {
       const map: Record<number, DayPointData> = {}
       const normTitle = normalizeCell(sectionTitle)
 
-      // ① 섹션 헤더 행 탐색
       let titleRow = -1
       for (let r = 0; r < rows.length; r++) {
-        const found = (rows[r] as unknown[]).some(c =>
-          normalizeCell(String(c ?? '')).includes(normTitle)
-        )
-        if (found) { titleRow = r; break }
+        if ((rows[r] as unknown[]).some(c => normalizeCell(String(c ?? '')).includes(normTitle))) {
+          titleRow = r; break
+        }
       }
       if (titleRow === -1) {
         console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더를 찾지 못했습니다.`)
@@ -89,7 +97,6 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
       }
       console.log(`[Excel] ${m}월: "${sectionTitle}" 헤더 발견 (row ${titleRow})`)
 
-      // ② 헤더 행(일자/총부여포인트/정산포인트 컬럼) 탐색 — 헤더 아래 최대 6행 내
       let headerRow = -1, dayCol = -1, totalCol = -1, settleCol = -1
       for (let r = titleRow + 1; r < Math.min(titleRow + 7, rows.length); r++) {
         const row = rows[r] as unknown[]
@@ -104,11 +111,10 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
         if (headerRow !== -1) break
       }
       if (headerRow === -1) {
-        console.log(`[Excel] ${m}월 "${sectionTitle}": 컬럼 헤더(일자/총부여포인트/정산포인트)를 찾지 못했습니다.`)
+        console.log(`[Excel] ${m}월 "${sectionTitle}": 컬럼 헤더를 찾지 못했습니다.`)
         return map
       }
 
-      // ③ 데이터 행 읽기
       for (let r = headerRow + 1; r < rows.length; r++) {
         const row = rows[r] as unknown[]
         const raw = row[dayCol]
@@ -125,25 +131,25 @@ function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
     }
 
     result[m] = {
-      hire:  extractTable('입사자 기준'),  // 입사/전적 → 반드시 이 표 사용
-      leave: extractTable('퇴사자 기준'),  // 퇴사      → 반드시 이 표 사용
+      hire:  extractTable('입사자 기준'),
+      leave: extractTable('퇴사자 기준'),
     }
   }
   return result
 }
 
-// type: 'hire' → 입사자기준, 'leave' → 퇴사자기준 (절대 교차 사용 안 함)
+// 입사 → hire 표 / 퇴사 → leave 표 / 전적 → skip (null 반환)
 function lookupExcelPoints(
   excelData: Record<number, ExcelSheetData>,
   dateStr: string | null,
   type: 'hire' | 'leave',
 ): DayPointData | null {
   if (!dateStr) return null
-  const d    = new Date(dateStr)
-  const m    = d.getMonth() + 1
-  const day  = d.getDate()
+  const d         = new Date(dateStr)
+  const m         = d.getMonth() + 1
+  const day       = d.getDate()
   const tableLabel = type === 'hire' ? '입사자 기준' : '퇴사자 기준'
-  const sheet = excelData[m]
+  const sheet     = excelData[m]
   if (!sheet) {
     console.log(`[포인트 조회] ${m}월 시트 없음 — 엑셀을 업로드했는지 확인하세요.`)
     return null
@@ -151,7 +157,7 @@ function lookupExcelPoints(
   const result = sheet[type][day] ?? null
   console.log(
     `[포인트 조회] ${m}월 시트 | ${tableLabel} | ${day}일 →`,
-    result ? `총 ${result.totalPoints}P, 정산 ${result.settlementPoints}P` : '해당 행 없음',
+    result ? `총 ${result.totalPoints}P / 정산 ${result.settlementPoints}P` : '해당 행 없음',
   )
   return result
 }
@@ -179,17 +185,15 @@ const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
 const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
 const TD = 'border:1px solid #e5e7eb;padding:8px 12px;white-space:nowrap'
 
-function empLabel(emp: Employee) {
-  return [emp.department, emp.division, emp.team].filter(Boolean).join(' ') || '-'
-}
-
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
-  const label = type === 'hire' ? '입사' : '퇴사'
-  const date  = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const isTransfer = type === 'hire' && emp.join_reason === '전적'
+  const dateLabel  = getDateLabel(type, isTransfer)
+  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const label      = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 <table style="${TS}">
-<tr><th style="${TH}">${label}일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td></tr>
+<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr>
 </table>`
 }
 
@@ -198,24 +202,37 @@ function makeOnboardingHtml(hireName: string, stageLabel: string) {
 <p style="font-family:sans-serif;font-size:14px;color:#374151">위 온보딩 단계 진행 요청드립니다.</p>`
 }
 
-function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null) {
-  const 구분   = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
-  const date   = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+// isTransfer = true 이면 포인트 컬럼 제외, 전적 안내 메시지만
+function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
+  const 구분      = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+  const dateLabel = getDateLabel(type, isTransfer)
+  const date      = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+
+  if (isTransfer) {
+    return `<h3 style="color:#ea580c">[카페포인트] 전적 안내 — ${emp.name}</h3>
+<table style="${TS}">
+<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td></tr>
+</table>
+<p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:12px">※ 전적자는 카페포인트 계산 대상이 아닙니다.</p>`
+  }
+
   const total  = points ? points.totalPoints.toLocaleString() + 'P' : '-'
   const settle = points ? points.settlementPoints.toLocaleString() + 'P' : '-'
   return `<h3 style="color:#ea580c">[카페포인트 ${type === 'hire' ? '안내' : '정산'}] ${emp.name}</h3>
 <table style="${TS}">
-<tr><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
+<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr>
 </table>`
 }
 
-function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave') {
-  const 사유 = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
-  const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-  return `<h3 style="color:#ea580c">[웰니스 포인트 ${type === 'hire' ? '안내' : '정산'}] ${emp.name}</h3>
+function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
+  const 사유      = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+  const dateLabel = getDateLabel(type, isTransfer)
+  const date      = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer ? '전적' : type === 'hire' ? '안내' : '정산'}] ${emp.name}</h3>
 <table style="${TS}">
-<tr><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">입사 사유</th></tr>
+<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">입사 사유</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department ?? '-'}</td><td style="${TD}">${emp.division ?? '-'}</td><td style="${TD}">${emp.team ?? '-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${사유}</td></tr>
 </table>`
 }
@@ -258,8 +275,6 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
     </div>
   )
 }
-
-// 소제목 (섹션 내 서브 헤더)
 function SubHead({ icon, title, desc, badge, action }: {
   icon: string; title: string; desc?: string; badge?: string; action?: ReactNode
 }) {
@@ -282,21 +297,15 @@ function SubHead({ icon, title, desc, badge, action }: {
 
 // ─── 접기/펼치기 섹션 ─────────────────────────────────────────────────────────
 function CollapsibleSection({ icon, title, desc, badge, action, children }: {
-  icon: string; title: string; desc?: string; badge?: string
-  action?: ReactNode; children: ReactNode
+  icon: string; title: string; desc?: string; badge?: string; action?: ReactNode; children: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   return (
     <section>
       <div className="flex items-center justify-between gap-3">
-        <button
-          onClick={() => setOpen(p => !p)}
-          className="flex items-center gap-2.5 flex-1 text-left group"
-        >
-          <svg
-            className={`w-4 h-4 text-gray-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-90' : ''}`}
-            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2.5}
-          >
+        <button onClick={() => setOpen(p => !p)} className="flex items-center gap-2.5 flex-1 text-left group">
+          <svg className={`w-4 h-4 text-gray-400 transition-transform duration-200 flex-shrink-0 ${open ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
           </svg>
           <span className="text-xl leading-none">{icon}</span>
@@ -307,9 +316,7 @@ function CollapsibleSection({ icon, title, desc, badge, action, children }: {
         </button>
         <div className="flex items-center gap-2 flex-shrink-0">
           {action}
-          {badge && (
-            <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full whitespace-nowrap">{badge}</span>
-          )}
+          {badge && <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full whitespace-nowrap">{badge}</span>}
         </div>
       </div>
       {open && <div className="mt-5 space-y-8">{children}</div>}
@@ -319,8 +326,8 @@ function CollapsibleSection({ icon, title, desc, badge, action, children }: {
 
 // ─── 메일 패널 ────────────────────────────────────────────────────────────────
 function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend }: {
-  fixedRecipients: readonly Recipient[]
-  defaultSubject: string; mailSent: boolean; htmlBody: string; onSend: () => void
+  fixedRecipients: readonly Recipient[]; defaultSubject: string
+  mailSent: boolean; htmlBody: string; onSend: () => void
 }) {
   const [subject, setSubject] = useState(defaultSubject)
   const [extra, setExtra]     = useState('')
@@ -377,9 +384,10 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
   mailSent: boolean; onSend: () => void; onEdit: () => void; onDelete: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const isHire = type === 'hire'
-  const date = (isHire ? emp.join_date : emp.leave_date) ?? '-'
-  const orgLine = [emp.department, emp.division, emp.team].filter(Boolean).join(' · ') || '-'
+  const isTransfer = type === 'hire' && emp.join_reason === '전적'
+  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const dateLabel  = getDateLabel(type, isTransfer)
+  const orgLine    = [emp.department, emp.division, emp.team].filter(Boolean).join(' · ') || '-'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -388,8 +396,11 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
           {emp.name[0]}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-gray-900 leading-none">{emp.name}</p>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">{date} · {orgLine}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-bold text-gray-900 leading-none">{emp.name}</p>
+            {isTransfer && <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded">전적</span>}
+          </div>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{dateLabel} {date} · {orgLine}</p>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button onClick={() => setOpen(p => !p)}
@@ -408,8 +419,8 @@ function NotifRow({ emp, type, mailSent, onSend, onEdit, onDelete }: {
       {open && (
         <div className="px-4 pb-4">
           <MailPanel
-            fixedRecipients={isHire ? FR.hire : FR.leave}
-            defaultSubject={isHire ? `[입사 안내] ${emp.name} 님 ${date} 입사` : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`}
+            fixedRecipients={type === 'hire' ? FR.hire : FR.leave}
+            defaultSubject={isTransfer ? `[입사 안내] ${emp.name} 님 ${date} 전적` : type === 'hire' ? `[입사 안내] ${emp.name} 님 ${date} 입사` : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`}
             mailSent={mailSent} htmlBody={makeNotifHtml(emp, type)} onSend={onSend}
           />
         </div>
@@ -450,8 +461,7 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
       </div>
       {open && (
         <div className="px-5 pb-4">
-          <MailPanel
-            fixedRecipients={FR.onboard}
+          <MailPanel fixedRecipients={FR.onboard}
             defaultSubject={`[온보딩] ${hireName} - ${stage.label}`}
             mailSent={isSent} htmlBody={makeOnboardingHtml(hireName, stage.label)} onSend={onSendMail}
           />
@@ -467,9 +477,11 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
   onToggleDone: (empId: string, stageId: string) => void; onSendMail: (key: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const done = STAGES.filter(s => !!stageDone[`${hire.id}_${s.id}`]).length
-  const pct  = Math.round((done / STAGES.length) * 100)
-  const orgLine = [hire.department, hire.division, hire.team].filter(Boolean).join(' ') || '-'
+  const done    = STAGES.filter(s => !!stageDone[`${hire.id}_${s.id}`]).length
+  const pct     = Math.round((done / STAGES.length) * 100)
+  const orgLine = [hire.department, hire.division, hire.team].filter(Boolean).join(' · ') || '-'
+  const isTransfer = hire.join_reason === '전적'
+  const dateLabel  = isTransfer ? '전적일' : '입사일'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -478,8 +490,11 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-9 h-9 rounded-full bg-orange-500 text-white flex items-center justify-center font-bold text-sm flex-shrink-0">{hire.name[0]}</div>
             <div className="min-w-0">
-              <p className="font-bold text-gray-900">{hire.name}</p>
-              <p className="text-xs text-gray-500 truncate">{hire.join_date ?? '-'} 입사 · {orgLine}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="font-bold text-gray-900">{hire.name}</p>
+                {isTransfer && <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded">전적</span>}
+              </div>
+              <p className="text-xs text-gray-500 truncate">{dateLabel} {hire.join_date ?? '-'} · {orgLine}</p>
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
@@ -516,48 +531,123 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
   )
 }
 
-// ─── 포인트 카드 ──────────────────────────────────────────────────────────────
-function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, defaultSubject, points }: {
+// ─── 포인트 카드 (접기/펼치기 + 미리보기) ────────────────────────────────────
+function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, points, isTransfer }: {
   emp: Employee; type: 'hire' | 'leave'; variant: 'cafe' | 'wellness'
   mailSent: boolean; onSendMail: () => void
-  fixedRecipients: readonly Recipient[]; defaultSubject: string
+  fixedRecipients: readonly Recipient[]
   points: DayPointData | null
+  isTransfer: boolean
 }) {
-  const date     = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-  const 구분     = type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사')
-  const htmlBody = variant === 'cafe' ? makeCafeHtml(emp, type, points) : makeWellnessHtml(emp, type)
+  const [expanded,    setExpanded]    = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+
+  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const dateLabel  = getDateLabel(type, isTransfer)
+  const 구분       = get구분(emp, type)
+  const orgParts   = [emp.department, emp.division, emp.team].filter(Boolean)
+
+  const defaultSubject = variant === 'cafe'
+    ? '[헥토이노베이션] 카페포인트 요청의 건'
+    : '[헥토이노베이션] 웰니스포인트 요청의 건'
+
+  const htmlBody = variant === 'cafe'
+    ? makeCafeHtml(emp, type, points, isTransfer)
+    : makeWellnessHtml(emp, type, isTransfer)
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 flex flex-col gap-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="font-bold text-gray-900">{emp.name}</p>
-          <p className="text-xs text-gray-400 mt-0.5">{type === 'hire' ? '입사일' : '퇴사일'}: {date}</p>
-          <p className="text-xs text-gray-400">{[emp.department, emp.division, emp.team].filter(Boolean).join(' · ') || '-'}</p>
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* 헤더 (항상 표시) */}
+      <button onClick={() => setExpanded(p => !p)} className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
+            {emp.name[0]}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <p className="text-sm font-bold text-gray-900">{emp.name}</p>
+              {isTransfer && (
+                <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 px-1.5 py-0.5 rounded">전적</span>
+              )}
+              {mailSent && <GreenBadge label="발송완료" />}
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">
+              {dateLabel} {date}
+              {orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
+            </p>
+          </div>
+          <svg className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4" />
+          </svg>
         </div>
-        {mailSent && <GreenBadge label="발송 완료" />}
-      </div>
-      <div>
-        <InfoRow label="기준월"><span className="text-xs font-semibold text-gray-700">{formatMonth(date)}</span></InfoRow>
-        <InfoRow label="구분"><span className="text-xs font-semibold text-gray-700">{구분}</span></InfoRow>
-        {variant === 'cafe' && (
-          <>
-            <InfoRow label="총 부여포인트">
-              <span className={`text-xs font-bold ${points ? 'text-orange-600' : 'text-gray-300'}`}>
-                {points ? points.totalPoints.toLocaleString() + 'P' : '—'}
-              </span>
-            </InfoRow>
-            <InfoRow label="정산포인트(P)">
-              <span className={`text-xs font-bold ${points ? 'text-blue-600' : 'text-gray-300'}`}>
-                {points ? points.settlementPoints.toLocaleString() + 'P' : '—'}
-              </span>
-            </InfoRow>
-            {!points && <p className="text-xs text-gray-400 mt-1">* 엑셀 업로드 후 자동 계산됩니다</p>}
-          </>
-        )}
-      </div>
-      <MailPanel fixedRecipients={fixedRecipients} defaultSubject={defaultSubject}
-        mailSent={mailSent} htmlBody={htmlBody} onSend={onSendMail} />
+      </button>
+
+      {/* 펼쳐진 상세 */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
+
+          {/* 직원 정보 */}
+          <div className="space-y-0">
+            <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
+            <InfoRow label="구분"><span className="text-xs font-semibold text-gray-700">{구분}</span></InfoRow>
+            {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
+            {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
+            {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
+          </div>
+
+          {/* 포인트 정보 (카페만) */}
+          {variant === 'cafe' && (
+            <div>
+              {isTransfer ? (
+                <div className="text-xs text-gray-500 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                  ℹ️ 전적자는 카페포인트 계산 대상이 아닙니다. 전적 안내 메일만 발송됩니다.
+                </div>
+              ) : (
+                <div className="space-y-0">
+                  <InfoRow label="총 부여포인트">
+                    <span className={`text-xs font-bold ${points ? 'text-orange-600' : 'text-gray-300'}`}>
+                      {points ? points.totalPoints.toLocaleString() + 'P' : '—'}
+                    </span>
+                  </InfoRow>
+                  <InfoRow label="정산포인트(P)">
+                    <span className={`text-xs font-bold ${points ? 'text-blue-600' : 'text-gray-300'}`}>
+                      {points ? points.settlementPoints.toLocaleString() + 'P' : '—'}
+                    </span>
+                  </InfoRow>
+                  {!points && <p className="text-xs text-gray-400 pt-1">* 엑셀 업로드 후 자동 계산됩니다</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 메일 본문 미리보기 토글 */}
+          <div>
+            <button onClick={() => setShowPreview(p => !p)}
+              className="flex items-center gap-1 text-xs text-gray-500 hover:text-orange-600 transition-colors mb-2">
+              <svg className={`w-3 h-3 transition-transform ${showPreview ? 'rotate-90' : ''}`}
+                fill="none" viewBox="0 0 10 10" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 2l3 3-3 3" />
+              </svg>
+              메일 본문 미리보기 {showPreview ? '숨기기' : '보기'}
+            </button>
+            {showPreview && (
+              <div className="rounded-lg border border-gray-200 bg-white p-3 overflow-auto max-h-64 text-xs shadow-inner">
+                <div dangerouslySetInnerHTML={{ __html: htmlBody }} />
+              </div>
+            )}
+          </div>
+
+          {/* 메일 발송 패널 */}
+          <MailPanel
+            fixedRecipients={fixedRecipients}
+            defaultSubject={defaultSubject}
+            mailSent={mailSent}
+            htmlBody={htmlBody}
+            onSend={onSendMail}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -844,7 +934,6 @@ export default function HRDashboard() {
         onSubmit={handleSubmit} onClose={closeForm}
       />
 
-      {/* 헤더 */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-screen-xl mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -907,11 +996,10 @@ export default function HRDashboard() {
 
         {!loading && (
           <>
-            {/* ── 입사자 (접기/펼치기) ── */}
+            {/* ── 입사자 ── */}
             <CollapsibleSection icon="👋" title="입사자" desc="입사자 알림 및 온보딩 단계 관리" badge={`${newHires.length}명`}
               action={<button onClick={openAdd} className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">+ 입사자 추가</button>}
             >
-              {/* 입사자 알림 */}
               <div>
                 <SubHead icon="🔔" title="입사자 알림 관리" desc="협업지원실 알림 발송" badge={`${newHires.length}명`} />
                 {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
@@ -927,7 +1015,6 @@ export default function HRDashboard() {
                   </div>
                 )}
               </div>
-              {/* 온보딩 */}
               <div>
                 <SubHead icon="🚀" title="온보딩 단계 관리" desc="카드를 펼쳐 단계별 완료 체크 · 메일 발송" badge={`${newHires.length}명`} />
                 {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
@@ -940,7 +1027,7 @@ export default function HRDashboard() {
               </div>
             </CollapsibleSection>
 
-            {/* ── 퇴사자 (접기/펼치기) ── */}
+            {/* ── 퇴사자 ── */}
             <CollapsibleSection icon="🚪" title="퇴사자" desc="퇴사자 알림 관리" badge={`${departures.length}명`}
               action={<button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }} className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">+ 퇴사자 추가</button>}
             >
@@ -961,46 +1048,49 @@ export default function HRDashboard() {
               </div>
             </CollapsibleSection>
 
-            {/* ── 카페포인트 (접기/펼치기) ── */}
-            <CollapsibleSection icon="☕" title="카페포인트" desc="입사자/퇴사자 카페포인트 일할 계산 및 메일 발송"
+            {/* ── 카페포인트 ── */}
+            <CollapsibleSection icon="☕" title="카페포인트" desc="입사/퇴사/전적 카페포인트 일할 계산 및 메일 발송"
               badge={`${newHires.length + departures.length}명`}
             >
-              {/* 입사자 카페포인트 */}
+              {/* 입사자 카페 */}
               <div>
-                <SubHead icon="☕" title="입사자 카페포인트" desc="입사자 기준 표 자동 계산 → 메일 발송" badge={`${newHires.length}명`}
+                <SubHead icon="☕" title="입사자 카페포인트" desc="입사: 입사자 기준 표 / 전적: 포인트 계산 없음" badge={`${newHires.length}명`}
                   action={<ExcelUploadBtn onParsed={setCafeExcel} />}
                 />
                 {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {newHires.map(e => {
-                      const key = `hire_cafe_${e.id}`
+                      const key        = `hire_cafe_${e.id}`
+                      const isTransfer = e.join_reason === '전적'
                       return (
                         <PointCard key={e.id} emp={e} type="hire" variant="cafe"
                           mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                           fixedRecipients={FR.cafe}
-                          defaultSubject={`[카페포인트 안내] ${e.name} 님 ${e.join_date ?? ''} ${e.join_reason ?? '입사'} · ${empLabel(e)} ${formatMonth(e.join_date ?? null)} 일할 계산`}
-                          points={lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
+                          // 입사 → 입사자 기준 / 전적 → null (계산 없음)
+                          points={isTransfer ? null : lookupExcelPoints(cafeExcel, e.join_date ?? null, 'hire')}
+                          isTransfer={isTransfer}
                         />
                       )
                     })}
                   </div>
                 )}
               </div>
-              {/* 퇴사자 카페포인트 */}
+              {/* 퇴사자 카페 */}
               <div>
                 <SubHead icon="🧾" title="퇴사자 카페포인트" desc="퇴사자 기준 표 자동 계산 → 메일 발송" badge={`${departures.length}명`}
                   action={<ExcelUploadBtn onParsed={data => setCafeExcel(prev => ({ ...prev, ...data }))} />}
                 />
                 {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {departures.map(e => {
                       const key = `leave_cafe_${e.id}`
                       return (
                         <PointCard key={e.id} emp={e} type="leave" variant="cafe"
                           mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                           fixedRecipients={FR.cafe}
-                          defaultSubject={`[카페포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${empLabel(e)} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
+                          // 퇴사 → 퇴사자 기준
                           points={lookupExcelPoints(cafeExcel, e.leave_date ?? null, 'leave')}
+                          isTransfer={false}
                         />
                       )
                     })}
@@ -1009,42 +1099,41 @@ export default function HRDashboard() {
               </div>
             </CollapsibleSection>
 
-            {/* ── 웰니스포인트 (접기/펼치기) ── */}
+            {/* ── 웰니스포인트 ── */}
             <CollapsibleSection icon="💚" title="웰니스포인트" desc="입사자/퇴사자 웰니스 포인트 메일 발송"
               badge={`${newHires.length + departures.length}명`}
             >
-              {/* 입사자 웰니스 */}
               <div>
                 <SubHead icon="💚" title="입사자 웰니스 포인트" desc="입사자 웰니스 포인트 안내 메일 발송" badge={`${newHires.length}명`} />
                 {newHires.length === 0 ? <EmptyState label="등록된 입사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {newHires.map(e => {
-                      const key = `hire_wellness_${e.id}`
+                      const key        = `hire_wellness_${e.id}`
+                      const isTransfer = e.join_reason === '전적'
                       return (
                         <PointCard key={e.id} emp={e} type="hire" variant="wellness"
                           mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                           fixedRecipients={FR.wellness}
-                          defaultSubject={`[웰니스포인트 안내] ${e.name} 님 ${e.join_date ?? ''} ${e.join_reason ?? '입사'} · ${empLabel(e)} ${formatMonth(e.join_date ?? null)} 일할 계산`}
                           points={null}
+                          isTransfer={isTransfer}
                         />
                       )
                     })}
                   </div>
                 )}
               </div>
-              {/* 퇴사자 웰니스 */}
               <div>
                 <SubHead icon="💼" title="퇴사자 웰니스 포인트" desc="퇴사자 웰니스 포인트 정산 메일 발송" badge={`${departures.length}명`} />
                 {departures.length === 0 ? <EmptyState label="등록된 퇴사자가 없습니다" /> : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                     {departures.map(e => {
                       const key = `leave_wellness_${e.id}`
                       return (
                         <PointCard key={e.id} emp={e} type="leave" variant="wellness"
                           mailSent={!!mailSent[key]} onSendMail={() => sendMail(key)}
                           fixedRecipients={FR.wellness}
-                          defaultSubject={`[웰니스포인트 정산] ${e.name} 님 ${e.leave_date ?? ''} 퇴사 · ${empLabel(e)} ${formatMonth(e.leave_date ?? null)} 일할 계산`}
                           points={null}
+                          isTransfer={false}
                         />
                       )
                     })}
