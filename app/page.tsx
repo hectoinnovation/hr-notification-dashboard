@@ -294,46 +294,55 @@ function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend
 }
 
 // ─── 공통 카드 헤더 ───────────────────────────────────────────────────────────
-function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete }: {
+function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete, selected, onSelect }: {
   emp: Employee; typeLabel: string; date: string; dateLabel: string
   mailSent: boolean; expanded: boolean
   onToggle: () => void; onEdit?: () => void; onDelete?: () => void
+  selected?: boolean; onSelect?: (checked: boolean) => void
 }) {
   const orgParts = [emp.department, emp.division, emp.team].filter(Boolean)
   return (
-    <button onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
-          {emp.name[0]}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm font-bold text-gray-900">{emp.name}</span>
-            <TypeBadge type={typeLabel} />
-            <SentBadge sent={mailSent} />
+    <div className="flex items-stretch">
+      {onSelect !== undefined && (
+        <label className="flex items-center justify-center px-3 border-r border-gray-100 bg-gray-50/50 flex-shrink-0 cursor-pointer" onClick={e => e.stopPropagation()}>
+          <input type="checkbox" checked={selected ?? false} onChange={e => onSelect(e.target.checked)}
+            className="w-4 h-4 accent-orange-500 cursor-pointer" />
+        </label>
+      )}
+      <button onClick={onToggle} className="flex-1 text-left px-4 py-3 hover:bg-gray-50 transition-colors min-w-0">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
+            {emp.name[0]}
           </div>
-          <p className="text-xs text-gray-400 mt-0.5 truncate">
-            {dateLabel} {date}{orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
-          </p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-sm font-bold text-gray-900">{emp.name}</span>
+              <TypeBadge type={typeLabel} />
+              <SentBadge sent={mailSent} />
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5 truncate">
+              {dateLabel} {date}{orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-0.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            {onEdit && (
+              <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded text-gray-300 hover:bg-gray-100 hover:text-gray-600">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
+              </button>
+            )}
+            {onDelete && (
+              <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded text-gray-300 hover:bg-red-50 hover:text-red-400">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4h10M6 4V2h4v2M5 4v9h6V4"/></svg>
+              </button>
+            )}
+          </div>
+          <svg className={`w-4 h-4 text-gray-300 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4"/>
+          </svg>
         </div>
-        <div className="flex items-center gap-0.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-          {onEdit && (
-            <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded text-gray-300 hover:bg-gray-100 hover:text-gray-600">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
-            </button>
-          )}
-          {onDelete && (
-            <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded text-gray-300 hover:bg-red-50 hover:text-red-400">
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4h10M6 4V2h4v2M5 4v9h6V4"/></svg>
-            </button>
-          )}
-        </div>
-        <svg className={`w-4 h-4 text-gray-300 transition-transform flex-shrink-0 ${expanded ? 'rotate-90' : ''}`}
-          fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4"/>
-        </svg>
-      </div>
-    </button>
+      </button>
+    </div>
   )
 }
 
@@ -358,10 +367,50 @@ function PreviewToggle({ htmlBody }: { htmlBody: string }) {
   )
 }
 
+// ─── 일괄 발송 컨트롤 ────────────────────────────────────────────────────────
+function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult }: {
+  total: number; selectedCount: number
+  onSelectAll: () => void; onDeselectAll: () => void
+  onBulkSend: () => void; bulkSending: boolean
+  bulkResult: { sent: number; failed: number } | null
+}) {
+  const cbRef = useRef<HTMLInputElement>(null)
+  const allSelected = total > 0 && selectedCount === total
+  const someSelected = selectedCount > 0 && selectedCount < total
+  useEffect(() => { if (cbRef.current) cbRef.current.indeterminate = someSelected }, [someSelected])
+  return (
+    <div className="flex items-center gap-2.5 flex-wrap">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input ref={cbRef} type="checkbox" checked={allSelected}
+          onChange={e => e.target.checked ? onSelectAll() : onDeselectAll()}
+          className="w-4 h-4 accent-orange-500 cursor-pointer" />
+        <span className="text-xs text-gray-600 font-medium">
+          {selectedCount > 0 ? `${selectedCount}명 선택됨` : '전체 선택'}
+        </span>
+      </label>
+      {selectedCount > 0 && (
+        <button onClick={onBulkSend} disabled={bulkSending}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/>
+          </svg>
+          {bulkSending ? '발송 중…' : `${selectedCount}명 일괄 발송`}
+        </button>
+      )}
+      {bulkResult && (
+        <span className={`text-xs font-semibold px-2 py-1 rounded-lg border ${bulkResult.failed > 0 ? 'text-red-600 bg-red-50 border-red-200' : 'text-emerald-600 bg-emerald-50 border-emerald-200'}`}>
+          {bulkResult.failed > 0 ? `✓ ${bulkResult.sent}건 성공 / ✗ ${bulkResult.failed}건 실패` : `✓ ${bulkResult.sent}건 발송 완료`}
+        </span>
+      )}
+    </div>
+  )
+}
+
 // ─── 알림 카드 ────────────────────────────────────────────────────────────────
-function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete }: {
+function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, onSelect }: {
   emp: Employee; type: 'hire' | 'leave'
   mailSent: boolean; onSend: () => void; onEdit: () => void; onDelete: () => void
+  selected?: boolean; onSelect?: (checked: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const isTransfer = type === 'hire' && emp.join_reason === '전적'
@@ -379,7 +428,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete }: {
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <CardHeader emp={emp} typeLabel={typeLabel} date={date} dateLabel={dateLabel}
         mailSent={mailSent} expanded={expanded} onToggle={() => setExpanded(p => !p)}
-        onEdit={onEdit} onDelete={onDelete} />
+        onEdit={onEdit} onDelete={onDelete} selected={selected} onSelect={onSelect} />
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
@@ -500,11 +549,12 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
 }
 
 // ─── 포인트 카드 ──────────────────────────────────────────────────────────────
-function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, points, isTransfer }: {
+function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, points, isTransfer, selected, onSelect }: {
   emp: Employee; type: 'hire' | 'leave'; variant: 'cafe' | 'wellness'
   mailSent: boolean; onSendMail: () => void
   fixedRecipients: readonly Recipient[]
   points: DayPointData | null; isTransfer: boolean
+  selected?: boolean; onSelect?: (checked: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
@@ -520,7 +570,8 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <CardHeader emp={emp} typeLabel={typeLabel} date={date} dateLabel={dateLabel}
-        mailSent={mailSent} expanded={expanded} onToggle={() => setExpanded(p => !p)} />
+        mailSent={mailSent} expanded={expanded} onToggle={() => setExpanded(p => !p)}
+        selected={selected} onSelect={onSelect} />
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
@@ -720,6 +771,10 @@ export default function HRDashboard() {
   const [sentF,     setSentF]     = useState('전체')
   const [limit,     setLimit]     = useState(PAGE_SIZE)
 
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const [bulkSending,  setBulkSending]  = useState(false)
+  const [bulkResult,   setBulkResult]   = useState<{ sent: number; failed: number } | null>(null)
+
   const newHires   = employees.filter(e => e.status === 'active')
   const departures = employees.filter(e => e.status === 'resigned')
 
@@ -727,8 +782,9 @@ export default function HRDashboard() {
   const todayHires  = newHires.filter(h  => h.join_date  === todayStr).length
   const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
 
-  // 검색/필터 리셋 시 더보기 초기화
+  // 검색/필터/탭 변경 시 초기화
   useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, search, typeF, sentF])
+  useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, search, typeF, sentF])
 
   // 직원 타입 레이블
   function empTypeLabel(e: Employee): string {
@@ -783,6 +839,23 @@ export default function HRDashboard() {
     { id: 'cafe'     as TabId, label: '카페포인트',       count: allCafe.length },
     { id: 'wellness' as TabId, label: '웰니스포인트',     count: allWellness.length },
   ]
+
+  function toggleSelect(key: string, checked: boolean) {
+    setSelectedKeys(prev => { const s = new Set(prev); checked ? s.add(key) : s.delete(key); return s })
+  }
+  function selectAll(keys: string[]) { setSelectedKeys(new Set(keys)) }
+  function deselectAll() { setSelectedKeys(new Set()) }
+
+  async function handleBulkSend(entries: Array<{ key: string; to: string[]; subject: string; html: string }>) {
+    setBulkSending(true); setBulkResult(null)
+    let sent = 0, failed = 0
+    for (const { key, to, subject, html } of entries) {
+      if (mailSent[key]) continue
+      const err = await sendMailApi(to, subject, html)
+      if (err) { failed++ } else { sent++; await sendMail(key) }
+    }
+    setBulkSending(false); setBulkResult({ sent, failed }); setSelectedKeys(new Set())
+  }
 
   async function fetchAllData() {
     setLoading(true); setError(null)
@@ -1033,7 +1106,7 @@ export default function HRDashboard() {
               </div>
             ) : activeTab === 'notify' ? (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-xs text-gray-400">{filteredNotify.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <div className="flex gap-2">
                     <button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }}
@@ -1046,6 +1119,30 @@ export default function HRDashboard() {
                     </button>
                   </div>
                 </div>
+                {filteredNotify.length > 0 && (
+                  <BulkControls
+                    total={filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                    selectedCount={filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                    onSelectAll={() => selectAll(filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                    onDeselectAll={deselectAll}
+                    bulkSending={bulkSending} bulkResult={bulkResult}
+                    onBulkSend={() => handleBulkSend(
+                      filteredNotify
+                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                        .map(({ emp, type, mailKey }) => {
+                          const isTransfer = type === 'hire' && emp.join_reason === '전적'
+                          const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+                          return {
+                            key: mailKey,
+                            to: (type === 'hire' ? FR.hire : FR.leave).map(r => r.email),
+                            subject: isTransfer ? `[입사 안내] ${emp.name} 님 ${date} 전적`
+                                    : type === 'hire' ? `[입사 안내] ${emp.name} 님 ${date} 입사`
+                                    : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`,
+                            html: makeNotifHtml(emp, type),
+                          }
+                        })
+                    )} />
+                )}
                 {filteredNotify.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredNotify} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
                     renderItem={(entry: NotifyEntry) => (
@@ -1054,6 +1151,8 @@ export default function HRDashboard() {
                         onSend={() => sendMail(entry.mailKey)}
                         onEdit={() => openEdit(entry.emp)}
                         onDelete={() => handleDelete(String(entry.emp.id), entry.emp.name)}
+                        selected={selectedKeys.has(entry.mailKey)}
+                        onSelect={checked => toggleSelect(entry.mailKey, checked)}
                       />
                     )} />
                 )}
@@ -1073,10 +1172,33 @@ export default function HRDashboard() {
 
             ) : activeTab === 'cafe' ? (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <p className="text-xs text-gray-400">{filteredCafe.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
+                {filteredCafe.length > 0 && (
+                  <BulkControls
+                    total={filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                    selectedCount={filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                    onSelectAll={() => selectAll(filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                    onDeselectAll={deselectAll}
+                    bulkSending={bulkSending} bulkResult={bulkResult}
+                    onBulkSend={() => handleBulkSend(
+                      filteredCafe
+                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                        .map(({ emp, empType, mailKey }) => {
+                          const isTransfer = emp.join_reason === '전적' && empType === 'hire'
+                          const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.leave_date ?? null
+                          const points = isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, empType)
+                          return {
+                            key: mailKey,
+                            to: FR.cafe.map(r => r.email),
+                            subject: '[헥토이노베이션] 카페포인트 요청의 건',
+                            html: makeCafeHtml(emp, empType, points, isTransfer),
+                          }
+                        })
+                    )} />
+                )}
                 {filteredCafe.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
@@ -1087,7 +1209,9 @@ export default function HRDashboard() {
                           mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
                           fixedRecipients={FR.cafe}
                           points={isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, entry.empType)}
-                          isTransfer={isTransfer} />
+                          isTransfer={isTransfer}
+                          selected={selectedKeys.has(entry.mailKey)}
+                          onSelect={checked => toggleSelect(entry.mailKey, checked)} />
                       )
                     }} />
                 )}
@@ -1096,6 +1220,27 @@ export default function HRDashboard() {
             ) : (
               <div className="space-y-3">
                 <p className="text-xs text-gray-400">{filteredWellness.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
+                {filteredWellness.length > 0 && (
+                  <BulkControls
+                    total={filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).length}
+                    selectedCount={filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
+                    onSelectAll={() => selectAll(filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                    onDeselectAll={deselectAll}
+                    bulkSending={bulkSending} bulkResult={bulkResult}
+                    onBulkSend={() => handleBulkSend(
+                      filteredWellness
+                        .filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                        .map(({ emp, empType, mailKey }) => {
+                          const isTransfer = emp.join_reason === '전적' && empType === 'hire'
+                          return {
+                            key: mailKey,
+                            to: FR.wellness.map(r => r.email),
+                            subject: '[헥토이노베이션] 웰니스포인트 요청의 건',
+                            html: makeWellnessHtml(emp, empType, isTransfer),
+                          }
+                        })
+                    )} />
+                )}
                 {filteredWellness.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
                   <PagedList items={filteredWellness} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
@@ -1103,7 +1248,9 @@ export default function HRDashboard() {
                       return (
                         <PointCard emp={entry.emp} type={entry.empType} variant="wellness"
                           mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
-                          fixedRecipients={FR.wellness} points={null} isTransfer={isTransfer} />
+                          fixedRecipients={FR.wellness} points={null} isTransfer={isTransfer}
+                          selected={selectedKeys.has(entry.mailKey)}
+                          onSelect={checked => toggleSelect(entry.mailKey, checked)} />
                       )
                     }} />
                 )}
