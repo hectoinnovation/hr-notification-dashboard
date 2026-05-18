@@ -6,18 +6,22 @@ import { supabase, type Employee } from '@/lib/supabase'
 
 // ─── 온보딩 단계 ──────────────────────────────────────────────────────────────
 const STAGES = [
-  { id: 's1',  label: '레몬베이스 계정 생성',             timing: '입사 전',        targets: ['인사팀'],             highlight: false },
-  { id: 's2',  label: '리더 면담 및 목표 설정',           timing: '입사 후',         targets: ['입사자', '리더'],     highlight: false },
-  { id: 's3',  label: '레몬베이스 목표/가중치 승인 신청', timing: '입사 후 7일 내',  targets: ['인사담당자', '팀장'], highlight: true  },
-  { id: 's4',  label: '레몬베이스 최종 확인',             timing: '입사 후',         targets: ['인사팀'],             highlight: false },
-  { id: 's5',  label: '5 Missions PT 미션지 전달',        timing: 'D-7',             targets: ['입사자'],             highlight: false },
-  { id: 's6',  label: '미션지 작성 및 재전달',            timing: 'D-1',             targets: ['입사자'],             highlight: false },
-  { id: 's7',  label: '미션 공개',                        timing: 'D-Day',           targets: ['전사'],               highlight: false },
-  { id: 's8',  label: 'PT 참석자 안내 및 일정 조율',      timing: 'D+50',            targets: ['PT 참석자'],          highlight: false },
-  { id: 's9',  label: 'PT 진행',                          timing: 'D+60',            targets: ['입사자', '참석자'],   highlight: false },
-  { id: 's10', label: '현업 부서장 주관 심사',            timing: 'D+63',            targets: ['부서장'],             highlight: false },
-  { id: 's11', label: '대표이사 최종 결정',               timing: 'D+65',            targets: ['대표이사'],           highlight: false },
-  { id: 's12', label: '시용평가 일정 및 완료 관리',       timing: '별도 일정',       targets: ['인사팀', '입사자'],   highlight: false },
+  { id: 's_whr',  label: 'WHR 등록',                                           timing: '입사 전',        highlight: false },
+  { id: 's_file', label: '신규입사자 파일 생성',                                timing: '입사 전',        highlight: false },
+  { id: 's_docs', label: '연봉계약서 / 근로계약서 / 신규입사자 작성 서류 준비', timing: '입사 전',        highlight: false },
+  { id: 's1',     label: '레몬베이스 계정 생성',                                timing: '입사 전',        highlight: false },
+  { id: 's2',     label: '리더 면담 및 목표 설정',                              timing: '입사 후',        highlight: false },
+  { id: 's3',     label: '레몬베이스 목표/가중치 승인 신청',                    timing: '입사 후 7일 내', highlight: true  },
+  { id: 's4',     label: '레몬베이스 최종 확인',                                timing: '입사 후',        highlight: false },
+  { id: 's5',     label: '5 Missions PT 미션지 전달',                          timing: 'D-7',            highlight: false },
+  { id: 's6',     label: '미션지 작성 및 재전달',                               timing: 'D-1',            highlight: false },
+  { id: 's7',     label: '미션 공개',                                           timing: 'D-Day',          highlight: false },
+  { id: 's_d30',  label: '입사 30일 리뷰',                                      timing: 'D+30',           highlight: false },
+  { id: 's8',     label: 'PT 참석자 안내 및 일정 조율',                         timing: 'D+50',           highlight: false },
+  { id: 's9',     label: 'PT 진행',                                             timing: 'D+60',           highlight: false },
+  { id: 's10',    label: '현업 부서장 주관 심사',                                timing: 'D+63',           highlight: false },
+  { id: 's11',    label: '대표이사 최종 결정',                                   timing: 'D+65',           highlight: false },
+  { id: 's12',    label: '시용평가 일정 및 완료 관리',                           timing: '별도 일정',      highlight: false },
 ]
 
 type Recipient = { email: string; label: string }
@@ -32,11 +36,13 @@ const FR = {
 interface EmployeeForm {
   name: string; join_date: string; leave_date: string
   department: string; division: string; team: string; leader: string
+  position: string
   join_reason: string; status: 'active' | 'resigned'
 }
 const EMPTY_FORM: EmployeeForm = {
   name: '', join_date: '', leave_date: '',
   department: '', division: '', team: '', leader: '',
+  position: '',
   join_reason: '입사', status: 'active',
 }
 const PAGE_SIZE = 10
@@ -61,6 +67,53 @@ function normalizeCell(s: string) {
 function getDateLabel(type: 'hire' | 'leave', isTransfer: boolean): string {
   if (isTransfer) return '전적일'
   return type === 'hire' ? '입사일' : '퇴사일'
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(year, month, 0).getDate()
+}
+
+function calcWellnessHire(joinDateStr: string): number {
+  const d = new Date(joinDateStr)
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  const dim = daysInMonth(d.getFullYear(), month)
+  const hireMonthAmt = 50000 * (dim - day) / dim
+  const remainingMonths = 12 - month
+  return Math.round(hireMonthAmt + remainingMonths * 50000)
+}
+
+function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr: string): {
+  prePaid: number; recognized: number; reclaim: number
+} {
+  const leaveD = new Date(leaveDateStr)
+  const leaveYear = leaveD.getFullYear()
+  const leaveMonth = leaveD.getMonth() + 1
+  const leaveDay = leaveD.getDate()
+  const dimLeave = daysInMonth(leaveYear, leaveMonth)
+
+  let startMonth = 1
+  if (joinDateStr) {
+    const joinD = new Date(joinDateStr)
+    if (joinD.getFullYear() === leaveYear) startMonth = joinD.getMonth() + 1
+  }
+  const fullMonths = Math.max(0, leaveMonth - startMonth)
+  const recognized = Math.round(fullMonths * 50000 + 50000 * leaveDay / dimLeave)
+  const prePaid = joinDateStr ? calcWellnessHire(joinDateStr) : 0
+  const reclaim = Math.max(0, prePaid - recognized)
+  return { prePaid, recognized, reclaim }
+}
+
+function calcDday(joinDate: string | null | undefined, timing: string): string | null {
+  if (!joinDate) return null
+  const join = new Date(joinDate)
+  if (timing === 'D-Day') return joinDate
+  const plus = timing.match(/^D\+(\d+)$/)
+  if (plus) { const d = new Date(join); d.setDate(d.getDate() + parseInt(plus[1])); return d.toISOString().slice(0, 10) }
+  const minus = timing.match(/^D-(\d+)$/)
+  if (minus) { const d = new Date(join); d.setDate(d.getDate() - parseInt(minus[1])); return d.toISOString().slice(0, 10) }
+  if (timing === '입사 후 7일 내') { const d = new Date(join); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10) }
+  return null
 }
 
 function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
@@ -166,8 +219,18 @@ function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>`
 }
-function makeOnboardingHtml(hireName: string, stageLabel: string) {
-  return `<h3 style="color:#ea580c">[온보딩] ${hireName} — ${stageLabel}</h3><p style="font-family:sans-serif;font-size:14px;color:#374151">위 온보딩 단계 진행 요청드립니다.</p>`
+function makeOnboardingHtml(hire: Employee, stageLabel: string, timing: string, scheduledDate: string | null) {
+  return `<h3 style="color:#ea580c">[온보딩 알림] ${hire.name}님 ${stageLabel} 진행 요청</h3>
+<p style="font-family:sans-serif;font-size:14px;color:#374151">안녕하세요.<br><br>온보딩 일정에 따라 아래 업무 진행 부탁드립니다.</p>
+<table style="${TS}">
+<tr><th style="${TH}">입사자</th><td style="${TD}">${hire.name}</td></tr>
+<tr><th style="${TH}">직책/직급</th><td style="${TD}">${hire.position ?? '-'}</td></tr>
+<tr><th style="${TH}">입사일</th><td style="${TD}">${hire.join_date ?? '-'}</td></tr>
+<tr><th style="${TH}">진행 항목</th><td style="${TD}">${stageLabel}</td></tr>
+<tr><th style="${TH}">기준 일정</th><td style="${TD}">${timing}</td></tr>
+<tr><th style="${TH}">예정일</th><td style="${TD}">${scheduledDate ?? '-'}</td></tr>
+</table>
+<p style="font-family:sans-serif;font-size:14px;color:#374151">확인 후 진행 부탁드립니다.<br><br>감사합니다.</p>`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
@@ -189,9 +252,22 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
   const 사유 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
   const dateLabel = getDateLabel(type, isTransfer)
   const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  let pointHtml = ''
+  if (!isTransfer) {
+    if (type === 'hire' && emp.join_date) {
+      const amt = calcWellnessHire(emp.join_date)
+      pointHtml = `<table style="${TS};margin-top:12px"><tr><th style="${TH}">선지급액</th><td style="${TD}">${amt.toLocaleString()}원</td></tr></table>`
+    } else if (type === 'leave' && emp.leave_date) {
+      const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
+      pointHtml = `<table style="${TS};margin-top:12px">
+<tr><th style="${TH}">선지급액</th><td style="${TD}">${prePaid.toLocaleString()}원</td></tr>
+<tr><th style="${TH}">인정액</th><td style="${TD}">${recognized.toLocaleString()}원</td></tr>
+<tr><th style="${TH}">환수금</th><td style="${TD}">${reclaim.toLocaleString()}원</td></tr></table>`
+    }
+  }
   return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer?'전적':type==='hire'?'안내':'정산'}] ${emp.name}</h3>
-<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">입사 사유</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${사유}</td></tr></table>`
+<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>${pointHtml}`
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
@@ -222,10 +298,19 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
   const rows = entries.map(({ emp, empType, isTransfer }) => {
     const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
     const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+    let amtCell = '해당 없음'
+    if (!isTransfer) {
+      if (empType === 'hire' && emp.join_date) {
+        amtCell = `선지급 ${calcWellnessHire(emp.join_date).toLocaleString()}원`
+      } else if (empType === 'leave' && emp.leave_date) {
+        const { recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
+        amtCell = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+      }
+    }
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amtCell}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
-<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>${rows}</table></div>`
+<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">금액</th></tr>${rows}</table></div>`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -355,7 +440,9 @@ function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onTog
               <SentBadge sent={mailSent} />
             </div>
             <p className="text-xs text-gray-400 mt-0.5 truncate">
-              {dateLabel} {date}{orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
+              {dateLabel} {date}
+              {emp.position && ` · ${emp.position}`}
+              {orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
             </p>
           </div>
           <div className="flex items-center gap-0.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
@@ -472,6 +559,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
           <div className="space-y-0">
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
+            {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
             {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
             {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
             {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
@@ -486,13 +574,14 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
 }
 
 // ─── 온보딩 단계 행 ───────────────────────────────────────────────────────────
-function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onSendMail }: {
+function OnboardingRow({ stage, idx, isDone, isSent, hire, onToggleDone, onSendMail }: {
   stage: typeof STAGES[0]; idx: number
-  isDone: boolean; isSent: boolean; hireName: string
+  isDone: boolean; isSent: boolean; hire: Employee
   onToggleDone: () => void; onSendMail: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const htmlBody = makeOnboardingHtml(hireName, stage.label)
+  const scheduledDate = calcDday(hire.join_date, stage.timing)
+  const htmlBody = makeOnboardingHtml(hire, stage.label, stage.timing, scheduledDate)
   return (
     <div className={`border-b border-gray-50 last:border-0 ${isDone ? 'bg-gray-50/70' : ''} ${stage.highlight && !isDone ? 'bg-amber-50/50' : ''}`}>
       <div className="flex items-center gap-3 px-5 py-3">
@@ -501,14 +590,16 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
           className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isDone ? 'bg-orange-500 border-orange-500' : 'border-gray-300 hover:border-orange-400 bg-white'}`}>
           {isDone && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
         </button>
-        <TimingPill label={stage.timing} />
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <TimingPill label={stage.timing} />
+            {scheduledDate && <span className="text-xs text-gray-400 font-mono">{scheduledDate}</span>}
+          </div>
+        </div>
         <span className={`flex-1 text-sm min-w-0 leading-snug ${isDone ? 'line-through text-gray-400' : stage.highlight ? 'text-amber-800 font-semibold' : 'text-gray-700'}`}>
           {stage.label}
           {stage.highlight && !isDone && <span className="ml-1.5 text-xs font-normal text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded">7일 기한</span>}
         </span>
-        <div className="hidden xl:flex items-center gap-1 flex-shrink-0">
-          {stage.targets.map(t => <TargetPill key={t} label={t} />)}
-        </div>
         <button onClick={() => setOpen(p => !p)}
           className={`text-xs px-2 py-1 rounded-lg border transition-colors flex-shrink-0 flex items-center gap-1 ${open ? 'bg-orange-100 border-orange-200 text-orange-700' : isSent ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
           <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/></svg>
@@ -518,7 +609,7 @@ function OnboardingRow({ stage, idx, isDone, isSent, hireName, onToggleDone, onS
       {open && (
         <div className="px-5 pb-4">
           <MailPanel fixedRecipients={FR.onboard}
-            defaultSubject={`[온보딩] ${hireName} - ${stage.label}`}
+            defaultSubject={`[온보딩 알림] ${hire.name}님 ${stage.label} 진행 요청`}
             mailSent={isSent} htmlBody={htmlBody} onSend={onSendMail} />
         </div>
       )}
@@ -549,7 +640,7 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
                 <span className="font-bold text-sm text-gray-900">{hire.name}</span>
                 <TypeBadge type={typeLabel} />
               </div>
-              <p className="text-xs text-gray-400 truncate">입사일 {hire.join_date ?? '-'} · {orgLine}</p>
+              <p className="text-xs text-gray-400 truncate">입사일 {hire.join_date ?? '-'}{hire.position && ` · ${hire.position}`} · {orgLine}</p>
             </div>
           </div>
           <div className="flex items-center gap-3 flex-shrink-0">
@@ -574,7 +665,7 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
             const key = `${hire.id}_${stage.id}`
             return (
               <OnboardingRow key={stage.id} stage={stage} idx={idx}
-                isDone={!!stageDone[key]} isSent={!!mailSent[`mail_${key}`]} hireName={hire.name}
+                isDone={!!stageDone[key]} isSent={!!mailSent[`mail_${key}`]} hire={hire}
                 onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
                 onSendMail={() => onSendMail(`mail_${key}`)}
               />
@@ -615,6 +706,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
           <div className="space-y-0">
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
+            {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
             {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
             {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
             {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
@@ -639,6 +731,37 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
                 {!points && <p className="text-xs text-gray-400 pt-1">* 엑셀 업로드 후 자동 계산됩니다</p>}
               </div>
             )
+          )}
+          {variant === 'wellness' && !isTransfer && (
+            type === 'hire' ? (
+              emp.join_date ? (
+                <div className="space-y-0">
+                  <InfoRow label="선지급액">
+                    <span className="text-xs font-bold text-emerald-600">
+                      {calcWellnessHire(emp.join_date).toLocaleString()}원
+                    </span>
+                  </InfoRow>
+                  <p className="text-xs text-gray-400 pt-0.5">* 월 만근 50,000원 기준 / 12월 말까지 일할 계산</p>
+                </div>
+              ) : <p className="text-xs text-gray-400">* 입사일 등록 후 자동 계산됩니다</p>
+            ) : (
+              emp.leave_date ? (() => {
+                const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
+                return (
+                  <div className="space-y-0">
+                    <InfoRow label="선지급액"><span className="text-xs text-gray-600">{prePaid.toLocaleString()}원</span></InfoRow>
+                    <InfoRow label="인정액"><span className="text-xs font-bold text-blue-600">{recognized.toLocaleString()}원</span></InfoRow>
+                    <InfoRow label="환수금"><span className="text-xs font-bold text-red-600">{reclaim.toLocaleString()}원</span></InfoRow>
+                    <p className="text-xs text-gray-400 pt-0.5">* 환수금 = 선지급액 − 인정액</p>
+                  </div>
+                )
+              })() : <p className="text-xs text-gray-400">* 퇴사일 등록 후 자동 계산됩니다</p>
+            )
+          )}
+          {variant === 'wellness' && isTransfer && (
+            <div className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              ℹ️ 전적자는 웰니스포인트 계산 대상이 아닙니다.
+            </div>
           )}
           <PreviewToggle htmlBody={htmlBody} />
           <MailPanel fixedRecipients={fixedRecipients} defaultSubject={defaultSubject}
@@ -709,7 +832,10 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
         </div>
         <div className="px-6 py-5 space-y-3">
           <FormField label="이름" value={form.name} onChange={v => onChange('name', v)} placeholder="홍길동" required />
-          <FormField label="부서" value={form.department} onChange={v => onChange('department', v)} placeholder="경영지원부서" />
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="직책/직급" value={form.position} onChange={v => onChange('position', v)} placeholder="매니저" />
+            <FormField label="부서" value={form.department} onChange={v => onChange('department', v)} placeholder="경영지원부서" />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="실" value={form.division} onChange={v => onChange('division', v)} placeholder="경영지원실" />
             <FormField label="팀" value={form.team} onChange={v => onChange('team', v)} placeholder="인사팀" />
@@ -944,7 +1070,8 @@ export default function HRDashboard() {
     const payload = {
       name: form.name.trim(), join_date: form.join_date || null, leave_date: form.leave_date || null,
       department: form.department || null, division: form.division || null, team: form.team || null,
-      leader: form.leader || null, join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
+      position: form.position || null, leader: form.leader || null,
+      join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
     }
     const { error } = editTarget
       ? await supabase.from('employees').update(payload).eq('id', editTarget.id)
@@ -964,7 +1091,8 @@ export default function HRDashboard() {
     setEditTarget(emp)
     setForm({ name: emp.name, join_date: emp.join_date ?? '', leave_date: emp.leave_date ?? '',
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
-      leader: emp.leader ?? '', join_reason: emp.join_reason ?? '입사', status: emp.status })
+      position: emp.position ?? '', leader: emp.leader ?? '',
+      join_reason: emp.join_reason ?? '입사', status: emp.status })
     setShowForm(true)
   }
   function closeForm() { setShowForm(false); setEditTarget(null); setForm(EMPTY_FORM) }

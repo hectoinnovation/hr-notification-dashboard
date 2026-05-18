@@ -14,6 +14,7 @@ export type Employee = {
   department?: string   // 부서
   division?: string     // 실
   team?: string         // 팀
+  position?: string     // 직책/직급
   leader?: string
   join_reason?: string  // 입사 | 전적
   status: 'active' | 'resigned'
