@@ -3,26 +3,9 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, type Employee } from '@/lib/supabase'
+import { STAGES, type Stage, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
 
-// ─── 온보딩 단계 ──────────────────────────────────────────────────────────────
-const STAGES = [
-  { id: 's_whr',  label: 'WHR 등록',                                           timing: '입사 전',        highlight: false },
-  { id: 's_file', label: '신규입사자 파일 생성',                                timing: '입사 전',        highlight: false },
-  { id: 's_docs', label: '연봉계약서 / 근로계약서 / 신규입사자 작성 서류 준비', timing: '입사 전',        highlight: false },
-  { id: 's1',     label: '레몬베이스 계정 생성',                                timing: '입사 전',        highlight: false },
-  { id: 's2',     label: '리더 면담 및 목표 설정',                              timing: '입사 후',        highlight: false },
-  { id: 's3',     label: '레몬베이스 목표/가중치 승인 신청',                    timing: '입사 후 7일 내', highlight: true  },
-  { id: 's4',     label: '레몬베이스 최종 확인',                                timing: '입사 후',        highlight: false },
-  { id: 's5',     label: '5 Missions PT 미션지 전달',                          timing: 'D-7',            highlight: false },
-  { id: 's6',     label: '미션지 작성 및 재전달',                               timing: 'D-1',            highlight: false },
-  { id: 's7',     label: '미션 공개',                                           timing: 'D-Day',          highlight: false },
-  { id: 's_d30',  label: '입사 30일 리뷰',                                      timing: 'D+30',           highlight: false },
-  { id: 's8',     label: 'PT 참석자 안내 및 일정 조율',                         timing: 'D+50',           highlight: false },
-  { id: 's9',     label: 'PT 진행',                                             timing: 'D+60',           highlight: false },
-  { id: 's10',    label: '현업 부서장 주관 심사',                                timing: 'D+63',           highlight: false },
-  { id: 's11',    label: '대표이사 최종 결정',                                   timing: 'D+65',           highlight: false },
-  { id: 's12',    label: '시용평가 일정 및 완료 관리',                           timing: '별도 일정',      highlight: false },
-]
+// STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
 type Recipient = { email: string; label: string }
 const FR = {
@@ -78,7 +61,7 @@ function calcWellnessHire(joinDateStr: string): number {
   const month = d.getMonth() + 1
   const day = d.getDate()
   const dim = daysInMonth(d.getFullYear(), month)
-  const hireMonthAmt = 50000 * (dim - day) / dim
+  const hireMonthAmt = 50000 * (dim - day + 1) / dim
   const remainingMonths = 12 - month
   return Math.round(hireMonthAmt + remainingMonths * 50000)
 }
@@ -104,17 +87,6 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
   return { prePaid, recognized, reclaim }
 }
 
-function calcDday(joinDate: string | null | undefined, timing: string): string | null {
-  if (!joinDate) return null
-  const join = new Date(joinDate)
-  if (timing === 'D-Day') return joinDate
-  const plus = timing.match(/^D\+(\d+)$/)
-  if (plus) { const d = new Date(join); d.setDate(d.getDate() + parseInt(plus[1])); return d.toISOString().slice(0, 10) }
-  const minus = timing.match(/^D-(\d+)$/)
-  if (minus) { const d = new Date(join); d.setDate(d.getDate() - parseInt(minus[1])); return d.toISOString().slice(0, 10) }
-  if (timing === '입사 후 7일 내') { const d = new Date(join); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10) }
-  return null
-}
 
 function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
@@ -209,6 +181,18 @@ async function sendMailApi(to: string[], subject: string, html: string): Promise
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
 const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
 const TD = 'border:1px solid #e5e7eb;padding:8px 12px;white-space:nowrap'
+const PP = 'font-family:sans-serif;font-size:14px;color:#374151'
+
+function greetingP(empType: 'hire' | 'leave'): string {
+  const what = empType === 'hire' ? '입사자' : '퇴사자'
+  return `<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 정보 공유드립니다.</p>`
+}
+function bulkGreetingP(types: Array<'hire' | 'leave'>): string {
+  const hasHire = types.some(t => t === 'hire')
+  const hasLeave = types.some(t => t === 'leave')
+  const what = hasHire && hasLeave ? '입퇴사자' : hasHire ? '입사자' : '퇴사자'
+  return `<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 정보 공유드립니다.</p>`
+}
 
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const isTransfer = type === 'hire' && emp.join_reason === '전적'
@@ -216,21 +200,9 @@ function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
   const label      = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
+${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>`
-}
-function makeOnboardingHtml(hire: Employee, stageLabel: string, timing: string, scheduledDate: string | null) {
-  return `<h3 style="color:#ea580c">[온보딩 알림] ${hire.name}님 ${stageLabel} 진행 요청</h3>
-<p style="font-family:sans-serif;font-size:14px;color:#374151">안녕하세요.<br><br>온보딩 일정에 따라 아래 업무 진행 부탁드립니다.</p>
-<table style="${TS}">
-<tr><th style="${TH}">입사자</th><td style="${TD}">${hire.name}</td></tr>
-<tr><th style="${TH}">직책/직급</th><td style="${TD}">${hire.position ?? '-'}</td></tr>
-<tr><th style="${TH}">입사일</th><td style="${TD}">${hire.join_date ?? '-'}</td></tr>
-<tr><th style="${TH}">진행 항목</th><td style="${TD}">${stageLabel}</td></tr>
-<tr><th style="${TH}">기준 일정</th><td style="${TD}">${timing}</td></tr>
-<tr><th style="${TH}">예정일</th><td style="${TD}">${scheduledDate ?? '-'}</td></tr>
-</table>
-<p style="font-family:sans-serif;font-size:14px;color:#374151">확인 후 진행 부탁드립니다.<br><br>감사합니다.</p>`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
@@ -238,6 +210,7 @@ function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointDat
   const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
   if (isTransfer) {
     return `<h3 style="color:#ea580c">[카페포인트] 전적 안내 — ${emp.name}</h3>
+${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td></tr></table>
 <p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:12px">※ 전적자는 카페포인트 계산 대상이 아닙니다.</p>`
@@ -245,6 +218,7 @@ function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointDat
   const total  = points ? points.totalPoints.toLocaleString() + 'P' : '-'
   const settle = points ? points.settlementPoints.toLocaleString() + 'P' : '-'
   return `<h3 style="color:#ea580c">[카페포인트 ${type==='hire'?'안내':'정산'}] ${emp.name}</h3>
+${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr></table>`
 }
@@ -266,6 +240,7 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
     }
   }
   return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer?'전적':type==='hire'?'안내':'정산'}] ${emp.name}</h3>
+${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>${pointHtml}`
 }
@@ -279,6 +254,7 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
     return `<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[인사 알림] 입퇴사 안내 (${entries.length}명)</h3>
+${bulkGreetingP(entries.map(e => e.type))}
 <div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">날짜</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>${rows}</table></div>`
 }
 
@@ -291,6 +267,7 @@ function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'lea
     return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 카페포인트 요청의 건 (${entries.length}명)</h3>
+${bulkGreetingP(entries.map(e => e.empType))}
 <div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>${rows}</table></div>`
 }
 
@@ -310,6 +287,7 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
     return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amtCell}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
+${bulkGreetingP(entries.map(e => e.empType))}
 <div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">금액</th></tr>${rows}</table></div>`
 }
 
@@ -575,13 +553,13 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
 
 // ─── 온보딩 단계 행 ───────────────────────────────────────────────────────────
 function OnboardingRow({ stage, idx, isDone, isSent, hire, onToggleDone, onSendMail }: {
-  stage: typeof STAGES[0]; idx: number
+  stage: Stage; idx: number
   isDone: boolean; isSent: boolean; hire: Employee
   onToggleDone: () => void; onSendMail: () => void
 }) {
   const [open, setOpen] = useState(false)
   const scheduledDate = calcDday(hire.join_date, stage.timing)
-  const htmlBody = makeOnboardingHtml(hire, stage.label, stage.timing, scheduledDate)
+  const htmlBody = makeOnboardingMailHtml(hire, stage.label, stage.timing, scheduledDate)
   return (
     <div className={`border-b border-gray-50 last:border-0 ${isDone ? 'bg-gray-50/70' : ''} ${stage.highlight && !isDone ? 'bg-amber-50/50' : ''}`}>
       <div className="flex items-center gap-3 px-5 py-3">
