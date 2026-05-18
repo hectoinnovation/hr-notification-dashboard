@@ -266,76 +266,80 @@ ${greetingP(type)}
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
-const HR_LINE = `<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">`
-
 function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave' }>) {
-  const hires  = entries.filter(e => e.type === 'hire')
-  const leaves = entries.filter(e => e.type === 'leave')
-  const what   = hires.length > 0 && leaves.length > 0 ? '입퇴사자' : hires.length > 0 ? '입사자' : '퇴사자'
+  const hires     = entries.filter(e => e.type === 'hire' && e.emp.join_reason !== '전적')
+  const transfers = entries.filter(e => e.type === 'hire' && e.emp.join_reason === '전적')
+  const leaves    = entries.filter(e => e.type === 'leave')
+  const hasHire   = hires.length > 0 || transfers.length > 0
+  const what      = hasHire && leaves.length > 0 ? '입퇴사자' : hasHire ? '입사자' : '퇴사자'
 
-  function empBlock(emp: Employee, type: 'hire' | 'leave'): string {
-    const isTransfer = type === 'hire' && emp.join_reason === '전적'
-    const dateLabel  = isTransfer ? '전적일' : type === 'hire' ? '입사일' : '퇴사일'
-    const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-    const lines: string[] = [
-      `<strong style="font-size:15px;color:#111827;font-family:sans-serif">${emp.name}</strong>`,
-      `${dateLabel}: ${date}`,
-      ...(emp.position   ? [`직책/직급: ${emp.position}`]   : []),
-      ...(emp.department ? [`부서: ${emp.department}`]       : []),
-      ...(emp.division   ? [`실: ${emp.division}`]           : []),
-      ...(emp.team       ? [`팀: ${emp.team}`]               : []),
-    ]
-    return `<div style="${PP};margin-bottom:20px">${lines.join('<br>')}</div>`
+  function sec(title: string, color: string, tableHtml: string) {
+    return `<p style="${PP};font-weight:700;color:${color};margin:16px 0 6px">${title}</p><div style="overflow-x:auto">${tableHtml}</div>`
   }
 
-  let body = ''
+  let body = `<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 정보 공유드립니다.</p>`
+
   if (hires.length > 0) {
-    body += `${HR_LINE}<p style="${PP};font-weight:700;color:#1e40af;margin-bottom:12px">[입사]</p>`
-    body += hires.map(({ emp, type }) => empBlock(emp, type)).join('')
+    const rows = hires.map(({ emp }) =>
+      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+    ).join('')
+    body += sec('[입사]', '#1e40af',
+      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">입사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
-  if (leaves.length > 0) {
-    body += `${HR_LINE}<p style="${PP};font-weight:700;color:#7e22ce;margin-bottom:12px">[퇴사]</p>`
-    body += leaves.map(({ emp, type }) => empBlock(emp, type)).join('')
-  }
-  body += HR_LINE
 
-  return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>
-<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 정보 공유드립니다.</p>
-${body}
-<p style="${PP}">감사합니다.<br><br>인재협업팀 드림</p>`
+  if (transfers.length > 0) {
+    const rows = transfers.map(({ emp }) =>
+      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+    ).join('')
+    body += sec('[전적]', '#b45309',
+      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">전적일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+  }
+
+  if (leaves.length > 0) {
+    const rows = leaves.map(({ emp }) =>
+      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+    ).join('')
+    body += sec('[퇴사]', '#7e22ce',
+      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">마지막 출근일</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+  }
+
+  return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}<p style="${PP};margin-top:16px">감사합니다.<br>인재협업팀 드림</p>`
 }
 
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, points, isTransfer }) => {
-    const label  = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
-    const date   = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-    const total  = isTransfer ? '해당 없음' : (points ? points.totalPoints.toLocaleString() + 'P' : '-')
-    const settle = isTransfer ? '해당 없음' : (points ? points.settlementPoints.toLocaleString() + 'P' : '-')
-    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr>`
+    const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+    const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    const amt   = isTransfer
+      ? '해당 없음'
+      : points
+        ? `부여 ${points.totalPoints.toLocaleString()}P / 정산 ${points.settlementPoints.toLocaleString()}P`
+        : '-'
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 카페포인트 요청의 건 (${entries.length}명)</h3>
 ${bulkGreetingP(entries.map(e => e.empType))}
-<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>${rows}</table></div>`
+<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">기준일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">카페포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
 }
 
 function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, isTransfer }) => {
     const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
     const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-    let amtCell = '해당 없음'
+    let amt = '해당 없음'
     if (!isTransfer) {
       if (empType === 'hire' && emp.join_date) {
-        amtCell = `선지급 ${calcWellnessHire(emp.join_date).toLocaleString()}원`
+        amt = `선지급 ${calcWellnessHire(emp.join_date).toLocaleString()}원`
       } else if (empType === 'leave' && emp.leave_date) {
         const { recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
-        amtCell = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+        amt = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
       }
     }
-    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amtCell}</td></tr>`
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
 ${bulkGreetingP(entries.map(e => e.empType))}
-<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">날짜</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">금액</th></tr>${rows}</table></div>`
+<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">기준일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -527,19 +531,38 @@ function PreviewToggle({ htmlBody }: { htmlBody: string }) {
 }
 
 // ─── 일괄 발송 컨트롤 ────────────────────────────────────────────────────────
-function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult, previewHtml }: {
+function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult, previewHtml, defaultRecipients }: {
   total: number; selectedCount: number
   onSelectAll: () => void; onDeselectAll: () => void
-  onBulkSend: () => void; bulkSending: boolean
+  onBulkSend: (to: string[]) => void; bulkSending: boolean
   bulkResult: { sent: number; failed: number } | null
   previewHtml?: string
+  defaultRecipients: string[]
 }) {
   const cbRef = useRef<HTMLInputElement>(null)
   const allSelected = total > 0 && selectedCount === total
   const someSelected = selectedCount > 0 && selectedCount < total
   useEffect(() => { if (cbRef.current) cbRef.current.indeterminate = someSelected }, [someSelected])
+
+  const [activeRcp, setActiveRcp] = useState<string[]>([...defaultRecipients])
+  const [extraInput, setExtraInput] = useState('')
+  const prevDefKey = useRef(defaultRecipients.join(','))
+  useEffect(() => {
+    const key = defaultRecipients.join(',')
+    if (prevDefKey.current !== key) { setActiveRcp([...defaultRecipients]); prevDefKey.current = key }
+  }, [defaultRecipients])
+
+  function toggleRcp(email: string) {
+    setActiveRcp(p => p.includes(email) ? p.filter(e => e !== email) : [...p, email])
+  }
+  function handleSend() {
+    const extra = extraInput.split(',').map(e => e.trim()).filter(Boolean)
+    onBulkSend([...activeRcp, ...extra])
+  }
+
   return (
-    <div className="space-y-2 bg-orange-50/50 border border-orange-100 rounded-xl px-4 py-3">
+    <div className="space-y-2.5 bg-orange-50/50 border border-orange-100 rounded-xl px-4 py-3">
+      {/* 선택 + 발송 버튼 */}
       <div className="flex items-center gap-2.5 flex-wrap">
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input ref={cbRef} type="checkbox" checked={allSelected}
@@ -550,7 +573,7 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
           </span>
         </label>
         {selectedCount > 0 && (
-          <button onClick={onBulkSend} disabled={bulkSending}
+          <button onClick={handleSend} disabled={bulkSending}
             className="inline-flex items-center gap-1.5 text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-50">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/>
@@ -563,6 +586,28 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
             {bulkResult.failed > 0 ? '✗ 발송 실패' : `✓ ${bulkResult.sent}명 통합 발송 완료`}
           </span>
         )}
+      </div>
+      {/* 수신자 */}
+      <div className="border-t border-orange-100 pt-2.5 space-y-1.5">
+        <p className="text-xs font-semibold text-gray-400">받는 사람 <span className="font-normal text-gray-300">(클릭하여 제외/복원)</span></p>
+        <div className="flex flex-wrap gap-1.5">
+          {defaultRecipients.map(email => {
+            const on = activeRcp.includes(email)
+            return (
+              <button key={email} type="button" onClick={() => toggleRcp(email)}
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${on ? 'bg-white border-blue-200 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'}`}>
+                <span className="font-mono">{email}</span>
+                {on
+                  ? <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l6 6M9 3l-6 6"/></svg>
+                  : <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5"/></svg>
+                }
+              </button>
+            )
+          })}
+        </div>
+        <input type="text" value={extraInput} onChange={e => setExtraInput(e.target.value)}
+          placeholder="추가 수신자 (쉼표로 구분)"
+          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
       </div>
       {selectedCount > 0 && previewHtml && <PreviewToggle htmlBody={previewHtml} />}
     </div>
@@ -1327,13 +1372,14 @@ export default function HRDashboard() {
                   </div>
                 </div>
                 {filteredNotify.length > 0 && (() => {
-                  const sel = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey))
+                  const sel      = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
                   const hasHire  = sel.some(e => e.type === 'hire')
                   const hasLeave = sel.some(e => e.type === 'leave')
-                  const to = [...new Set([
+                  const defRcp   = [...new Set([
                     ...(hasHire  ? FR.hire.map(r => r.email)  : []),
                     ...(hasLeave ? FR.leave.map(r => r.email) : []),
+                    ...(!hasHire && !hasLeave ? FR.hire.map(r => r.email) : []),
                   ])]
                   return (
                     <BulkControls
@@ -1343,7 +1389,8 @@ export default function HRDashboard() {
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
-                      onBulkSend={() => handleBulkSend(
+                      defaultRecipients={defRcp}
+                      onBulkSend={to => handleBulkSend(
                         to,
                         `[인사 알림] 입퇴사 안내 (${sel.length}명)`,
                         bulkHtml,
@@ -1400,8 +1447,9 @@ export default function HRDashboard() {
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
-                      onBulkSend={() => handleBulkSend(
-                        FR.cafe.map(r => r.email),
+                      defaultRecipients={FR.cafe.map(r => r.email)}
+                      onBulkSend={to => handleBulkSend(
+                        to,
                         `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
                         bulkHtml,
                         sel.map(e => e.mailKey)
@@ -1442,8 +1490,9 @@ export default function HRDashboard() {
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
-                      onBulkSend={() => handleBulkSend(
-                        FR.wellness.map(r => r.email),
+                      defaultRecipients={FR.wellness.map(r => r.email)}
+                      onBulkSend={to => handleBulkSend(
+                        to,
                         `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
                         bulkHtml,
                         sel.map(e => e.mailKey)
