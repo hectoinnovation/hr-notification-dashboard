@@ -69,19 +69,39 @@ function calcWellnessHire(joinDateStr: string): number {
 function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr: string): {
   prePaid: number; recognized: number; reclaim: number
 } {
-  const leaveD = new Date(leaveDateStr)
-  const leaveYear = leaveD.getFullYear()
+  const leaveD     = new Date(leaveDateStr)
+  const leaveYear  = leaveD.getFullYear()
   const leaveMonth = leaveD.getMonth() + 1
-  const leaveDay = leaveD.getDate()
-  const dimLeave = daysInMonth(leaveYear, leaveMonth)
+  const leaveDay   = leaveD.getDate()
+  const dimLeave   = daysInMonth(leaveYear, leaveMonth)
 
-  let startMonth = 1
+  let recognized = 0
   if (joinDateStr) {
-    const joinD = new Date(joinDateStr)
-    if (joinD.getFullYear() === leaveYear) startMonth = joinD.getMonth() + 1
+    const joinD     = new Date(joinDateStr)
+    const joinYear  = joinD.getFullYear()
+    const joinMonth = joinD.getMonth() + 1
+    const joinDay   = joinD.getDate()
+    const dimJoin   = daysInMonth(joinYear, joinMonth)
+
+    if (joinYear === leaveYear) {
+      if (joinMonth === leaveMonth) {
+        // 같은 달: 재직 일수만
+        recognized = Math.round(50000 * (leaveDay - joinDay + 1) / dimJoin)
+      } else {
+        // 같은 해, 다른 달: 입사월 일할 + 중간 완전월 + 퇴사월 일할
+        const joinAmt  = 50000 * (dimJoin - joinDay + 1) / dimJoin
+        const midMonths = leaveMonth - joinMonth - 1
+        const leaveAmt = 50000 * leaveDay / dimLeave
+        recognized = Math.round(joinAmt + midMonths * 50000 + leaveAmt)
+      }
+    } else {
+      // 입사년도 < 퇴사년도: 해당 년도 1월부터 완전월 + 퇴사월 일할
+      recognized = Math.round((leaveMonth - 1) * 50000 + 50000 * leaveDay / dimLeave)
+    }
+  } else {
+    recognized = Math.round((leaveMonth - 1) * 50000 + 50000 * leaveDay / dimLeave)
   }
-  const fullMonths = Math.max(0, leaveMonth - startMonth)
-  const recognized = Math.round(fullMonths * 50000 + 50000 * leaveDay / dimLeave)
+
   const prePaid = joinDateStr ? calcWellnessHire(joinDateStr) : 0
   const reclaim = Math.max(0, prePaid - recognized)
   return { prePaid, recognized, reclaim }
@@ -246,16 +266,43 @@ ${greetingP(type)}
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
+const HR_LINE = `<hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">`
+
 function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave' }>) {
-  const rows = entries.map(({ emp, type }) => {
+  const hires  = entries.filter(e => e.type === 'hire')
+  const leaves = entries.filter(e => e.type === 'leave')
+  const what   = hires.length > 0 && leaves.length > 0 ? '입퇴사자' : hires.length > 0 ? '입사자' : '퇴사자'
+
+  function empBlock(emp: Employee, type: 'hire' | 'leave'): string {
     const isTransfer = type === 'hire' && emp.join_reason === '전적'
-    const label = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
-    const date  = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
-    return `<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
-  }).join('')
-  return `<h3 style="color:#ea580c">[인사 알림] 입퇴사 안내 (${entries.length}명)</h3>
-${bulkGreetingP(entries.map(e => e.type))}
-<div style="overflow-x:auto"><table style="${TS}"><tr><th style="${TH}">날짜</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>${rows}</table></div>`
+    const dateLabel  = isTransfer ? '전적일' : type === 'hire' ? '입사일' : '퇴사일'
+    const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    const lines: string[] = [
+      `<strong style="font-size:15px;color:#111827;font-family:sans-serif">${emp.name}</strong>`,
+      `${dateLabel}: ${date}`,
+      ...(emp.position   ? [`직책/직급: ${emp.position}`]   : []),
+      ...(emp.department ? [`부서: ${emp.department}`]       : []),
+      ...(emp.division   ? [`실: ${emp.division}`]           : []),
+      ...(emp.team       ? [`팀: ${emp.team}`]               : []),
+    ]
+    return `<div style="${PP};margin-bottom:20px">${lines.join('<br>')}</div>`
+  }
+
+  let body = ''
+  if (hires.length > 0) {
+    body += `${HR_LINE}<p style="${PP};font-weight:700;color:#1e40af;margin-bottom:12px">[입사]</p>`
+    body += hires.map(({ emp, type }) => empBlock(emp, type)).join('')
+  }
+  if (leaves.length > 0) {
+    body += `${HR_LINE}<p style="${PP};font-weight:700;color:#7e22ce;margin-bottom:12px">[퇴사]</p>`
+    body += leaves.map(({ emp, type }) => empBlock(emp, type)).join('')
+  }
+  body += HR_LINE
+
+  return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>
+<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 정보 공유드립니다.</p>
+${body}
+<p style="${PP}">감사합니다.<br><br>인재협업팀 드림</p>`
 }
 
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
@@ -332,16 +379,21 @@ function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend
   fixedRecipients: readonly Recipient[]; defaultSubject: string
   mailSent: boolean; htmlBody: string; onSend: () => void
 }) {
-  const [subject, setSubject] = useState(defaultSubject)
-  const [extra,   setExtra]   = useState('')
-  const [sending, setSending] = useState(false)
-  const [mailErr, setMailErr] = useState<string | null>(null)
+  const [subject,  setSubject]  = useState(defaultSubject)
+  const [extra,    setExtra]    = useState('')
+  const [sending,  setSending]  = useState(false)
+  const [mailErr,  setMailErr]  = useState<string | null>(null)
+  const [activeRcp, setActiveRcp] = useState<string[]>(fixedRecipients.map(r => r.email))
+
+  function toggleRcp(email: string) {
+    setActiveRcp(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email])
+  }
 
   async function handleSend() {
-    if (sending || mailSent) return
+    if (sending) return
     setSending(true); setMailErr(null)
     const extraList = extra.split(',').map(e => e.trim()).filter(Boolean)
-    const to = [...fixedRecipients.map(r => r.email), ...extraList]
+    const to = [...activeRcp, ...extraList]
     const err = await sendMailApi(to, subject, htmlBody)
     setSending(false)
     if (err) setMailErr(err); else onSend()
@@ -350,41 +402,49 @@ function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend
   return (
     <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
       <div>
-        <p className="text-xs font-semibold text-gray-400 mb-2">고정 수신자</p>
+        <p className="text-xs font-semibold text-gray-400 mb-2">수신자 <span className="font-normal text-gray-300">(클릭하여 제외)</span></p>
         <div className="flex flex-wrap gap-1.5">
-          {fixedRecipients.map(r => (
-            <span key={r.email} className="inline-flex items-center gap-1 text-xs bg-white border border-blue-200 text-blue-700 px-2 py-1 rounded-lg shadow-sm max-w-full min-w-0">
-              <span className="flex-shrink-0">🔒</span>
-              <span className="font-mono break-all">{r.email}</span>
-              <span className="font-sans font-semibold text-blue-500 flex-shrink-0 ml-0.5">({r.label})</span>
-            </span>
-          ))}
+          {fixedRecipients.map(r => {
+            const active = activeRcp.includes(r.email)
+            return (
+              <button key={r.email} type="button" onClick={() => toggleRcp(r.email)}
+                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border shadow-sm max-w-full min-w-0 transition-colors ${active ? 'bg-white border-blue-200 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'}`}>
+                <span className="font-mono break-all">{r.email}</span>
+                <span className={`font-sans font-semibold flex-shrink-0 ml-0.5 ${active ? 'text-blue-500' : 'text-gray-400'}`}>({r.label})</span>
+                {active
+                  ? <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l6 6M9 3l-6 6"/></svg>
+                  : <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5"/></svg>
+                }
+              </button>
+            )
+          })}
         </div>
       </div>
       <div>
         <p className="text-xs font-semibold text-gray-400 mb-1.5">추가 수신자 <span className="font-normal text-gray-300">(선택)</span></p>
-        <input type="text" value={extra} onChange={e => setExtra(e.target.value)} disabled={mailSent}
+        <input type="text" value={extra} onChange={e => setExtra(e.target.value)}
           placeholder="이메일 주소 입력, 쉼표로 구분"
-          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300 disabled:bg-gray-100" />
+          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
       </div>
       <div>
         <p className="text-xs font-semibold text-gray-400 mb-1.5">메일 제목</p>
-        <input type="text" value={subject} onChange={e => setSubject(e.target.value)} disabled={mailSent}
-          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:bg-gray-100" />
+        <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
+          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
       </div>
       {mailErr && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">⚠️ 발송 실패: {mailErr}</div>}
-      <div className="flex items-center justify-end pt-1 border-t border-gray-200">
-        {mailSent ? (
+      <div className="flex items-center justify-between pt-1 border-t border-gray-200">
+        {mailSent && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 font-semibold">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3 3 7-7"/></svg>발송 완료
           </span>
-        ) : (
+        )}
+        <div className="ml-auto">
           <button onClick={handleSend} disabled={sending}
             className="inline-flex items-center gap-1 text-xs font-semibold bg-orange-500 hover:bg-orange-600 active:scale-95 text-white px-3 py-1.5 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 8l11-5-5 11-1.5-4.5L2 8z"/></svg>
-            {sending ? '발송 중…' : '발송'}
+            {sending ? '발송 중…' : mailSent ? '재발송' : '발송'}
           </button>
-        )}
+        </div>
       </div>
     </div>
   )
@@ -1267,17 +1327,19 @@ export default function HRDashboard() {
                   </div>
                 </div>
                 {filteredNotify.length > 0 && (() => {
-                  const sel = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const sel = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
+                  const hasHire  = sel.some(e => e.type === 'hire')
+                  const hasLeave = sel.some(e => e.type === 'leave')
                   const to = [...new Set([
-                    ...sel.filter(e => e.type === 'hire').flatMap(() => FR.hire.map(r => r.email)),
-                    ...sel.filter(e => e.type === 'leave').flatMap(() => FR.leave.map(r => r.email)),
+                    ...(hasHire  ? FR.hire.map(r => r.email)  : []),
+                    ...(hasLeave ? FR.leave.map(r => r.email) : []),
                   ])]
                   return (
                     <BulkControls
-                      total={filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                      selectedCount={filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                      onSelectAll={() => selectAll(filteredNotify.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      total={filteredNotify.length}
+                      selectedCount={sel.length}
+                      onSelectAll={() => selectAll(filteredNotify.map(e => e.mailKey))}
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
@@ -1323,7 +1385,7 @@ export default function HRDashboard() {
                   <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
                 {filteredCafe.length > 0 && (() => {
-                  const sel = filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const sel = filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const selWithPoints = sel.map(({ emp, empType, mailKey }) => {
                     const isTransfer = emp.join_reason === '전적' && empType === 'hire'
                     const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.leave_date ?? null
@@ -1332,9 +1394,9 @@ export default function HRDashboard() {
                   const bulkHtml = sel.length > 0 ? makeBulkCafeHtml(selWithPoints) : ''
                   return (
                     <BulkControls
-                      total={filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                      selectedCount={filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                      onSelectAll={() => selectAll(filteredCafe.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      total={filteredCafe.length}
+                      selectedCount={sel.length}
+                      onSelectAll={() => selectAll(filteredCafe.map(e => e.mailKey))}
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
@@ -1368,15 +1430,15 @@ export default function HRDashboard() {
               <div className="space-y-3">
                 <p className="text-xs text-gray-400">{filteredWellness.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                 {filteredWellness.length > 0 && (() => {
-                  const sel = filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey) && !mailSent[mailKey])
+                  const sel = filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const bulkHtml = sel.length > 0 ? makeBulkWellnessHtml(sel.map(({ emp, empType }) => ({
                     emp, empType, isTransfer: emp.join_reason === '전적' && empType === 'hire'
                   }))) : ''
                   return (
                     <BulkControls
-                      total={filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).length}
-                      selectedCount={filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey)).length}
-                      onSelectAll={() => selectAll(filteredWellness.filter(({ mailKey }) => !mailSent[mailKey]).map(e => e.mailKey))}
+                      total={filteredWellness.length}
+                      selectedCount={sel.length}
+                      onSelectAll={() => selectAll(filteredWellness.map(e => e.mailKey))}
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
