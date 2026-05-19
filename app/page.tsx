@@ -281,10 +281,15 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
       }
     }
   }
+  const tableHeader = type === 'leave'
+    ? `<tr><th style="${TH}">입사일자</th><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>`
+    : `<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>`
+  const tableRow = type === 'leave'
+    ? `<tr><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+    : `<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
   return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer?'전적':type==='hire'?'안내':'정산'}] ${emp.name}</h3>
 ${greetingP(type)}
-<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>${pointHtml}`
+<table style="${TS}">${tableHeader}${tableRow}</table>${pointHtml}`
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
@@ -817,7 +822,11 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
   const dateLabel  = getDateLabel(type, isTransfer)
-  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const date       = type === 'hire'
+    ? (emp.join_date ?? '-')
+    : variant === 'wellness'
+      ? (emp.exit_date ?? emp.leave_date ?? '-')
+      : (emp.leave_date ?? '-')
   const defaultSubject = variant === 'cafe'
     ? '[헥토이노베이션] 카페포인트 요청의 건'
     : '[헥토이노베이션] 웰니스포인트 요청의 건'
@@ -833,6 +842,13 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
+            {type === 'leave' && variant === 'wellness' && (
+              <InfoRow label="입사일자">
+                <span className={`text-xs font-semibold ${emp.join_date ? 'text-gray-700' : 'text-red-500'}`}>
+                  {emp.join_date ?? '미입력'}
+                </span>
+              </InfoRow>
+            )}
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
             {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
