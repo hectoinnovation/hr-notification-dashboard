@@ -240,7 +240,7 @@ function bulkGreetingP(types: Array<'hire' | 'leave'>): string {
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const isTransfer = type === 'hire' && emp.join_reason === '전적'
   const dateLabel  = getDateLabel(type, isTransfer)
-  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const label      = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
@@ -289,20 +289,29 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
       }
     }
   }
-  // 입사자: 성명/입사일자/휴대폰번호/부여포인트 | 퇴사자: 입사일자/퇴사일/이름/.../팀/휴대폰번호
   const phone = emp.phone ?? '-'
   if (type === 'hire') {
+    // 입사자: 성명 / 입사일자 / 휴대폰번호 / 부여포인트
     const hireAmt = (emp.join_date && !isTransfer) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
     return `<h3 style="color:#ea580c">[웰니스포인트 안내] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일자</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th></tr>
 <tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td></tr></table>`
   }
-  const tableHeader = `<tr><th style="${TH}">입사일자</th><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">휴대폰번호</th></tr>`
-  const tableRow = `<tr><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${phone}</td></tr>`
+  // 퇴사자: 성명 / 입사일 / 퇴사일 / 휴대폰번호 / 웰니스포인트 금액
+  const leaveAmt = pointHtml
+    ? (() => {
+        if (!emp.join_date) return '입사일자 확인 필요'
+        const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+        if (!leaveDateForCalc) return '-'
+        const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+        return `선지급 ${prePaid.toLocaleString()}원 / 인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+      })()
+    : (!emp.join_date ? '입사일자 확인 필요' : '-')
   return `<h3 style="color:#ea580c">[웰니스포인트 정산] ${emp.name}</h3>
 ${greetingP(type)}
-<table style="${TS}">${tableHeader}${tableRow}</table>${pointHtml}`
+<table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr>
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${leaveAmt}</td></tr></table>`
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
@@ -395,9 +404,10 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
           }
         }
       }
-      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${isTransfer?'전적':'퇴사'}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td><td style="${TD}">${emp.phone??'-'}</td></tr>`
+      // 퇴사자: 성명 / 입사일 / 퇴사일 / 휴대폰번호 / 웰니스포인트 금액
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.phone??'-'}</td><td style="${TD}">${amt}</td></tr>`
     }).join('')
-    body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">[퇴사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">입사일자</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th><th style="${TH}">휴대폰번호</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
+    body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">[퇴사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
   }
 
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>${body}`
@@ -698,7 +708,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
   const isTransfer = type === 'hire' && emp.join_reason === '전적'
   const typeLabel  = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
   const dateLabel  = getDateLabel(type, isTransfer)
-  const date       = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const htmlBody   = makeNotifHtml(emp, type)
   const subject    = isTransfer
     ? `[입사 안내] ${emp.name} 님 ${date} 전적`
@@ -849,9 +859,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   const dateLabel  = getDateLabel(type, isTransfer)
   const date       = type === 'hire'
     ? (emp.join_date ?? '-')
-    : variant === 'wellness'
-      ? (emp.exit_date ?? emp.leave_date ?? '-')
-      : (emp.leave_date ?? '-')
+    : (emp.exit_date ?? '-')
   const defaultSubject = variant === 'cafe'
     ? '[헥토이노베이션] 카페포인트 요청의 건'
     : '[헥토이노베이션] 웰니스포인트 요청의 건'
