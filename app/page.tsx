@@ -78,9 +78,10 @@ function calcWellnessHire(joinDateStr: string): number {
   const month = d.getMonth() + 1
   const day = d.getDate()
   const dim = daysInMonth(d.getFullYear(), month)
-  const hireMonthAmt = 50000 * (dim - day + 1) / dim
+  // 입사월은 원단위 반올림, 완전 재직월은 정수
+  const hireMonthAmt = Math.round(50000 * (dim - day + 1) / dim)
   const remainingMonths = 12 - month
-  return Math.round(hireMonthAmt + remainingMonths * 50000)
+  return hireMonthAmt + remainingMonths * 50000
 }
 
 function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr: string): {
@@ -92,6 +93,7 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
   const leaveDay   = leaveD.getDate()
   const dimLeave   = daysInMonth(leaveYear, leaveMonth)
 
+  // 각 월 단위로 개별 반올림 후 합산 (소수 항목 2개 합산 시 1원 오차 방지)
   let recognized = 0
   if (joinDateStr) {
     const joinD     = new Date(joinDateStr)
@@ -102,21 +104,21 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
 
     if (joinYear === leaveYear) {
       if (joinMonth === leaveMonth) {
-        // 같은 달: 재직 일수만
         recognized = Math.round(50000 * (leaveDay - joinDay + 1) / dimJoin)
       } else {
-        // 같은 해, 다른 달: 입사월 일할 + 중간 완전월 + 퇴사월 일할
-        const joinAmt  = 50000 * (dimJoin - joinDay + 1) / dimJoin
+        const joinAmt   = Math.round(50000 * (dimJoin - joinDay + 1) / dimJoin)
         const midMonths = leaveMonth - joinMonth - 1
-        const leaveAmt = 50000 * leaveDay / dimLeave
-        recognized = Math.round(joinAmt + midMonths * 50000 + leaveAmt)
+        const leaveAmt  = Math.round(50000 * leaveDay / dimLeave)
+        recognized = joinAmt + midMonths * 50000 + leaveAmt
       }
     } else {
-      // 입사년도 < 퇴사년도: 해당 년도 1월부터 완전월 + 퇴사월 일할
-      recognized = Math.round((leaveMonth - 1) * 50000 + 50000 * leaveDay / dimLeave)
+      // 입사년도 < 퇴사년도: 정산년도 1월부터 완전월 + 퇴사월 일할
+      const leaveAmt = Math.round(50000 * leaveDay / dimLeave)
+      recognized = (leaveMonth - 1) * 50000 + leaveAmt
     }
   } else {
-    recognized = Math.round((leaveMonth - 1) * 50000 + 50000 * leaveDay / dimLeave)
+    const leaveAmt = Math.round(50000 * leaveDay / dimLeave)
+    recognized = (leaveMonth - 1) * 50000 + leaveAmt
   }
 
   // 정산년도(leaveYear) > 입사년도 → 연초에 12개월 전체 선지급으로 봄 (600,000)
@@ -124,7 +126,7 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
   const prePaid = joinDateStr
     ? (new Date(joinDateStr).getFullYear() < leaveYear ? 600000 : calcWellnessHire(joinDateStr))
     : 0
-  const reclaim = Math.max(0, prePaid - recognized)
+  const reclaim = Math.round(Math.max(0, prePaid - recognized))
   return { prePaid, recognized, reclaim }
 }
 
