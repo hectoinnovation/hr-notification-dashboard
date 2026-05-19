@@ -585,26 +585,26 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
   onBulkSend: (to: string[], cc?: string[]) => void; bulkSending: boolean
   bulkResult: { sent: number; failed: number } | null
   previewHtml?: string
-  defaultRecipients: string[]
-  defaultCC?: string[]
+  defaultRecipients: readonly Recipient[]
+  defaultCC?: readonly Recipient[]
 }) {
   const cbRef = useRef<HTMLInputElement>(null)
   const allSelected = total > 0 && selectedCount === total
   const someSelected = selectedCount > 0 && selectedCount < total
   useEffect(() => { if (cbRef.current) cbRef.current.indeterminate = someSelected }, [someSelected])
 
-  const [activeTo,  setActiveTo]  = useState<string[]>([...defaultRecipients])
-  const [activeCC,  setActiveCC]  = useState<string[]>([...defaultCC])
+  const [activeTo,  setActiveTo]  = useState<string[]>(defaultRecipients.map(r => r.email))
+  const [activeCC,  setActiveCC]  = useState<string[]>(defaultCC.map(r => r.email))
   const [extraTo,   setExtraTo]   = useState('')
   const [extraCC,   setExtraCC]   = useState('')
 
-  const prevToKey = useRef(defaultRecipients.join(','))
-  const prevCCKey = useRef(defaultCC.join(','))
+  const prevToKey = useRef(defaultRecipients.map(r => r.email).join(','))
+  const prevCCKey = useRef(defaultCC.map(r => r.email).join(','))
   useEffect(() => {
-    const toKey = defaultRecipients.join(',')
-    if (prevToKey.current !== toKey) { setActiveTo([...defaultRecipients]); prevToKey.current = toKey }
-    const ccKey = defaultCC.join(',')
-    if (prevCCKey.current !== ccKey) { setActiveCC([...defaultCC]); prevCCKey.current = ccKey }
+    const toKey = defaultRecipients.map(r => r.email).join(',')
+    if (prevToKey.current !== toKey) { setActiveTo(defaultRecipients.map(r => r.email)); prevToKey.current = toKey }
+    const ccKey = defaultCC.map(r => r.email).join(',')
+    if (prevCCKey.current !== ccKey) { setActiveCC(defaultCC.map(r => r.email)); prevCCKey.current = ccKey }
   }, [defaultRecipients, defaultCC])
 
   function handleSend() {
@@ -612,10 +612,6 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
     const cc = [...activeCC, ...extraCC.split(',').map(e => e.trim()).filter(Boolean)]
     onBulkSend(to, cc.length ? cc : undefined)
   }
-
-  // Synthetic Recipient objects from plain email strings for RcpChips
-  const toItems: Recipient[] = defaultRecipients.map(e => ({ email: e, label: e.split('@')[0] }))
-  const ccItems: Recipient[] = defaultCC.map(e => ({ email: e, label: e.split('@')[0] }))
 
   return (
     <div className="space-y-2.5 bg-orange-50/50 border border-orange-100 rounded-xl px-4 py-3">
@@ -646,8 +642,8 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
       </div>
       {/* 수신자 */}
       <div className="border-t border-orange-100 pt-2.5 space-y-2">
-        <RcpChips items={toItems} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="To" />
-        {ccItems.length > 0 && <RcpChips items={ccItems} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="CC" />}
+        <RcpChips items={defaultRecipients} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="To" />
+        {defaultCC.length > 0 && <RcpChips items={defaultCC} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="CC" />}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <input type="text" value={extraTo} onChange={e => setExtraTo(e.target.value)}
             placeholder="추가 To (쉼표 구분)"
@@ -1128,7 +1124,17 @@ export default function HRDashboard() {
     ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
 
-  const filteredNotify = allNotify.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
+  // notify tab: sub-tabs handle type separation, so skip typeF here
+  const filteredNotify = allNotify.filter(({ emp, mailKey }) => {
+    const q = search.trim().toLowerCase()
+    if (q) {
+      const text = [emp.name, emp.department, emp.division, emp.team].filter(Boolean).join(' ').toLowerCase()
+      if (!text.includes(q)) return false
+    }
+    if (sentF === '발송완료' && !mailSent[mailKey]) return false
+    if (sentF === '미발송'   &&  mailSent[mailKey]) return false
+    return true
+  })
   const filteredOnboard = newHires.filter(e => {
     const q = search.trim().toLowerCase()
     if (q) {
@@ -1459,8 +1465,8 @@ export default function HRDashboard() {
                 {currentList.length > 0 && (() => {
                   const sel      = currentList.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
-                  const defRcp   = notifySubTab === 'leave' ? FR.leave.map(r => r.email) : FR.hire.map(r => r.email)
-                  const defCC    = notifySubTab === 'leave' ? FR.leaveCC.map(r => r.email) : []
+                  const defRcp   = notifySubTab === 'leave' ? FR.leave : FR.hire
+                  const defCC    = notifySubTab === 'leave' ? FR.leaveCC : []
                   return (
                     <BulkControls
                       total={currentList.length}
@@ -1531,7 +1537,7 @@ export default function HRDashboard() {
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
-                      defaultRecipients={FR.cafe.map(r => r.email)}
+                      defaultRecipients={FR.cafe}
                       onBulkSend={to => handleBulkSend(
                         to,
                         `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
@@ -1574,7 +1580,7 @@ export default function HRDashboard() {
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
-                      defaultRecipients={FR.wellness.map(r => r.email)}
+                      defaultRecipients={FR.wellness}
                       onBulkSend={to => handleBulkSend(
                         to,
                         `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
