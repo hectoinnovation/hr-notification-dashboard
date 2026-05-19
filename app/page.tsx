@@ -1348,7 +1348,7 @@ export default function HRDashboard() {
       const m = key.match(/^(hire|leave)_(cafe|wellness)_(.+)$/)!
       const [, empType, pointType, empId] = m
       const emp = employees.find(e => String(e.id) === String(empId))
-      const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.leave_date ?? null
+      const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.exit_date ?? null
       const { error } = await supabase.from('point_requests').upsert({
         employee_id: empId, employee_type: empType, point_type: pointType,
         base_month: formatMonth(dateStr), extra_recipients: [],
@@ -1662,7 +1662,7 @@ export default function HRDashboard() {
                   <PagedList items={filteredCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
                       const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
-                      const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : entry.emp.leave_date ?? null
+                      const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : entry.emp.exit_date ?? null
                       return (
                         <PointCard emp={entry.emp} type={entry.empType} variant="cafe"
                           mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
