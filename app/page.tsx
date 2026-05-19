@@ -119,7 +119,11 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
     recognized = Math.round((leaveMonth - 1) * 50000 + 50000 * leaveDay / dimLeave)
   }
 
-  const prePaid = joinDateStr ? calcWellnessHire(joinDateStr) : 0
+  // 정산년도(leaveYear) > 입사년도 → 연초에 12개월 전체 선지급으로 봄 (600,000)
+  // 정산년도 === 입사년도 → 입사일부터 12월 말까지 일할계산
+  const prePaid = joinDateStr
+    ? (new Date(joinDateStr).getFullYear() < leaveYear ? 600000 : calcWellnessHire(joinDateStr))
+    : 0
   const reclaim = Math.max(0, prePaid - recognized)
   return { prePaid, recognized, reclaim }
 }
@@ -365,8 +369,8 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
         } else {
           const leaveDateForCalc = emp.exit_date ?? emp.leave_date
           if (leaveDateForCalc) {
-            const { recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
-            amt = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+            const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+            amt = `선지급 ${prePaid.toLocaleString()}원 / 인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
           }
         }
       }
