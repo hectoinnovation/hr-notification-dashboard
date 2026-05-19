@@ -247,14 +247,14 @@ function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   if (type === 'leave') {
     return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
-<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>
+<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
+<tr><td style="${TD}">${label}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>
 ${closingP}`
   }
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
-<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>
+<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
+<tr><td style="${TD}">${label}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>
 ${closingP}`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
@@ -301,7 +301,7 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
       }
     }
   }
-  const phone = emp.phone ?? '-'
+  const phone = emp.phone ?? ''
   if (type === 'hire') {
     // 입사자: 성명 / 입사일자 / 휴대폰번호 / 부여포인트
     const hireAmt = (emp.join_date && !isTransfer) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
@@ -344,26 +344,26 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 
   if (hires.length > 0) {
     const rows = hires.map(({ emp }) =>
-      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">입사</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
     ).join('')
     body += sec('[입사]', '#1e40af',
-      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">입사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">입사일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   if (transfers.length > 0) {
     const rows = transfers.map(({ emp }) =>
-      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">전적</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
     ).join('')
     body += sec('[전적]', '#b45309',
-      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">전적일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">전적일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   if (leaves.length > 0) {
     const rows = leaves.map(({ emp }) =>
-      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">퇴사</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
     ).join('')
     body += sec('[퇴사]', '#7e22ce',
-      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">입사일자</th><th style="${TH}">마지막 출근일</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">퇴사일</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}${closingP}`
@@ -399,7 +399,7 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
   if (hires.length > 0) {
     const hireRows = hires.map(({ emp, isTransfer }) => {
       const amt = (!isTransfer && emp.join_date) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
-      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.phone??'-'}</td><td style="${TD}">${amt}</td></tr>`
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.phone??''}</td><td style="${TD}">${amt}</td></tr>`
     }).join('')
     body += `<p style="${PP};font-weight:700;color:#1e40af;margin:16px 0 6px">[입사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">입사일자</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th></tr></thead><tbody>${hireRows}</tbody></table></div>`
   }
@@ -420,7 +420,7 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
         }
       }
       // 퇴사자: 성명 / 입사일 / 퇴사일 / 휴대폰번호 / 웰니스포인트 금액
-      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.phone??'-'}</td><td style="${TD}">${amt}</td></tr>`
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.phone??''}</td><td style="${TD}">${amt}</td></tr>`
     }).join('')
     body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">[퇴사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
   }
@@ -740,6 +740,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
+            {type === 'leave' && <InfoRow label="마지막 출근일"><span className="text-xs font-semibold text-gray-700">{emp.leave_date ?? '-'}</span></InfoRow>}
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
             {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
             {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
