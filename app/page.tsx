@@ -36,13 +36,13 @@ const FR = {
 interface EmployeeForm {
   name: string; join_date: string; leave_date: string; exit_date: string
   department: string; division: string; team: string; leader: string
-  position: string
+  position: string; phone: string
   join_reason: string; status: 'active' | 'resigned'
 }
 const EMPTY_FORM: EmployeeForm = {
   name: '', join_date: '', leave_date: '', exit_date: '',
   department: '', division: '', team: '', leader: '',
-  position: '',
+  position: '', phone: '',
   join_reason: '입사', status: 'active',
 }
 const PAGE_SIZE = 10
@@ -250,7 +250,8 @@ ${greetingP(type)}
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
   const dateLabel = getDateLabel(type, isTransfer)
-  const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  // 카페포인트 퇴사자 기준일: exit_date 필수 (leave_date fallback 없음)
+  const date = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   if (isTransfer) {
     return `<h3 style="color:#ea580c">[카페포인트] 전적 안내 — ${emp.name}</h3>
 ${greetingP(type)}
@@ -258,8 +259,9 @@ ${greetingP(type)}
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td></tr></table>
 <p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:12px">※ 전적자는 카페포인트 계산 대상이 아닙니다.</p>`
   }
-  const total  = points ? points.totalPoints.toLocaleString() + 'P' : '-'
-  const settle = points ? points.settlementPoints.toLocaleString() + 'P' : '-'
+  const noExitDate = type === 'leave' && !emp.exit_date
+  const total  = noExitDate ? '퇴사일 확인 필요' : (points ? points.totalPoints.toLocaleString() + 'P' : '-')
+  const settle = noExitDate ? '퇴사일 확인 필요' : (points ? points.settlementPoints.toLocaleString() + 'P' : '-')
   return `<h3 style="color:#ea580c">[카페포인트 ${type==='hire'?'안내':'정산'}] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
@@ -287,13 +289,18 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
       }
     }
   }
-  const tableHeader = type === 'leave'
-    ? `<tr><th style="${TH}">입사일자</th><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>`
-    : `<tr><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>`
-  const tableRow = type === 'leave'
-    ? `<tr><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
-    : `<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
-  return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer?'전적':type==='hire'?'안내':'정산'}] ${emp.name}</h3>
+  // 입사자: 성명/입사일자/휴대폰번호/부여포인트 | 퇴사자: 입사일자/퇴사일/이름/.../팀/휴대폰번호
+  const phone = emp.phone ?? '-'
+  if (type === 'hire') {
+    const hireAmt = (emp.join_date && !isTransfer) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
+    return `<h3 style="color:#ea580c">[웰니스포인트 안내] ${emp.name}</h3>
+${greetingP(type)}
+<table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일자</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th></tr>
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td></tr></table>`
+  }
+  const tableHeader = `<tr><th style="${TH}">입사일자</th><th style="${TH}">${dateLabel}</th><th style="${TH}">이름</th><th style="${TH}">직책/직급</th><th style="${TH}">구분</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">휴대폰번호</th></tr>`
+  const tableRow = `<tr><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${사유}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${phone}</td></tr>`
+  return `<h3 style="color:#ea580c">[웰니스포인트 정산] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}">${tableHeader}${tableRow}</table>${pointHtml}`
 }
@@ -342,12 +349,16 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, points, isTransfer }) => {
     const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
-    const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    // 카페포인트 퇴사자 기준일: exit_date 필수
+    const date  = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+    const noExitDate = empType === 'leave' && !emp.exit_date
     const amt   = isTransfer
       ? '해당 없음'
-      : points
-        ? `부여 ${points.totalPoints.toLocaleString()}P / 정산 ${points.settlementPoints.toLocaleString()}P`
-        : '-'
+      : noExitDate
+        ? '퇴사일 확인 필요'
+        : points
+          ? `부여 ${points.totalPoints.toLocaleString()}P / 정산 ${points.settlementPoints.toLocaleString()}P`
+          : '-'
     return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 카페포인트 요청의 건 (${entries.length}명)</h3>
@@ -356,16 +367,24 @@ ${bulkGreetingP(entries.map(e => e.empType))}
 }
 
 function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; isTransfer: boolean }>) {
-  const rows = entries.map(({ emp, empType, isTransfer }) => {
-    const label        = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
-    const joinDateDisp = empType === 'hire' ? (emp.join_date ?? '-') : (emp.join_date ?? '-')
-    // 퇴사일(exit_date) 우선, 없으면 마지막출근일(leave_date) — 메일엔 exit_date만 표시
-    const exitDateDisp = empType === 'leave' ? (emp.exit_date ?? '-') : '-'
-    let amt = '해당 없음'
-    if (!isTransfer) {
-      if (empType === 'hire' && emp.join_date) {
-        amt = `선지급 ${calcWellnessHire(emp.join_date).toLocaleString()}원`
-      } else if (empType === 'leave') {
+  const hires  = entries.filter(e => e.empType === 'hire')
+  const leaves = entries.filter(e => e.empType === 'leave')
+
+  let body = `${bulkGreetingP(entries.map(e => e.empType))}`
+
+  if (hires.length > 0) {
+    const hireRows = hires.map(({ emp, isTransfer }) => {
+      const amt = (!isTransfer && emp.join_date) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.phone??'-'}</td><td style="${TD}">${amt}</td></tr>`
+    }).join('')
+    body += `<p style="${PP};font-weight:700;color:#1e40af;margin:16px 0 6px">[입사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">입사일자</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th></tr></thead><tbody>${hireRows}</tbody></table></div>`
+  }
+
+  if (leaves.length > 0) {
+    const leaveRows = leaves.map(({ emp, isTransfer }) => {
+      const exitDateDisp = emp.exit_date ?? '-'
+      let amt = '해당 없음'
+      if (!isTransfer) {
         if (!emp.join_date) {
           amt = '입사일자 확인 필요'
         } else {
@@ -376,12 +395,12 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
           }
         }
       }
-    }
-    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${joinDateDisp}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
-  }).join('')
-  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
-${bulkGreetingP(entries.map(e => e.empType))}
-<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">입사일자</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${isTransfer?'전적':'퇴사'}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td><td style="${TD}">${emp.phone??'-'}</td></tr>`
+    }).join('')
+    body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">[퇴사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">입사일자</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th><th style="${TH}">휴대폰번호</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
+  }
+
+  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>${body}`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -867,6 +886,8 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
               <div className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
                 ℹ️ 전적자는 카페포인트 계산 대상이 아닙니다. 전적 안내 메일만 발송됩니다.
               </div>
+            ) : type === 'leave' && !emp.exit_date ? (
+              <p className="text-xs text-red-500 font-semibold">⚠️ 퇴사일(exit_date) 확인 필요</p>
             ) : (
               <div className="space-y-0">
                 <InfoRow label="총 부여포인트">
@@ -993,6 +1014,7 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
             <FormField label="팀" value={form.team} onChange={v => onChange('team', v)} placeholder="인사팀" />
           </div>
           <FormField label="팀장" value={form.leader} onChange={v => onChange('leader', v)} placeholder="이민수 팀장" />
+          <FormField label="휴대폰번호" value={form.phone} onChange={v => onChange('phone', v)} placeholder="010-0000-0000" />
           {form.status === 'resigned' ? (
             <>
               <FormField label="입사일자" type="date" value={form.join_date} onChange={v => onChange('join_date', v)} />
@@ -1245,6 +1267,7 @@ export default function HRDashboard() {
       exit_date: form.exit_date || null,
       department: form.department || null, division: form.division || null, team: form.team || null,
       position: form.position || null, leader: form.leader || null,
+      phone: form.phone || null,
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
     }
     const { error } = editTarget
@@ -1267,6 +1290,7 @@ export default function HRDashboard() {
       exit_date: emp.exit_date ?? '',
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
       position: emp.position ?? '', leader: emp.leader ?? '',
+      phone: emp.phone ?? '',
       join_reason: emp.join_reason ?? '입사', status: emp.status })
     setShowForm(true)
   }
@@ -1547,7 +1571,7 @@ export default function HRDashboard() {
                   const sel = filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const selWithPoints = sel.map(({ emp, empType, mailKey }) => {
                     const isTransfer = emp.join_reason === '전적' && empType === 'hire'
-                    const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.leave_date ?? null
+                    const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.exit_date ?? null
                     return { emp, empType, mailKey, isTransfer, points: isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, empType) }
                   })
                   const bulkHtml = sel.length > 0 ? makeBulkCafeHtml(selWithPoints) : ''
