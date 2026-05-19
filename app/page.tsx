@@ -25,11 +25,9 @@ const FR = {
   ] as const,
   leaveCC:  [
     { email: 't_849fm@hecto.co.kr',    label: '보안인프라팀' },
-    { email: 'ljmuni2@hecto.co.kr',    label: '이재민A'      },
-    { email: 'kaykim@hecto.co.kr',     label: '김정환'       },
     { email: 't_10010300@hecto.co.kr', label: '협업지원실'   },
   ] as const,
-  onboard:   [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  onboard:   [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }] as const,
   cafe:      [{ email: 'story2110@hecto.co.kr', label: '임대현' }] as const,
   cafeCC:    [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 'ht_ga@hecto.co.kr', label: '소통문화팀' }] as const,
   wellness:  [{ email: 'kaykim@hecto.co.kr', label: '김정환' }] as const,
