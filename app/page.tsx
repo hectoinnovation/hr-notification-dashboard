@@ -9,8 +9,8 @@ import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml }
 
 type Recipient = { email: string; label: string }
 const FR = {
-  hire:     [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
-  transfer: [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  hire:     [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  transfer: [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
   leave:    [
     { email: 'hansh@hecto.co.kr',       label: '한성호'  },
     { email: 'mscho0500@hecto.co.kr',   label: '조민수A' },
