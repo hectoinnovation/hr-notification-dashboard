@@ -27,6 +27,10 @@ export type Stage = typeof STAGES[number]
 // Stages that trigger automatic daily mail
 export const AUTO_MAIL_STAGE_IDS: readonly string[] = ['s5', 's6', 's7', 's_d30', 's8', 's9', 's10', 's11']
 
+// Stages applicable to transfer (전적자) — pre-hire preparation only
+export const TRANSFER_STAGE_IDS: readonly string[] = ['s_whr', 's_file', 's_docs']
+export const TRANSFER_STAGES = STAGES.filter(s => (TRANSFER_STAGE_IDS as string[]).includes(s.id))
+
 export function calcDday(joinDate: string | null | undefined, timing: string): string | null {
   if (!joinDate) return null
   const join = new Date(joinDate)

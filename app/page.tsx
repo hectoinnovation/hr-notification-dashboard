@@ -3,27 +3,44 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, type Employee } from '@/lib/supabase'
-import { STAGES, type Stage, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
+import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
 type Recipient = { email: string; label: string }
 const FR = {
-  hire:     [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
-  leave:    [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }, { email: 't_849fm@hecto.co.kr', label: '보안인프라팀' }] as const,
-  onboard:  [{ email: 'inno_hm@hecto.co.kr',   label: '인재협업팀' }] as const,
-  cafe:     [{ email: 'story2110@hecto.co.kr',  label: '임대현 책임' }] as const,
-  wellness: [{ email: 'yhj@hecto.co.kr',        label: '유현주 책임' }] as const,
+  hire:     [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  transfer: [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  leave:    [
+    { email: 'hansh@hecto.co.kr',       label: '한성호'     },
+    { email: 'mscho0500@hecto.co.kr',   label: '조민수A'    },
+    { email: 'mrson092@hecto.co.kr',    label: '손동국'     },
+    { email: 'guidong@hecto.co.kr',     label: '최귀동'     },
+    { email: 'tckim@hecto.co.kr',       label: '김태석'     },
+    { email: 'jinwon.lee@hecto.co.kr',  label: '이진원'     },
+    { email: 'whiteggj@hecto.co.kr',    label: '오창원'     },
+    { email: 'mudago@hecto.co.kr',      label: '신현수'     },
+    { email: 'eunsuk.jung@hecto.co.kr', label: '정은석'     },
+  ] as const,
+  leaveCC:  [
+    { email: 't_849fm@hecto.co.kr', label: '보안인프라팀' },
+    { email: 'lee0477@hecto.co.kr', label: '이승현'       },
+    { email: 'ljmuni2@hecto.co.kr', label: '이재민A'      },
+    { email: 'kaykim@hecto.co.kr',  label: '김정환'       },
+  ] as const,
+  onboard:  [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  cafe:     [{ email: 'story2110@hecto.co.kr', label: '임대현' }] as const,
+  wellness: [{ email: 'yhj@hecto.co.kr',       label: '유현주' }] as const,
 }
 
 interface EmployeeForm {
-  name: string; join_date: string; leave_date: string
+  name: string; join_date: string; leave_date: string; exit_date: string
   department: string; division: string; team: string; leader: string
   position: string
   join_reason: string; status: 'active' | 'resigned'
 }
 const EMPTY_FORM: EmployeeForm = {
-  name: '', join_date: '', leave_date: '',
+  name: '', join_date: '', leave_date: '', exit_date: '',
   department: '', division: '', team: '', leader: '',
   position: '',
   join_reason: '입사', status: 'active',
@@ -181,11 +198,11 @@ function lookupExcelPoints(excelData: Record<number, ExcelSheetData>, dateStr: s
 }
 
 // ─── 메일 API ─────────────────────────────────────────────────────────────────
-async function sendMailApi(to: string[], subject: string, html: string): Promise<string | null> {
+async function sendMailApi(to: string[], subject: string, html: string, cc?: string[]): Promise<string | null> {
   try {
     const res = await fetch('/api/send-mail', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to, subject, html }),
+      body: JSON.stringify({ to, cc, subject, html }),
     })
     if (!res.ok) {
       const data = await res.json() as { error?: string }
@@ -245,18 +262,23 @@ ${greetingP(type)}
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
   const 사유 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
   const dateLabel = getDateLabel(type, isTransfer)
-  const date = (type === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+  const date = (type === 'hire' ? emp.join_date : (emp.exit_date ?? emp.leave_date)) ?? '-'
   let pointHtml = ''
   if (!isTransfer) {
     if (type === 'hire' && emp.join_date) {
       const amt = calcWellnessHire(emp.join_date)
       pointHtml = `<table style="${TS};margin-top:12px"><tr><th style="${TH}">선지급액</th><td style="${TD}">${amt.toLocaleString()}원</td></tr></table>`
-    } else if (type === 'leave' && emp.leave_date) {
-      const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
-      pointHtml = `<table style="${TS};margin-top:12px">
+    } else if (type === 'leave') {
+      const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+      if (!emp.join_date) {
+        pointHtml = `<p style="${PP};color:#dc2626;margin-top:8px">⚠️ 입사일자 확인 필요</p>`
+      } else if (leaveDateForCalc) {
+        const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+        pointHtml = `<table style="${TS};margin-top:12px">
 <tr><th style="${TH}">선지급액</th><td style="${TD}">${prePaid.toLocaleString()}원</td></tr>
 <tr><th style="${TH}">인정액</th><td style="${TD}">${recognized.toLocaleString()}원</td></tr>
 <tr><th style="${TH}">환수금</th><td style="${TD}">${reclaim.toLocaleString()}원</td></tr></table>`
+      }
     }
   }
   return `<h3 style="color:#ea580c">[웰니스포인트 ${isTransfer?'전적':type==='hire'?'안내':'정산'}] ${emp.name}</h3>
@@ -297,10 +319,10 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 
   if (leaves.length > 0) {
     const rows = leaves.map(({ emp }) =>
-      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
     ).join('')
     body += sec('[퇴사]', '#7e22ce',
-      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">마지막 출근일</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">입사일자</th><th style="${TH}">마지막 출근일</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}<p style="${PP};margin-top:16px">감사합니다.<br>인재협업팀 드림</p>`
@@ -324,22 +346,31 @@ ${bulkGreetingP(entries.map(e => e.empType))}
 
 function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, isTransfer }) => {
-    const label = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
-    const date  = (empType === 'hire' ? emp.join_date : emp.leave_date) ?? '-'
+    const label        = isTransfer ? '전적' : (empType === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
+    const joinDateDisp = empType === 'hire' ? (emp.join_date ?? '-') : (emp.join_date ?? '-')
+    // 퇴사일(exit_date) 우선, 없으면 마지막출근일(leave_date) — 메일엔 exit_date만 표시
+    const exitDateDisp = empType === 'leave' ? (emp.exit_date ?? '-') : '-'
     let amt = '해당 없음'
     if (!isTransfer) {
       if (empType === 'hire' && emp.join_date) {
         amt = `선지급 ${calcWellnessHire(emp.join_date).toLocaleString()}원`
-      } else if (empType === 'leave' && emp.leave_date) {
-        const { recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
-        amt = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+      } else if (empType === 'leave') {
+        if (!emp.join_date) {
+          amt = '입사일자 확인 필요'
+        } else {
+          const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+          if (leaveDateForCalc) {
+            const { recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+            amt = `인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
+          }
+        }
       }
     }
-    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td><td style="${TD}">${joinDateDisp}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.position??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${amt}</td></tr>`
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>
 ${bulkGreetingP(entries.map(e => e.empType))}
-<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">기준일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
+<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">입사일자</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -379,56 +410,73 @@ function InfoRow({ label, children }: { label: string; children: ReactNode }) {
 }
 
 // ─── 메일 패널 ────────────────────────────────────────────────────────────────
-function MailPanel({ fixedRecipients, defaultSubject, mailSent, htmlBody, onSend }: {
-  fixedRecipients: readonly Recipient[]; defaultSubject: string
-  mailSent: boolean; htmlBody: string; onSend: () => void
+function RcpChips({ items, active, onToggle, label }: {
+  items: readonly Recipient[]; active: string[]
+  onToggle: (email: string) => void; label: string
 }) {
-  const [subject,  setSubject]  = useState(defaultSubject)
-  const [extra,    setExtra]    = useState('')
-  const [sending,  setSending]  = useState(false)
-  const [mailErr,  setMailErr]  = useState<string | null>(null)
-  const [activeRcp, setActiveRcp] = useState<string[]>(fixedRecipients.map(r => r.email))
+  if (items.length === 0) return null
+  return (
+    <div>
+      <p className="text-xs font-semibold text-gray-400 mb-1.5">{label} <span className="font-normal text-gray-300">(클릭하여 제외/복원)</span></p>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map(r => {
+          const on = active.includes(r.email)
+          return (
+            <button key={r.email} type="button" onClick={() => onToggle(r.email)}
+              className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${on ? 'bg-white border-blue-200 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'}`}>
+              <span className="font-semibold flex-shrink-0">{r.label}</span>
+              <span className="font-mono text-gray-500 break-all">&lt;{r.email}&gt;</span>
+              {on
+                ? <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l6 6M9 3l-6 6"/></svg>
+                : <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5"/></svg>
+              }
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
-  function toggleRcp(email: string) {
-    setActiveRcp(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email])
-  }
+function MailPanel({ fixedRecipients, fixedCC = [], defaultSubject, mailSent, htmlBody, onSend }: {
+  fixedRecipients: readonly Recipient[]; fixedCC?: readonly Recipient[]
+  defaultSubject: string; mailSent: boolean; htmlBody: string; onSend: () => void
+}) {
+  const [subject,   setSubject]   = useState(defaultSubject)
+  const [extraTo,   setExtraTo]   = useState('')
+  const [extraCC,   setExtraCC]   = useState('')
+  const [sending,   setSending]   = useState(false)
+  const [mailErr,   setMailErr]   = useState<string | null>(null)
+  const [activeTo,  setActiveTo]  = useState<string[]>(fixedRecipients.map(r => r.email))
+  const [activeCC,  setActiveCC]  = useState<string[]>(fixedCC.map(r => r.email))
 
   async function handleSend() {
     if (sending) return
     setSending(true); setMailErr(null)
-    const extraList = extra.split(',').map(e => e.trim()).filter(Boolean)
-    const to = [...activeRcp, ...extraList]
-    const err = await sendMailApi(to, subject, htmlBody)
+    const to = [...activeTo,  ...extraTo.split(',').map(e => e.trim()).filter(Boolean)]
+    const cc = [...activeCC,  ...extraCC.split(',').map(e => e.trim()).filter(Boolean)]
+    const err = await sendMailApi(to, subject, htmlBody, cc.length ? cc : undefined)
     setSending(false)
     if (err) setMailErr(err); else onSend()
   }
 
   return (
     <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 space-y-3">
-      <div>
-        <p className="text-xs font-semibold text-gray-400 mb-2">수신자 <span className="font-normal text-gray-300">(클릭하여 제외)</span></p>
-        <div className="flex flex-wrap gap-1.5">
-          {fixedRecipients.map(r => {
-            const active = activeRcp.includes(r.email)
-            return (
-              <button key={r.email} type="button" onClick={() => toggleRcp(r.email)}
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border shadow-sm max-w-full min-w-0 transition-colors ${active ? 'bg-white border-blue-200 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'}`}>
-                <span className="font-mono break-all">{r.email}</span>
-                <span className={`font-sans font-semibold flex-shrink-0 ml-0.5 ${active ? 'text-blue-500' : 'text-gray-400'}`}>({r.label})</span>
-                {active
-                  ? <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l6 6M9 3l-6 6"/></svg>
-                  : <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5"/></svg>
-                }
-              </button>
-            )
-          })}
+      <RcpChips items={fixedRecipients} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="To" />
+      {fixedCC.length > 0 && <RcpChips items={fixedCC} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="CC" />}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-1">추가 To</p>
+          <input type="text" value={extraTo} onChange={e => setExtraTo(e.target.value)}
+            placeholder="이메일, 쉼표 구분"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
         </div>
-      </div>
-      <div>
-        <p className="text-xs font-semibold text-gray-400 mb-1.5">추가 수신자 <span className="font-normal text-gray-300">(선택)</span></p>
-        <input type="text" value={extra} onChange={e => setExtra(e.target.value)}
-          placeholder="이메일 주소 입력, 쉼표로 구분"
-          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+        <div>
+          <p className="text-xs font-semibold text-gray-400 mb-1">추가 CC</p>
+          <input type="text" value={extraCC} onChange={e => setExtraCC(e.target.value)}
+            placeholder="이메일, 쉼표 구분"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+        </div>
       </div>
       <div>
         <p className="text-xs font-semibold text-gray-400 mb-1.5">메일 제목</p>
@@ -531,34 +579,43 @@ function PreviewToggle({ htmlBody }: { htmlBody: string }) {
 }
 
 // ─── 일괄 발송 컨트롤 ────────────────────────────────────────────────────────
-function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult, previewHtml, defaultRecipients }: {
+function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulkSend, bulkSending, bulkResult, previewHtml, defaultRecipients, defaultCC = [] }: {
   total: number; selectedCount: number
   onSelectAll: () => void; onDeselectAll: () => void
-  onBulkSend: (to: string[]) => void; bulkSending: boolean
+  onBulkSend: (to: string[], cc?: string[]) => void; bulkSending: boolean
   bulkResult: { sent: number; failed: number } | null
   previewHtml?: string
   defaultRecipients: string[]
+  defaultCC?: string[]
 }) {
   const cbRef = useRef<HTMLInputElement>(null)
   const allSelected = total > 0 && selectedCount === total
   const someSelected = selectedCount > 0 && selectedCount < total
   useEffect(() => { if (cbRef.current) cbRef.current.indeterminate = someSelected }, [someSelected])
 
-  const [activeRcp, setActiveRcp] = useState<string[]>([...defaultRecipients])
-  const [extraInput, setExtraInput] = useState('')
-  const prevDefKey = useRef(defaultRecipients.join(','))
-  useEffect(() => {
-    const key = defaultRecipients.join(',')
-    if (prevDefKey.current !== key) { setActiveRcp([...defaultRecipients]); prevDefKey.current = key }
-  }, [defaultRecipients])
+  const [activeTo,  setActiveTo]  = useState<string[]>([...defaultRecipients])
+  const [activeCC,  setActiveCC]  = useState<string[]>([...defaultCC])
+  const [extraTo,   setExtraTo]   = useState('')
+  const [extraCC,   setExtraCC]   = useState('')
 
-  function toggleRcp(email: string) {
-    setActiveRcp(p => p.includes(email) ? p.filter(e => e !== email) : [...p, email])
-  }
+  const prevToKey = useRef(defaultRecipients.join(','))
+  const prevCCKey = useRef(defaultCC.join(','))
+  useEffect(() => {
+    const toKey = defaultRecipients.join(',')
+    if (prevToKey.current !== toKey) { setActiveTo([...defaultRecipients]); prevToKey.current = toKey }
+    const ccKey = defaultCC.join(',')
+    if (prevCCKey.current !== ccKey) { setActiveCC([...defaultCC]); prevCCKey.current = ccKey }
+  }, [defaultRecipients, defaultCC])
+
   function handleSend() {
-    const extra = extraInput.split(',').map(e => e.trim()).filter(Boolean)
-    onBulkSend([...activeRcp, ...extra])
+    const to = [...activeTo, ...extraTo.split(',').map(e => e.trim()).filter(Boolean)]
+    const cc = [...activeCC, ...extraCC.split(',').map(e => e.trim()).filter(Boolean)]
+    onBulkSend(to, cc.length ? cc : undefined)
   }
+
+  // Synthetic Recipient objects from plain email strings for RcpChips
+  const toItems: Recipient[] = defaultRecipients.map(e => ({ email: e, label: e.split('@')[0] }))
+  const ccItems: Recipient[] = defaultCC.map(e => ({ email: e, label: e.split('@')[0] }))
 
   return (
     <div className="space-y-2.5 bg-orange-50/50 border border-orange-100 rounded-xl px-4 py-3">
@@ -588,26 +645,17 @@ function BulkControls({ total, selectedCount, onSelectAll, onDeselectAll, onBulk
         )}
       </div>
       {/* 수신자 */}
-      <div className="border-t border-orange-100 pt-2.5 space-y-1.5">
-        <p className="text-xs font-semibold text-gray-400">받는 사람 <span className="font-normal text-gray-300">(클릭하여 제외/복원)</span></p>
-        <div className="flex flex-wrap gap-1.5">
-          {defaultRecipients.map(email => {
-            const on = activeRcp.includes(email)
-            return (
-              <button key={email} type="button" onClick={() => toggleRcp(email)}
-                className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border transition-colors ${on ? 'bg-white border-blue-200 text-blue-700' : 'bg-gray-100 border-gray-200 text-gray-400 line-through'}`}>
-                <span className="font-mono">{email}</span>
-                {on
-                  ? <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 3l6 6M9 3l-6 6"/></svg>
-                  : <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 12 12" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 6l3 3 5-5"/></svg>
-                }
-              </button>
-            )
-          })}
+      <div className="border-t border-orange-100 pt-2.5 space-y-2">
+        <RcpChips items={toItems} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="To" />
+        {ccItems.length > 0 && <RcpChips items={ccItems} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x=>x!==e) : [...p,e])} label="CC" />}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input type="text" value={extraTo} onChange={e => setExtraTo(e.target.value)}
+            placeholder="추가 To (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+          <input type="text" value={extraCC} onChange={e => setExtraCC(e.target.value)}
+            placeholder="추가 CC (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
         </div>
-        <input type="text" value={extraInput} onChange={e => setExtraInput(e.target.value)}
-          placeholder="추가 수신자 (쉼표로 구분)"
-          className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
       </div>
       {selectedCount > 0 && previewHtml && <PreviewToggle htmlBody={previewHtml} />}
     </div>
@@ -649,6 +697,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
           </div>
           <PreviewToggle htmlBody={htmlBody} />
           <MailPanel fixedRecipients={type === 'hire' ? FR.hire : FR.leave}
+            fixedCC={type === 'leave' ? FR.leaveCC : []}
             defaultSubject={subject} mailSent={mailSent} htmlBody={htmlBody} onSend={onSend} />
         </div>
       )}
@@ -706,11 +755,12 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
   onToggleDone: (empId: string, stageId: string) => void; onSendMail: (key: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const done     = STAGES.filter(s => !!stageDone[`${hire.id}_${s.id}`]).length
-  const pct      = Math.round((done / STAGES.length) * 100)
-  const orgLine  = [hire.department, hire.division, hire.team].filter(Boolean).join(' · ') || '-'
   const isTransfer = hire.join_reason === '전적'
   const typeLabel  = isTransfer ? '전적' : '입사'
+  const stages   = isTransfer ? TRANSFER_STAGES : STAGES
+  const done     = stages.filter(s => !!stageDone[`${hire.id}_${s.id}`]).length
+  const pct      = Math.round((done / stages.length) * 100)
+  const orgLine  = [hire.department, hire.division, hire.team].filter(Boolean).join(' · ') || '-'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -729,7 +779,7 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
           <div className="flex items-center gap-3 flex-shrink-0">
             <div className="text-right">
               <p className="text-lg font-black text-orange-600 leading-none">{pct}%</p>
-              <p className="text-xs text-gray-400 mt-0.5">{done}/{STAGES.length}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{done}/{stages.length}</p>
             </div>
             <button onClick={() => setExpanded(p => !p)}
               className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${expanded ? 'bg-orange-100 border-orange-200 text-orange-700' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
@@ -744,7 +794,7 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
       </div>
       {expanded && (
         <div>
-          {STAGES.map((stage, idx) => {
+          {stages.map((stage, idx) => {
             const key = `${hire.id}_${stage.id}`
             return (
               <OnboardingRow key={stage.id} stage={stage} idx={idx}
@@ -827,9 +877,11 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
                   <p className="text-xs text-gray-400 pt-0.5">* 월 만근 50,000원 기준 / 12월 말까지 일할 계산</p>
                 </div>
               ) : <p className="text-xs text-gray-400">* 입사일 등록 후 자동 계산됩니다</p>
-            ) : (
-              emp.leave_date ? (() => {
-                const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, emp.leave_date)
+            ) : (() => {
+                if (!emp.join_date) return <p className="text-xs text-red-500 font-semibold">⚠️ 입사일자 확인 필요</p>
+                const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+                if (!leaveDateForCalc) return <p className="text-xs text-gray-400">* 퇴사일 등록 후 자동 계산됩니다</p>
+                const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
                 return (
                   <div className="space-y-0">
                     <InfoRow label="선지급액"><span className="text-xs text-gray-600">{prePaid.toLocaleString()}원</span></InfoRow>
@@ -838,8 +890,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
                     <p className="text-xs text-gray-400 pt-0.5">* 환수금 = 선지급액 − 인정액</p>
                   </div>
                 )
-              })() : <p className="text-xs text-gray-400">* 퇴사일 등록 후 자동 계산됩니다</p>
-            )
+              })()
           )}
           {variant === 'wellness' && isTransfer && (
             <div className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
@@ -924,10 +975,20 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
             <FormField label="팀" value={form.team} onChange={v => onChange('team', v)} placeholder="인사팀" />
           </div>
           <FormField label="팀장" value={form.leader} onChange={v => onChange('leader', v)} placeholder="이민수 팀장" />
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="입사일" type="date" value={form.join_date} onChange={v => onChange('join_date', v)} />
-            <FormField label="퇴사일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
-          </div>
+          {form.status === 'resigned' ? (
+            <>
+              <FormField label="입사일자" type="date" value={form.join_date} onChange={v => onChange('join_date', v)} />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="마지막 출근일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
+                <FormField label="퇴사일" type="date" value={form.exit_date} onChange={v => onChange('exit_date', v)} />
+              </div>
+            </>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="입사일" type="date" value={form.join_date} onChange={v => onChange('join_date', v)} />
+              <FormField label="퇴사일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
+            </div>
+          )}
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">상태</label>
             <select value={form.status} onChange={e => onChange('status', e.target.value)}
@@ -1012,7 +1073,8 @@ export default function HRDashboard() {
   const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
   const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
 
-  const [activeTab, setActiveTab] = useState<TabId>('notify')
+  const [activeTab,     setActiveTab]     = useState<TabId>('notify')
+  const [notifySubTab, setNotifySubTab] = useState<'hire' | 'transfer' | 'leave'>('hire')
   const [search,    setSearch]    = useState('')
   const [typeF,     setTypeF]     = useState('전체')
   const [sentF,     setSentF]     = useState('전체')
@@ -1030,8 +1092,8 @@ export default function HRDashboard() {
   const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
 
   // 검색/필터/탭 변경 시 초기화
-  useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, search, typeF, sentF])
-  useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, search, typeF, sentF])
+  useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, notifySubTab, search, typeF, sentF])
+  useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, notifySubTab, search, typeF, sentF])
 
   // 직원 타입 레이블
   function empTypeLabel(e: Employee): string {
@@ -1093,9 +1155,9 @@ export default function HRDashboard() {
   function selectAll(keys: string[]) { setSelectedKeys(new Set(keys)) }
   function deselectAll() { setSelectedKeys(new Set()) }
 
-  async function handleBulkSend(to: string[], subject: string, html: string, keys: string[]) {
+  async function handleBulkSend(to: string[], subject: string, html: string, keys: string[], cc?: string[]) {
     setBulkSending(true); setBulkResult(null)
-    const err = await sendMailApi(to, subject, html)
+    const err = await sendMailApi(to, subject, html, cc)
     if (err) {
       setError('일괄 발송 실패: ' + err)
       setBulkResult({ sent: 0, failed: keys.length })
@@ -1152,6 +1214,7 @@ export default function HRDashboard() {
     setSubmitting(true)
     const payload = {
       name: form.name.trim(), join_date: form.join_date || null, leave_date: form.leave_date || null,
+      exit_date: form.exit_date || null,
       department: form.department || null, division: form.division || null, team: form.team || null,
       position: form.position || null, leader: form.leader || null,
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
@@ -1173,6 +1236,7 @@ export default function HRDashboard() {
   function openEdit(emp: Employee) {
     setEditTarget(emp)
     setForm({ name: emp.name, join_date: emp.join_date ?? '', leave_date: emp.leave_date ?? '',
+      exit_date: emp.exit_date ?? '',
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
       position: emp.position ?? '', leader: emp.leader ?? '',
       join_reason: emp.join_reason ?? '입사', status: emp.status })
@@ -1356,50 +1420,68 @@ export default function HRDashboard() {
                 </svg>
                 <span className="text-sm">불러오는 중...</span>
               </div>
-            ) : activeTab === 'notify' ? (
+            ) : activeTab === 'notify' ? (() => {
+              const notifyHire     = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason !== '전적')
+              const notifyTransfer = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason === '전적')
+              const notifyLeave    = filteredNotify.filter(e => e.type === 'leave')
+              const currentList    = notifySubTab === 'hire' ? notifyHire : notifySubTab === 'transfer' ? notifyTransfer : notifyLeave
+              const NOTIFY_SUB_TABS = [
+                { id: 'hire'     as const, label: '입사', count: notifyHire.length     },
+                { id: 'transfer' as const, label: '전적', count: notifyTransfer.length },
+                { id: 'leave'    as const, label: '퇴사', count: notifyLeave.length    },
+              ]
+              return (
               <div className="space-y-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <p className="text-xs text-gray-400">{filteredNotify.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
-                  <div className="flex gap-2">
-                    <button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }}
-                      className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">
-                      + 퇴사자
+                {/* 서브탭 */}
+                <div className="flex items-center gap-1 border-b border-gray-100 -mx-4 sm:-mx-5 px-4 sm:px-5">
+                  {NOTIFY_SUB_TABS.map(t => (
+                    <button key={t.id} onClick={() => setNotifySubTab(t.id)}
+                      className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${notifySubTab === t.id ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                      {t.label}
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${notifySubTab === t.id ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{t.count}</span>
                     </button>
-                    <button onClick={openAdd}
-                      className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">
-                      + 입사자
-                    </button>
+                  ))}
+                  <div className="ml-auto flex gap-2 pb-1">
+                    {notifySubTab === 'leave' ? (
+                      <button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }}
+                        className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">
+                        + 퇴사자
+                      </button>
+                    ) : (
+                      <button onClick={openAdd}
+                        className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">
+                        + {notifySubTab === 'transfer' ? '전적자' : '입사자'}
+                      </button>
+                    )}
                   </div>
                 </div>
-                {filteredNotify.length > 0 && (() => {
-                  const sel      = filteredNotify.filter(({ mailKey }) => selectedKeys.has(mailKey))
+                <p className="text-xs text-gray-400">{currentList.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
+                {currentList.length > 0 && (() => {
+                  const sel      = currentList.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
-                  const hasHire  = sel.some(e => e.type === 'hire')
-                  const hasLeave = sel.some(e => e.type === 'leave')
-                  const defRcp   = [...new Set([
-                    ...(hasHire  ? FR.hire.map(r => r.email)  : []),
-                    ...(hasLeave ? FR.leave.map(r => r.email) : []),
-                    ...(!hasHire && !hasLeave ? FR.hire.map(r => r.email) : []),
-                  ])]
+                  const defRcp   = notifySubTab === 'leave' ? FR.leave.map(r => r.email) : FR.hire.map(r => r.email)
+                  const defCC    = notifySubTab === 'leave' ? FR.leaveCC.map(r => r.email) : []
                   return (
                     <BulkControls
-                      total={filteredNotify.length}
+                      total={currentList.length}
                       selectedCount={sel.length}
-                      onSelectAll={() => selectAll(filteredNotify.map(e => e.mailKey))}
+                      onSelectAll={() => selectAll(currentList.map(e => e.mailKey))}
                       onDeselectAll={deselectAll}
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
                       defaultRecipients={defRcp}
-                      onBulkSend={to => handleBulkSend(
+                      defaultCC={defCC}
+                      onBulkSend={(to, cc) => handleBulkSend(
                         to,
-                        `[인사 알림] 입퇴사 안내 (${sel.length}명)`,
+                        notifySubTab === 'leave' ? `[퇴사 안내] (${sel.length}명)` : `[입사 안내] (${sel.length}명)`,
                         bulkHtml,
-                        sel.map(e => e.mailKey)
+                        sel.map(e => e.mailKey),
+                        cc
                       )} />
                   )
                 })()}
-                {filteredNotify.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
-                  <PagedList items={filteredNotify} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
+                {currentList.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
+                  <PagedList items={currentList} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
                     renderItem={(entry: NotifyEntry) => (
                       <NotifCard emp={entry.emp} type={entry.type}
                         mailSent={!!mailSent[entry.mailKey]}
@@ -1412,8 +1494,10 @@ export default function HRDashboard() {
                     )} />
                 )}
               </div>
+              )
+            })()
 
-            ) : activeTab === 'onboard' ? (
+            : activeTab === 'onboard' ? (
               <div className="space-y-3">
                 <p className="text-xs text-gray-400">{filteredOnboard.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                 {filteredOnboard.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'} /> : (

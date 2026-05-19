@@ -2,11 +2,12 @@ import nodemailer from 'nodemailer'
 
 export interface MailPayload {
   to: string[]
+  cc?: string[]
   subject: string
   html: string
 }
 
-export async function sendMail({ to, subject, html }: MailPayload): Promise<string | null> {
+export async function sendMail({ to, cc, subject, html }: MailPayload): Promise<string | null> {
   const host = process.env.SMTP_HOST
   const port = parseInt(process.env.SMTP_PORT ?? '587')
   const user = process.env.SMTP_USER
@@ -26,7 +27,7 @@ export async function sendMail({ to, subject, html }: MailPayload): Promise<stri
   })
 
   try {
-    await transporter.sendMail({ from, to, subject, html })
+    await transporter.sendMail({ from, to, cc, subject, html })
     return null
   } catch (err) {
     return err instanceof Error ? err.message : String(err)
