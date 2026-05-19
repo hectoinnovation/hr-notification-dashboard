@@ -1136,8 +1136,9 @@ export default function HRDashboard() {
   const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
   const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
 
-  const [activeTab,     setActiveTab]     = useState<TabId>('notify')
-  const [notifySubTab, setNotifySubTab] = useState<'hire' | 'transfer' | 'leave'>('hire')
+  const [activeTab,           setActiveTab]           = useState<TabId>('notify')
+  const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave'>('all')
+  const [notifySectCollapsed, setNotifySectCollapsed] = useState<Set<string>>(new Set())
   const [search,    setSearch]    = useState('')
   const [typeF,     setTypeF]     = useState('전체')
   const [sentF,     setSentF]     = useState('전체')
@@ -1499,75 +1500,114 @@ export default function HRDashboard() {
               const notifyHire     = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason !== '전적')
               const notifyTransfer = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason === '전적')
               const notifyLeave    = filteredNotify.filter(e => e.type === 'leave')
-              const currentList    = notifySubTab === 'hire' ? notifyHire : notifySubTab === 'transfer' ? notifyTransfer : notifyLeave
               const NOTIFY_SUB_TABS = [
                 { id: 'hire'     as const, label: '입사', count: notifyHire.length     },
                 { id: 'transfer' as const, label: '전적', count: notifyTransfer.length },
                 { id: 'leave'    as const, label: '퇴사', count: notifyLeave.length    },
               ]
+              const showHire     = notifySubTab === 'all' || notifySubTab === 'hire'
+              const showTransfer = notifySubTab === 'all' || notifySubTab === 'transfer'
+              const showLeave    = notifySubTab === 'all' || notifySubTab === 'leave'
+              const visibleItems = [
+                ...(showHire     ? notifyHire     : []),
+                ...(showTransfer ? notifyTransfer : []),
+                ...(showLeave    ? notifyLeave    : []),
+              ]
+              const allSel      = visibleItems.filter(({ mailKey }) => selectedKeys.has(mailKey))
+              const selHasLeave = allSel.some(e => e.type === 'leave')
+              const selHasHire  = allSel.some(e => e.type === 'hire')
+              const defRcp      = selHasLeave ? FR.leave : FR.hire
+              const defCC       = selHasLeave ? FR.leaveCC : []
+              const bulkHtml    = allSel.length > 0 ? makeBulkNotifHtml(allSel.map(({ emp, type }) => ({ emp, type }))) : ''
+              const bulkSubject = selHasHire && selHasLeave
+                ? `[입퇴사 안내] (${allSel.length}명)`
+                : selHasLeave ? `[퇴사 안내] (${allSel.length}명)` : `[입사 안내] (${allSel.length}명)`
+              const SECTIONS = [
+                { id: 'hire'     as const, title: '입사', color: 'blue'   as const, items: notifyHire     },
+                { id: 'transfer' as const, title: '전적', color: 'amber'  as const, items: notifyTransfer },
+                { id: 'leave'    as const, title: '퇴사', color: 'purple' as const, items: notifyLeave    },
+              ]
               return (
               <div className="space-y-3">
-                {/* 서브탭 */}
+                {/* 필터 탭 */}
                 <div className="flex items-center gap-1 border-b border-gray-100 -mx-4 sm:-mx-5 px-4 sm:px-5">
                   {NOTIFY_SUB_TABS.map(t => (
-                    <button key={t.id} onClick={() => setNotifySubTab(t.id)}
+                    <button key={t.id} onClick={() => setNotifySubTab(p => p === t.id ? 'all' : t.id)}
                       className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${notifySubTab === t.id ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                       {t.label}
                       <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${notifySubTab === t.id ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{t.count}</span>
                     </button>
                   ))}
                   <div className="ml-auto flex gap-2 pb-1">
-                    {notifySubTab === 'leave' ? (
-                      <button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }}
-                        className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">
-                        + 퇴사자
-                      </button>
-                    ) : (
+                    {(notifySubTab === 'all' || notifySubTab !== 'leave') && (
                       <button onClick={openAdd}
                         className="text-xs font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-2.5 py-1 rounded-lg transition-colors">
                         + {notifySubTab === 'transfer' ? '전적자' : '입사자'}
                       </button>
                     )}
+                    {(notifySubTab === 'all' || notifySubTab === 'leave') && (
+                      <button onClick={() => { setForm({ ...EMPTY_FORM, status: 'resigned' }); setEditTarget(null); setShowForm(true) }}
+                        className="text-xs font-semibold text-purple-600 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-2.5 py-1 rounded-lg transition-colors">
+                        + 퇴사자
+                      </button>
+                    )}
                   </div>
                 </div>
-                <p className="text-xs text-gray-400">{currentList.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
-                {currentList.length > 0 && (() => {
-                  const sel      = currentList.filter(({ mailKey }) => selectedKeys.has(mailKey))
-                  const bulkHtml = sel.length > 0 ? makeBulkNotifHtml(sel.map(({ emp, type }) => ({ emp, type }))) : ''
-                  const defRcp   = notifySubTab === 'leave' ? FR.leave : FR.hire
-                  const defCC    = notifySubTab === 'leave' ? FR.leaveCC : []
-                  return (
-                    <BulkControls
-                      total={currentList.length}
-                      selectedCount={sel.length}
-                      onSelectAll={() => selectAll(currentList.map(e => e.mailKey))}
-                      onDeselectAll={deselectAll}
-                      bulkSending={bulkSending} bulkResult={bulkResult}
-                      previewHtml={bulkHtml}
-                      defaultRecipients={defRcp}
-                      defaultCC={defCC}
-                      onBulkSend={(to, cc) => handleBulkSend(
-                        to,
-                        notifySubTab === 'leave' ? `[퇴사 안내] (${sel.length}명)` : `[입사 안내] (${sel.length}명)`,
-                        bulkHtml,
-                        sel.map(e => e.mailKey),
-                        cc
-                      )} />
-                  )
-                })()}
-                {currentList.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
-                  <PagedList items={currentList} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
-                    renderItem={(entry: NotifyEntry) => (
-                      <NotifCard emp={entry.emp} type={entry.type}
-                        mailSent={!!mailSent[entry.mailKey]}
-                        onSend={() => sendMail(entry.mailKey)}
-                        onEdit={() => openEdit(entry.emp)}
-                        onDelete={() => handleDelete(String(entry.emp.id), entry.emp.name)}
-                        selected={selectedKeys.has(entry.mailKey)}
-                        onSelect={checked => toggleSelect(entry.mailKey, checked)}
-                      />
+
+                {/* 통합 발송 컨트롤 */}
+                {visibleItems.length > 0 && (
+                  <BulkControls
+                    total={visibleItems.length}
+                    selectedCount={allSel.length}
+                    onSelectAll={() => selectAll(visibleItems.map(e => e.mailKey))}
+                    onDeselectAll={deselectAll}
+                    bulkSending={bulkSending} bulkResult={bulkResult}
+                    previewHtml={bulkHtml}
+                    defaultRecipients={defRcp}
+                    defaultCC={defCC}
+                    onBulkSend={(to, cc) => handleBulkSend(
+                      to, bulkSubject, bulkHtml,
+                      allSel.map(e => e.mailKey), cc
                     )} />
                 )}
+
+                {/* 섹션별 목록 */}
+                {SECTIONS.filter(s => notifySubTab === 'all' || notifySubTab === s.id).map(s => {
+                  const isCollapsed = notifySectCollapsed.has(s.id)
+                  const colorCls = s.color === 'blue'
+                    ? 'text-blue-700 bg-blue-50 border-blue-200'
+                    : s.color === 'amber'
+                    ? 'text-amber-700 bg-amber-50 border-amber-200'
+                    : 'text-purple-700 bg-purple-50 border-purple-200'
+                  return (
+                    <div key={s.id} className="space-y-2">
+                      <button
+                        onClick={() => setNotifySectCollapsed(p => { const n = new Set(p); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-semibold transition-colors ${colorCls}`}>
+                        <svg className={`w-3.5 h-3.5 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        {s.title}
+                        <span className="text-xs font-normal opacity-70">{s.items.length}명{hasFilter ? ' (필터)' : ''}</span>
+                      </button>
+                      {!isCollapsed && (
+                        s.items.length === 0
+                          ? <p className="text-sm text-gray-400 pl-2">{hasFilter ? '검색 결과가 없습니다.' : `등록된 ${s.title}자가 없습니다.`}</p>
+                          : <div className="space-y-2">
+                              {s.items.map((entry: NotifyEntry) => (
+                                <NotifCard key={entry.mailKey} emp={entry.emp} type={entry.type}
+                                  mailSent={!!mailSent[entry.mailKey]}
+                                  onSend={() => sendMail(entry.mailKey)}
+                                  onEdit={() => openEdit(entry.emp)}
+                                  onDelete={() => handleDelete(String(entry.emp.id), entry.emp.name)}
+                                  selected={selectedKeys.has(entry.mailKey)}
+                                  onSelect={checked => toggleSelect(entry.mailKey, checked)} />
+                              ))}
+                            </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
               )
             })()
