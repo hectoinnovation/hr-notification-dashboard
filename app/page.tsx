@@ -225,6 +225,7 @@ const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
 const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
 const TD = 'border:1px solid #e5e7eb;padding:8px 12px;white-space:nowrap'
 const PP = 'font-family:sans-serif;font-size:14px;color:#374151'
+const closingP = `<p style="${PP};margin-top:16px">감사합니다.<br>인재협업팀 드림</p>`
 
 function greetingP(empType: 'hire' | 'leave'): string {
   const what = empType === 'hire' ? '입사자' : '퇴사자'
@@ -242,10 +243,18 @@ function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const dateLabel  = getDateLabel(type, isTransfer)
   const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const label      = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
+  if (type === 'leave') {
+    return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
+${greetingP(type)}
+<table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>
+${closingP}`
+  }
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>`
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${label}</td></tr></table>
+${closingP}`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
@@ -257,7 +266,8 @@ function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointDat
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th></tr>
 <tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td></tr></table>
-<p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:12px">※ 전적자는 카페포인트 계산 대상이 아닙니다.</p>`
+<p style="font-family:sans-serif;font-size:13px;color:#6b7280;margin-top:12px">※ 전적자는 카페포인트 계산 대상이 아닙니다.</p>
+${closingP}`
   }
   const noExitDate = type === 'leave' && !emp.exit_date
   const total  = noExitDate ? '퇴사일 확인 필요' : (points ? points.totalPoints.toLocaleString() + 'P' : '-')
@@ -265,7 +275,8 @@ ${greetingP(type)}
   return `<h3 style="color:#ea580c">[카페포인트 ${type==='hire'?'안내':'정산'}] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">총 부여포인트</th><th style="${TH}">정산포인트(P)</th></tr>
-<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr></table>`
+<tr><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${total}</td><td style="${TD}">${settle}</td></tr></table>
+${closingP}`
 }
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
   const 사유 = isTransfer ? '전적' : (type === 'leave' ? '퇴사' : (emp.join_reason ?? '입사'))
@@ -296,7 +307,8 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
     return `<h3 style="color:#ea580c">[웰니스포인트 안내] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일자</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th></tr>
-<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td></tr></table>`
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td></tr></table>
+${closingP}`
   }
   // 퇴사자: 성명 / 입사일 / 퇴사일 / 휴대폰번호 / 웰니스포인트 금액
   const leaveAmt = pointHtml
@@ -311,7 +323,8 @@ ${greetingP(type)}
   return `<h3 style="color:#ea580c">[웰니스포인트 정산] ${emp.name}</h3>
 ${greetingP(type)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr>
-<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${leaveAmt}</td></tr></table>`
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${leaveAmt}</td></tr></table>
+${closingP}`
 }
 
 // ─── 일괄 HTML (통합 메일) ────────────────────────────────────────────────────
@@ -352,7 +365,7 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
       `<table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">입사일자</th><th style="${TH}">마지막 출근일</th><th style="${TH}">퇴사일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
-  return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}<p style="${PP};margin-top:16px">감사합니다.<br>인재협업팀 드림</p>`
+  return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}${closingP}`
 }
 
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
@@ -372,7 +385,8 @@ function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'lea
   }).join('')
   return `<h3 style="color:#ea580c">[헥토이노베이션] 카페포인트 요청의 건 (${entries.length}명)</h3>
 ${bulkGreetingP(entries.map(e => e.empType))}
-<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">기준일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">카페포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>`
+<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">이름</th><th style="${TH}">구분</th><th style="${TH}">기준일</th><th style="${TH}">직책·직급</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">카페포인트 금액</th></tr></thead><tbody>${rows}</tbody></table></div>
+${closingP}`
 }
 
 function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; isTransfer: boolean }>) {
@@ -410,7 +424,7 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
     body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">[퇴사자]</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
   }
 
-  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>${body}`
+  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>${body}${closingP}`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────

@@ -54,5 +54,6 @@ export function makeOnboardingMailHtml(hire: Employee, stageLabel: string, timin
 <tr><th style="${TH}">기준 일정</th><td style="${TD}">${timing}</td></tr>
 <tr><th style="${TH}">예정일</th><td style="${TD}">${scheduledDate ?? '-'}</td></tr>
 </table>
-<p style="font-family:sans-serif;font-size:14px;color:#374151">확인 후 진행 부탁드립니다.<br><br>감사합니다.</p>`
+<p style="font-family:sans-serif;font-size:14px;color:#374151">확인 후 진행 부탁드립니다.</p>
+<p style="font-family:sans-serif;font-size:14px;color:#374151;margin-top:16px">감사합니다.<br>인재협업팀 드림</p>`
 }
