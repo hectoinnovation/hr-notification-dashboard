@@ -12,25 +12,28 @@ const FR = {
   hire:     [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
   transfer: [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
   leave:    [
-    { email: 'hansh@hecto.co.kr',       label: '한성호'     },
-    { email: 'mscho0500@hecto.co.kr',   label: '조민수A'    },
-    { email: 'mrson092@hecto.co.kr',    label: '손동국'     },
-    { email: 'guidong@hecto.co.kr',     label: '최귀동'     },
-    { email: 'tckim@hecto.co.kr',       label: '김태석'     },
-    { email: 'jinwon.lee@hecto.co.kr',  label: '이진원'     },
-    { email: 'whiteggj@hecto.co.kr',    label: '오창원'     },
-    { email: 'mudago@hecto.co.kr',      label: '신현수'     },
-    { email: 'eunsuk.jung@hecto.co.kr', label: '정은석'     },
+    { email: 'hansh@hecto.co.kr',       label: '한성호'  },
+    { email: 'mscho0500@hecto.co.kr',   label: '조민수A' },
+    { email: 'mrson092@hecto.co.kr',    label: '손동국'  },
+    { email: 'guidong@hecto.co.kr',     label: '최귀동'  },
+    { email: 'tckim@hecto.co.kr',       label: '김태석'  },
+    { email: 'jinwon.lee@hecto.co.kr',  label: '이진원'  },
+    { email: 'whiteggj@hecto.co.kr',    label: '오창원'  },
+    { email: 'mudago@hecto.co.kr',      label: '신현수'  },
+    { email: 'eunsuk.jung@hecto.co.kr', label: '정은석'  },
+    { email: 'lee0477@hecto.co.kr',     label: '이승현'  },
   ] as const,
   leaveCC:  [
-    { email: 't_849fm@hecto.co.kr', label: '보안인프라팀' },
-    { email: 'lee0477@hecto.co.kr', label: '이승현'       },
-    { email: 'ljmuni2@hecto.co.kr', label: '이재민A'      },
-    { email: 'kaykim@hecto.co.kr',  label: '김정환'       },
+    { email: 't_849fm@hecto.co.kr',    label: '보안인프라팀' },
+    { email: 'ljmuni2@hecto.co.kr',    label: '이재민A'      },
+    { email: 'kaykim@hecto.co.kr',     label: '김정환'       },
+    { email: 't_10010300@hecto.co.kr', label: '협업지원실'   },
   ] as const,
-  onboard:  [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
-  cafe:     [{ email: 'story2110@hecto.co.kr', label: '임대현' }] as const,
-  wellness: [{ email: 'yhj@hecto.co.kr',       label: '유현주' }] as const,
+  onboard:   [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  cafe:      [{ email: 'story2110@hecto.co.kr', label: '임대현' }] as const,
+  cafeCC:    [{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }, { email: 'ht_ga@hecto.co.kr', label: '소통문화팀' }] as const,
+  wellness:  [{ email: 'kaykim@hecto.co.kr', label: '김정환' }] as const,
+  wellnessCC:[{ email: 'inno_hm@hecto.co.kr', label: '인재협업팀' }] as const,
 }
 
 interface EmployeeForm {
@@ -861,10 +864,10 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
 }
 
 // ─── 포인트 카드 ──────────────────────────────────────────────────────────────
-function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, points, isTransfer, selected, onSelect }: {
+function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, fixedCC = [], points, isTransfer, selected, onSelect }: {
   emp: Employee; type: 'hire' | 'leave'; variant: 'cafe' | 'wellness'
   mailSent: boolean; onSendMail: () => void
-  fixedRecipients: readonly Recipient[]
+  fixedRecipients: readonly Recipient[]; fixedCC?: readonly Recipient[]
   points: DayPointData | null; isTransfer: boolean
   selected?: boolean; onSelect?: (checked: boolean) => void
 }) {
@@ -959,7 +962,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
             </div>
           )}
           <PreviewToggle htmlBody={htmlBody} />
-          <MailPanel fixedRecipients={fixedRecipients} defaultSubject={defaultSubject}
+          <MailPanel fixedRecipients={fixedRecipients} fixedCC={fixedCC} defaultSubject={defaultSubject}
             mailSent={mailSent} htmlBody={htmlBody} onSend={onSendMail} />
         </div>
       )}
@@ -1606,11 +1609,13 @@ export default function HRDashboard() {
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
                       defaultRecipients={FR.cafe}
-                      onBulkSend={to => handleBulkSend(
+                      defaultCC={FR.cafeCC}
+                      onBulkSend={(to, cc) => handleBulkSend(
                         to,
                         `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
                         bulkHtml,
-                        sel.map(e => e.mailKey)
+                        sel.map(e => e.mailKey),
+                        cc
                       )} />
                   )
                 })()}
@@ -1622,7 +1627,7 @@ export default function HRDashboard() {
                       return (
                         <PointCard emp={entry.emp} type={entry.empType} variant="cafe"
                           mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
-                          fixedRecipients={FR.cafe}
+                          fixedRecipients={FR.cafe} fixedCC={FR.cafeCC}
                           points={isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, entry.empType)}
                           isTransfer={isTransfer}
                           selected={selectedKeys.has(entry.mailKey)}
@@ -1649,11 +1654,13 @@ export default function HRDashboard() {
                       bulkSending={bulkSending} bulkResult={bulkResult}
                       previewHtml={bulkHtml}
                       defaultRecipients={FR.wellness}
-                      onBulkSend={to => handleBulkSend(
+                      defaultCC={FR.wellnessCC}
+                      onBulkSend={(to, cc) => handleBulkSend(
                         to,
                         `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
                         bulkHtml,
-                        sel.map(e => e.mailKey)
+                        sel.map(e => e.mailKey),
+                        cc
                       )} />
                   )
                 })()}
@@ -1664,7 +1671,7 @@ export default function HRDashboard() {
                       return (
                         <PointCard emp={entry.emp} type={entry.empType} variant="wellness"
                           mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
-                          fixedRecipients={FR.wellness} points={null} isTransfer={isTransfer}
+                          fixedRecipients={FR.wellness} fixedCC={FR.wellnessCC} points={null} isTransfer={isTransfer}
                           selected={selectedKeys.has(entry.mailKey)}
                           onSelect={checked => toggleSelect(entry.mailKey, checked)} />
                       )
