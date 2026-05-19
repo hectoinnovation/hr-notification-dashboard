@@ -247,14 +247,14 @@ function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   if (type === 'leave') {
     return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
-<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
-<tr><td style="${TD}">${label}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>
+<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
+<tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
 ${closingP}`
   }
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type)}
-<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr>
-<tr><td style="${TD}">${label}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr></table>
+<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
+<tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
 ${closingP}`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
@@ -344,26 +344,26 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 
   if (hires.length > 0) {
     const rows = hires.map(({ emp }) =>
-      `<tr><td style="${TD}">입사</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">입사</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr>`
     ).join('')
     body += sec('[입사]', '#1e40af',
-      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">입사일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">입사일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   if (transfers.length > 0) {
     const rows = transfers.map(({ emp }) =>
-      `<tr><td style="${TD}">전적</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">전적</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr>`
     ).join('')
     body += sec('[전적]', '#b45309',
-      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">전적일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">전적일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   if (leaves.length > 0) {
     const rows = leaves.map(({ emp }) =>
-      `<tr><td style="${TD}">퇴사</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td></tr>`
+      `<tr><td style="${TD}">퇴사</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr>`
     ).join('')
     body += sec('[퇴사]', '#7e22ce',
-      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">이름</th><th style="${TH}">퇴사일</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th></tr></thead><tbody>${rows}</tbody></table>`)
+      `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">퇴사일</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr></thead><tbody>${rows}</tbody></table>`)
   }
 
   return `<h3 style="color:#ea580c">[인사 알림] ${what} 안내</h3>${body}${closingP}`
