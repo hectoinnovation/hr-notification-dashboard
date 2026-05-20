@@ -1149,6 +1149,49 @@ export default function HRDashboard() {
   const [bulkSending,  setBulkSending]  = useState(false)
   const [bulkResult,   setBulkResult]   = useState<{ sent: number; failed: number } | null>(null)
 
+  const [otpEnrollOpen,    setOtpEnrollOpen]    = useState(false)
+  const [otpEnrollData,    setOtpEnrollData]    = useState<{ qrDataUrl: string; secret: string } | null>(null)
+  const [otpEnrollLoading, setOtpEnrollLoading] = useState(false)
+  const [otpEnrollSecsLeft, setOtpEnrollSecsLeft] = useState(0)
+  const otpEnrollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  function stopOtpEnrollTimer() {
+    if (otpEnrollTimerRef.current) { clearInterval(otpEnrollTimerRef.current); otpEnrollTimerRef.current = null }
+  }
+
+  function closeOtpEnroll() {
+    stopOtpEnrollTimer()
+    setOtpEnrollOpen(false)
+    setOtpEnrollData(null)
+    setOtpEnrollSecsLeft(0)
+  }
+
+  async function openOtpEnroll() {
+    setOtpEnrollLoading(true)
+    setOtpEnrollOpen(true)
+    setOtpEnrollData(null)
+    try {
+      const res = await fetch('/api/auth/otp-enroll')
+      const data = await res.json()
+      if (!res.ok) { alert(data.error ?? 'QR 로드 실패'); closeOtpEnroll(); return }
+      setOtpEnrollData(data)
+      // 5분 카운트다운
+      setOtpEnrollSecsLeft(300)
+      stopOtpEnrollTimer()
+      otpEnrollTimerRef.current = setInterval(() => {
+        setOtpEnrollSecsLeft(s => {
+          if (s <= 1) { closeOtpEnroll(); return 0 }
+          return s - 1
+        })
+      }, 1000)
+    } catch {
+      alert('QR 로드 중 오류가 발생했습니다.')
+      closeOtpEnroll()
+    } finally {
+      setOtpEnrollLoading(false)
+    }
+  }
+
   const newHires   = employees.filter(e => e.status === 'active')
   const departures = employees.filter(e => e.status === 'resigned')
 
@@ -1381,6 +1424,68 @@ export default function HRDashboard() {
       <EmployeeModal show={showForm} isEdit={!!editTarget} form={form} submitting={submitting}
         onChange={(f, v) => setForm(p => ({ ...p, [f]: v }))} onSubmit={handleSubmit} onClose={closeForm} />
 
+      {/* OTP 추가 등록 모달 */}
+      {otpEnrollOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-full max-w-sm p-7 space-y-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">OTP 추가 등록</h2>
+                <p className="text-xs text-gray-500 mt-0.5">새 기기에 Google Authenticator를 등록합니다.</p>
+              </div>
+              {otpEnrollSecsLeft > 0 && (
+                <span className={`text-xs font-mono font-semibold px-2 py-1 rounded-lg ${otpEnrollSecsLeft <= 60 ? 'bg-red-50 text-red-600' : 'bg-orange-50 text-orange-600'}`}>
+                  {String(Math.floor(otpEnrollSecsLeft / 60)).padStart(2, '0')}:{String(otpEnrollSecsLeft % 60).padStart(2, '0')}
+                </span>
+              )}
+            </div>
+
+            {otpEnrollLoading && (
+              <div className="flex justify-center py-6">
+                <svg className="w-6 h-6 animate-spin text-orange-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                </svg>
+              </div>
+            )}
+
+            {otpEnrollData && (
+              <div className="space-y-4">
+                <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-semibold text-orange-700">Google Authenticator 앱에서 QR 코드를 스캔하세요.</p>
+                  <div className="flex justify-center bg-white rounded-lg p-3 border border-orange-100">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={otpEnrollData.qrDataUrl} alt="OTP QR Code" className="w-44 h-44" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-400">시크릿 키 (수동 입력용)</p>
+                    <p className="text-xs font-mono font-semibold text-gray-700 break-all select-all bg-white border border-orange-100 rounded-lg px-3 py-2">{otpEnrollData.secret}</p>
+                  </div>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <p className="text-xs text-amber-700">⚠ QR 코드는 {Math.floor(otpEnrollSecsLeft / 60)}분 {otpEnrollSecsLeft % 60}초 후 자동으로 숨겨집니다. 등록 후 즉시 닫아주세요.</p>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={closeOtpEnroll}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-semibold text-sm py-2.5 rounded-lg transition-colors"
+              >
+                등록 완료
+              </button>
+              <button
+                onClick={closeOtpEnroll}
+                className="px-4 text-sm text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 rounded-lg transition-colors"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 헤더 */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 shadow-sm">
         <div className="max-w-screen-xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
@@ -1400,6 +1505,14 @@ export default function HRDashboard() {
               직원 등록
             </button>
             <span className="text-xs text-gray-400 hidden sm:inline">{todayStr}</span>
+            <button
+              onClick={openOtpEnroll}
+              className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 hover:border-gray-300 px-2.5 py-1.5 rounded-lg transition-colors"
+              title="새 기기에 OTP 등록"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m0 14v1m8-8h-1M5 12H4m13.657-6.343l-.707.707M7.05 16.95l-.707.707m11.314 0l-.707-.707M7.05 7.05l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z"/></svg>
+              OTP 추가 등록
+            </button>
             <button
               onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login' }}
               className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-2.5 py-1.5 rounded-lg transition-colors"

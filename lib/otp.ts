@@ -6,6 +6,7 @@ import path from 'path'
 const DATA_DIR      = path.join(process.cwd(), 'data')
 const SECRET_FILE   = path.join(DATA_DIR, 'otp-secret.txt')
 const CONFIRM_FILE  = path.join(DATA_DIR, 'otp-confirmed.txt')
+const LOG_FILE      = path.join(DATA_DIR, 'otp-enroll-log.jsonl')
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -48,6 +49,14 @@ export function markOtpConfirmed(): void {
 export async function generateQrDataUrl(secret: string): Promise<string> {
   const otpauth = generateURI({ issuer: '입퇴사자 대시보드', label: 'admin', secret })
   return QRCode.toDataURL(otpauth, { width: 200, margin: 2 })
+}
+
+export function logQrAccess(who: string): void {
+  try {
+    ensureDataDir()
+    const entry = JSON.stringify({ ts: new Date().toISOString(), who }) + '\n'
+    fs.appendFileSync(LOG_FILE, entry, 'utf8')
+  } catch { /* ignore */ }
 }
 
 export function verifyOtp(token: string, secret: string): boolean {
