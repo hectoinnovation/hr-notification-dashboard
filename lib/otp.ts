@@ -3,7 +3,13 @@ import QRCode from 'qrcode'
 import fs from 'fs'
 import path from 'path'
 
-const SECRET_FILE = path.join(process.cwd(), 'data', 'otp-secret.txt')
+const DATA_DIR      = path.join(process.cwd(), 'data')
+const SECRET_FILE   = path.join(DATA_DIR, 'otp-secret.txt')
+const CONFIRM_FILE  = path.join(DATA_DIR, 'otp-confirmed.txt')
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
+}
 
 export function getOtpSecret(): string | null {
   const envSecret = process.env.OTP_SECRET
@@ -19,11 +25,24 @@ export function getOtpSecret(): string | null {
 export function generateAndSaveSecret(): string {
   const secret = generateSecret()
   try {
-    const dir = path.dirname(SECRET_FILE)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    ensureDataDir()
     fs.writeFileSync(SECRET_FILE, secret, 'utf8')
   } catch { /* ignore */ }
   return secret
+}
+
+/** OTP가 최초 등록(scan + verify) 완료 여부 */
+export function isOtpConfirmed(): boolean {
+  // env에 시크릿이 명시된 경우엔 항상 등록 완료로 간주
+  if (process.env.OTP_SECRET) return true
+  return fs.existsSync(CONFIRM_FILE)
+}
+
+export function markOtpConfirmed(): void {
+  try {
+    ensureDataDir()
+    fs.writeFileSync(CONFIRM_FILE, new Date().toISOString(), 'utf8')
+  } catch { /* ignore */ }
 }
 
 export async function generateQrDataUrl(secret: string): Promise<string> {

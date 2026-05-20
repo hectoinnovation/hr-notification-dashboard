@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getIronSession } from 'iron-session'
 import { cookies } from 'next/headers'
 import { SessionData, sessionOptions } from '@/lib/session'
-import { getOtpSecret, generateAndSaveSecret, verifyOtp } from '@/lib/otp'
+import { getOtpSecret, generateAndSaveSecret, verifyOtp, markOtpConfirmed } from '@/lib/otp'
 
 export async function POST(req: NextRequest) {
   const { token } = await req.json() as { token: string }
@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
   session.authenticated = true
   session.step = undefined
   await session.save()
+  markOtpConfirmed()
 
   return NextResponse.json({ ok: true })
 }
