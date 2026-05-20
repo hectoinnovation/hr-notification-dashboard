@@ -1413,6 +1413,13 @@ export default function HRDashboard() {
     if (dbErr) { setError(dbErr); setMailSent(p => ({ ...p, [key]: false })) }
   }
 
+  // Client-side auth gate — belt-and-suspenders in case middleware is bypassed
+  useEffect(() => {
+    fetch('/api/auth/check')
+      .then(r => { if (!r.ok) window.location.replace('/login') })
+      .catch(() => window.location.replace('/login'))
+  }, [])
+
   useEffect(() => { fetchAllData() }, [])
 
   const hasFilter = search || typeF !== '전체' || sentF !== '전체'

@@ -7,17 +7,19 @@ export const config = {
 
 const COOKIE_NAME = 'hr-session'
 const SESSION_SECRET = process.env.SESSION_SECRET ?? 'hectoinno-dashboard-session-secret-2026'
+
+// Paths that do NOT require authentication
 const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/']
 
-export async function proxy(req: NextRequest) {
+export default async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // Resolve client IP (x-forwarded-for → x-real-ip → fallback)
+  // ── IP Whitelist ──────────────────────────────────────────────────────────
+  // localhost is always allowed for the IP check, but NOT for auth.
   const forwarded = req.headers.get('x-forwarded-for')
   const ip = (forwarded ? forwarded.split(',')[0] : req.headers.get('x-real-ip') ?? '127.0.0.1').trim()
   const isLocalhost = ip === '127.0.0.1' || ip === '::1'
 
-  // IP whitelist — skip for /blocked to avoid redirect loop
   if (!pathname.startsWith('/blocked')) {
     const allowedIPs = (process.env.ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (allowedIPs.length > 0 && !isLocalhost && !allowedIPs.includes(ip)) {
@@ -27,23 +29,28 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  // Public paths — no auth required
+  // ── Public paths ──────────────────────────────────────────────────────────
+  // Login / OTP / blocked pages and all auth API routes are public.
+  // Everything else requires a valid authenticated session.
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
-  // Verify session cookie
+  // ── Session check ─────────────────────────────────────────────────────────
+  // isLocalhost does NOT bypass auth — only IP whitelist above.
   const sealed = req.cookies.get(COOKIE_NAME)?.value
   if (sealed) {
     try {
       const data = await unsealData<{ authenticated?: boolean }>(sealed, { password: SESSION_SECRET })
-      if (data.authenticated) return NextResponse.next()
+      if (data.authenticated === true) return NextResponse.next()
     } catch {
-      // invalid / tampered cookie — fall through to redirect
+      // Tampered or expired cookie — fall through to redirect
     }
   }
 
+  // No valid session → redirect to login, preserving the intended destination
   const url = req.nextUrl.clone()
   url.pathname = '/login'
+  url.searchParams.set('next', pathname)
   return NextResponse.redirect(url)
 }
