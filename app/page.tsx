@@ -573,7 +573,12 @@ function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onTog
             className="w-4 h-4 accent-orange-500 cursor-pointer" />
         </label>
       )}
-      <button onClick={onToggle} className="flex-1 text-left px-4 py-3 hover:bg-gray-50 transition-colors min-w-0">
+      <div
+        role="button" tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } }}
+        className="flex-1 text-left px-4 py-3 hover:bg-gray-50 transition-colors min-w-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-inset"
+      >
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center font-bold text-sm flex-shrink-0">
             {emp.name[0]}
@@ -607,7 +612,7 @@ function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onTog
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 4l4 4-4 4"/>
           </svg>
         </div>
-      </button>
+      </div>
     </div>
   )
 }
