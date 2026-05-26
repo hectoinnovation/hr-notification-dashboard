@@ -19,16 +19,22 @@ export async function sendMail({ to, cc, subject, html }: MailPayload): Promise<
     return 'SMTP 환경변수가 설정되지 않았습니다.'
   }
 
-  // createTransport 생성부터 try-catch 안에 포함
-  // 기존: createTransport가 try 바깥 → 예외 발생 시 unhandled exception → plain 500 (JSON 없음)
-  // 수정: 전체를 try-catch로 감싸 → 에러 문자열 반환 → route가 { error } JSON 500으로 응답
+  // 포트에 따라 TLS 방식 자동 선택
+  //   465 → secure: true  (SSL/TLS 직접 연결)
+  //   587 → secure: false + requireTLS: true  (STARTTLS)
+  const useSSL = port === 465
+
   try {
     const transporter = createTransport({
       host,
       port,
-      secure: false,
-      requireTLS: true,
+      secure: useSSL,
+      ...(useSSL ? {} : { requireTLS: true }),
       auth: { user, pass },
+      tls: {
+        // SNI 명시 — 네이버웍스(smtp.worksmobile.com) 등 일부 서버는 SNI 없이 연결 거부
+        servername: host,
+      },
     })
     await transporter.sendMail({ from, to, cc, subject, html })
     return null
