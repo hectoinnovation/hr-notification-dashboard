@@ -5,21 +5,31 @@ export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }
 
-const COOKIE_NAME = 'hr-session'
+const COOKIE_NAME    = 'hr-session'
 const SESSION_SECRET = process.env.SESSION_SECRET ?? 'hectoinno-dashboard-session-secret-2026'
 
 // Paths that do NOT require authentication
 const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/']
 
-export default async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
-  // ── IP Whitelist ──────────────────────────────────────────────────────────
-  // localhost is always allowed for the IP check, but NOT for auth.
+  // ── IP 감지 ───────────────────────────────────────────────────────────────
   const forwarded = req.headers.get('x-forwarded-for')
   const ip = (forwarded ? forwarded.split(',')[0] : req.headers.get('x-real-ip') ?? '127.0.0.1').trim()
   const isLocalhost = ip === '127.0.0.1' || ip === '::1'
 
+  // ── Preview 배포 차단 ─────────────────────────────────────────────────────
+  // PRODUCTION_HOST가 설정된 경우, localhost 및 Production 이외의 호스트(Preview 등)를 차단합니다.
+  const productionHost = process.env.PRODUCTION_HOST ?? ''
+  const host = req.headers.get('host') ?? ''
+  if (productionHost && !isLocalhost && host !== productionHost && !pathname.startsWith('/blocked')) {
+    const url = req.nextUrl.clone()
+    url.pathname = '/blocked'
+    return NextResponse.redirect(url)
+  }
+
+  // ── IP Whitelist ──────────────────────────────────────────────────────────
   if (!pathname.startsWith('/blocked')) {
     const allowedIPs = (process.env.ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (allowedIPs.length > 0 && !isLocalhost && !allowedIPs.includes(ip)) {
@@ -30,14 +40,11 @@ export default async function middleware(req: NextRequest) {
   }
 
   // ── Public paths ──────────────────────────────────────────────────────────
-  // Login / OTP / blocked pages and all auth API routes are public.
-  // Everything else requires a valid authenticated session.
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
   // ── Session check ─────────────────────────────────────────────────────────
-  // isLocalhost does NOT bypass auth — only IP whitelist above.
   const sealed = req.cookies.get(COOKIE_NAME)?.value
   if (sealed) {
     try {
@@ -48,7 +55,7 @@ export default async function middleware(req: NextRequest) {
     }
   }
 
-  // No valid session → redirect to login, preserving the intended destination
+  // No valid session → redirect to login
   const url = req.nextUrl.clone()
   url.pathname = '/login'
   url.searchParams.set('next', pathname)

@@ -207,17 +207,40 @@ function lookupExcelPoints(excelData: Record<number, ExcelSheetData>, dateStr: s
 // ─── 메일 API ─────────────────────────────────────────────────────────────────
 async function sendMailApi(to: string[], subject: string, html: string, cc?: string[]): Promise<string | null> {
   try {
+    console.log('[sendMailApi] 호출 →', { to, cc, subject: subject.slice(0, 50) })
     const res = await fetch('/api/send-mail', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ to, cc, subject, html }),
     })
-    if (!res.ok) {
-      const data = await res.json() as { error?: string }
-      return data.error ?? '메일 발송 실패'
+    console.log('[sendMailApi] 응답 →', { status: res.status, ok: res.ok, redirected: res.redirected, url: res.url })
+
+    // 미들웨어 세션 만료 감지: 실제 /login 으로 302 후 최종 pathname이 /login 인 경우만 처리
+    // res.url 전체가 아닌 pathname 만 비교하여 false positive 방지
+    if (res.redirected) {
+      try {
+        const finalPath = new URL(res.url).pathname
+        if (finalPath === '/login') {
+          console.error('[sendMailApi] 세션 만료 감지 — 로그인 페이지로 리다이렉트됨')
+          return '세션이 만료되었습니다. 페이지를 새로고침한 후 다시 로그인해주세요.'
+        }
+      } catch { /* URL 파싱 실패 시 무시 */ }
     }
+
+    if (!res.ok) {
+      let errMsg = '메일 발송 실패'
+      try {
+        const data = await res.json() as { error?: string }
+        errMsg = data.error ?? errMsg
+      } catch { /* JSON 파싱 실패 시 기본 메시지 사용 */ }
+      console.error('[sendMailApi] 발송 실패 →', errMsg)
+      return errMsg
+    }
+    console.log('[sendMailApi] 발송 성공')
     return null
   } catch (err) {
-    return err instanceof Error ? err.message : '네트워크 오류'
+    const msg = err instanceof Error ? err.message : '네트워크 오류'
+    console.error('[sendMailApi] 예외 발생 →', msg)
+    return msg
   }
 }
 
@@ -730,11 +753,9 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
   const dateLabel  = getDateLabel(type, isTransfer)
   const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const htmlBody   = makeNotifHtml(emp, type)
-  const subject    = isTransfer
-    ? `[입사 안내] ${emp.name} 님 ${date} 전적`
-    : type === 'hire'
-    ? `[입사 안내] ${emp.name} 님 ${date} 입사`
-    : `[퇴사 안내] ${emp.name} 님 ${date} 퇴사`
+  const subject    = type === 'leave'
+    ? '[헥토이노베이션] 퇴사자 공유의 건'
+    : '[헥토이노베이션] 신규 입사자 공유의 건'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1652,9 +1673,9 @@ export default function HRDashboard() {
               const defRcp      = selHasLeave ? FR.leave : FR.hire
               const defCC       = selHasLeave ? FR.leaveCC : []
               const bulkHtml    = allSel.length > 0 ? makeBulkNotifHtml(allSel.map(({ emp, type }) => ({ emp, type }))) : ''
-              const bulkSubject = selHasHire && selHasLeave
-                ? `[입퇴사 안내] (${allSel.length}명)`
-                : selHasLeave ? `[퇴사 안내] (${allSel.length}명)` : `[입사 안내] (${allSel.length}명)`
+              const bulkSubject = selHasLeave
+                ? '[헥토이노베이션] 퇴사자 공유의 건'
+                : '[헥토이노베이션] 신규 입사자 공유의 건'
               const SECTIONS = [
                 { id: 'hire'     as const, title: '입사', color: 'blue'   as const, items: notifyHire     },
                 { id: 'transfer' as const, title: '전적', color: 'amber'  as const, items: notifyTransfer },
