@@ -25,7 +25,8 @@ export const STAGES = [
 export type Stage = typeof STAGES[number]
 
 // Stages that trigger automatic daily mail
-export const AUTO_MAIL_STAGE_IDS: readonly string[] = ['s5', 's6', 's7', 's_d30', 's8', 's9', 's10', 's11']
+// s3 (입사 후 7일 내 = join_date+7), s5(D-7), s6(D-1), s7(D-Day), s_d30(D+30), s8(D+50), s9(D+60), s10(D+63), s11(D+65)
+export const AUTO_MAIL_STAGE_IDS: readonly string[] = ['s3', 's5', 's6', 's7', 's_d30', 's8', 's9', 's10', 's11']
 
 // Stages applicable to transfer (전적자) — pre-hire preparation only
 export const TRANSFER_STAGE_IDS: readonly string[] = ['s_whr', 's_file', 's_docs']

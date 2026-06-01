@@ -9,7 +9,8 @@ const COOKIE_NAME    = 'hr-session'
 const SESSION_SECRET = process.env.SESSION_SECRET ?? 'hectoinno-dashboard-session-secret-2026'
 
 // Paths that do NOT require authentication
-const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/']
+// /api/cron/ 은 Vercel Cron이 세션 없이 호출하므로 반드시 PUBLIC에 포함
+const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/']
 
 export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl

@@ -7,93 +7,211 @@ import type { Employee } from '@/lib/supabase'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
+// ─────────────────────────────────────────────────────────────────────────────
+// KST 날짜 헬퍼
+// Vercel 서버는 UTC로 동작하므로 +9h 보정
+// ─────────────────────────────────────────────────────────────────────────────
+function getTodayKST(): string {
+  const now = new Date()
+  // KST = UTC + 9시간
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10) // 'YYYY-MM-DD'
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [메일자동발송] 로그 포매터
+// ─────────────────────────────────────────────────────────────────────────────
+function logMail({
+  today,
+  totalCandidates,
+  recipient,
+  subject,
+  result,
+  error,
+}: {
+  today: string
+  totalCandidates: number
+  recipient: string
+  subject: string
+  result: '성공' | '실패' | '스킵'
+  error?: string | null
+}) {
+  console.log(
+    `\n[메일자동발송]\n` +
+    `오늘 날짜: ${today}\n` +
+    `조회 건수: ${totalCandidates}\n` +
+    `수신자: ${recipient}\n` +
+    `제목: ${subject}\n` +
+    `발송 결과: ${result}\n` +
+    `에러: ${error ?? '-'}`
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/cron/onboarding-mails
+// Vercel Cron: 매일 KST 09:00 (UTC 00:00) 자동 실행
+// ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  // Verify Vercel cron secret if configured
+  const today = getTodayKST()
+
+  // ── CRON_SECRET 인증 ──────────────────────────────────────────────────────
+  // Vercel은 cron 호출 시 Authorization: Bearer <CRON_SECRET> 헤더를 자동 전송
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret) {
-    const auth = req.headers.get('Authorization')
+    const auth = req.headers.get('Authorization') ?? req.headers.get('authorization')
     if (auth !== `Bearer ${cronSecret}`) {
+      console.error('[메일자동발송] ❌ 인증 실패 — Authorization 헤더 불일치')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // ── Supabase 클라이언트 ───────────────────────────────────────────────────
+  const supabaseUrl  = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey  = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-  // Cron runs at UTC 00:00 = KST 09:00 — UTC date matches KST date
-  const today = new Date().toISOString().slice(0, 10)
+  if (!supabaseUrl || !supabaseKey) {
+    console.error('[메일자동발송] ❌ Supabase 환경변수 미설정')
+    return NextResponse.json({ error: 'Supabase env not set' }, { status: 500 })
+  }
 
+  const supabase = createClient(supabaseUrl, supabaseKey)
+
+  // ── 재직 중 직원 조회 ─────────────────────────────────────────────────────
   const { data: employees, error: empErr } = await supabase
     .from('employees')
     .select('*')
     .eq('status', 'active')
 
-  if (empErr) return NextResponse.json({ error: empErr.message }, { status: 500 })
+  if (empErr) {
+    console.error('[메일자동발송] ❌ employees 조회 실패 →', empErr.message)
+    return NextResponse.json({ error: empErr.message }, { status: 500 })
+  }
 
-  const autoStages = STAGES.filter(s => AUTO_MAIL_STAGE_IDS.includes(s.id))
-  const recipient = 'inno_hm@hecto.co.kr'
-  let sent = 0, skipped = 0, failed = 0
+  const empList = (employees ?? []) as Employee[]
+  const autoStages = STAGES.filter(s => (AUTO_MAIL_STAGE_IDS as readonly string[]).includes(s.id))
+  const recipient  = process.env.MAIL_RECIPIENT ?? 'inno_hm@hecto.co.kr'
 
-  for (const emp of (employees ?? []) as Employee[]) {
+  // ── 발송 대상 탐색 ─────────────────────────────────────────────────────────
+  // 오늘 발송 대상 후보 전체를 먼저 계산해 로그에 총 건수를 출력
+  type Candidate = { emp: Employee; stage: typeof autoStages[number]; scheduledDate: string }
+  const candidates: Candidate[] = []
+
+  for (const emp of empList) {
     if (!emp.join_date) continue
-
     for (const stage of autoStages) {
       const scheduledDate = calcDday(emp.join_date, stage.timing)
       if (!scheduledDate || scheduledDate !== today) continue
-
-      // Skip if already manually sent via UI
-      const { data: task } = await supabase
-        .from('onboarding_tasks')
-        .select('mail_sent')
-        .eq('employee_id', String(emp.id))
-        .eq('stage_id', stage.id)
-        .maybeSingle()
-      if (task?.mail_sent) { skipped++; continue }
-
-      // Skip if already auto-sent today
-      const { data: log } = await supabase
-        .from('onboarding_mail_logs')
-        .select('id')
-        .eq('employee_id', String(emp.id))
-        .eq('stage_key', stage.id)
-        .eq('scheduled_date', today)
-        .eq('status', 'sent')
-        .maybeSingle()
-      if (log) { skipped++; continue }
-
-      const subject = `[온보딩 알림] ${emp.name}님 ${stage.label} 진행 요청`
-      const html = makeOnboardingMailHtml(emp, stage.label, stage.timing, scheduledDate)
-      const mailErr = await sendMail({ to: [recipient], subject, html })
-
-      const logBase = { employee_id: String(emp.id), stage_key: stage.id, scheduled_date: today, recipient }
-
-      if (mailErr) {
-        failed++
-        await supabase.from('onboarding_mail_logs').upsert(
-          { ...logBase, status: 'failed' },
-          { onConflict: 'employee_id,stage_key,scheduled_date' }
-        )
-      } else {
-        sent++
-        await supabase.from('onboarding_mail_logs').upsert(
-          { ...logBase, status: 'sent', sent_at: new Date().toISOString() },
-          { onConflict: 'employee_id,stage_key,scheduled_date' }
-        )
-        // Update onboarding_tasks so UI reflects sent status on next load
-        await supabase.from('onboarding_tasks').upsert(
-          {
-            employee_id: String(emp.id), stage_id: stage.id,
-            stage_label: stage.label, timing: stage.timing,
-            sort_order: STAGES.findIndex(s => s.id === stage.id),
-            mail_sent: true, mail_sent_at: new Date().toISOString(),
-          },
-          { onConflict: 'employee_id,stage_id' }
-        )
-      }
+      candidates.push({ emp, stage, scheduledDate })
     }
   }
 
-  return NextResponse.json({ ok: true, today, sent, skipped, failed })
+  console.log(
+    `\n[메일자동발송] 시작\n` +
+    `오늘 날짜: ${today} (KST)\n` +
+    `재직자 수: ${empList.length}명\n` +
+    `발송 대상 후보: ${candidates.length}건`
+  )
+
+  if (candidates.length === 0) {
+    console.log('[메일자동발송] 오늘 발송 대상 없음 — 종료')
+    return NextResponse.json({ ok: true, today, sent: 0, skipped: 0, failed: 0 })
+  }
+
+  let sent = 0, skipped = 0, failed = 0
+
+  for (const { emp, stage, scheduledDate } of candidates) {
+    const subject = `[온보딩 알림] ${emp.name}님 ${stage.label} 진행 요청`
+
+    // 이미 수동 발송된 경우 스킵
+    const { data: task, error: taskErr } = await supabase
+      .from('onboarding_tasks')
+      .select('mail_sent')
+      .eq('employee_id', String(emp.id))
+      .eq('stage_id', stage.id)
+      .maybeSingle()
+
+    if (taskErr) {
+      console.warn('[메일자동발송] ⚠️ onboarding_tasks 조회 오류 →', taskErr.message)
+    }
+
+    if (task?.mail_sent) {
+      skipped++
+      logMail({ today, totalCandidates: candidates.length, recipient, subject, result: '스킵', error: '이미 수동 발송됨' })
+      continue
+    }
+
+    // 오늘 이미 자동 발송된 경우 스킵 (중복 방지)
+    const { data: log, error: logErr } = await supabase
+      .from('onboarding_mail_logs')
+      .select('id')
+      .eq('employee_id', String(emp.id))
+      .eq('stage_key', stage.id)
+      .eq('scheduled_date', today)
+      .eq('status', 'sent')
+      .maybeSingle()
+
+    if (logErr) {
+      console.warn('[메일자동발송] ⚠️ onboarding_mail_logs 조회 오류 →', logErr.message)
+    }
+
+    if (log) {
+      skipped++
+      logMail({ today, totalCandidates: candidates.length, recipient, subject, result: '스킵', error: '오늘 이미 자동 발송됨' })
+      continue
+    }
+
+    // ── 메일 발송 ────────────────────────────────────────────────────────────
+    const html     = makeOnboardingMailHtml(emp, stage.label, stage.timing, scheduledDate)
+    const mailErr  = await sendMail({ to: [recipient], subject, html })
+    const logBase  = { employee_id: String(emp.id), stage_key: stage.id, scheduled_date: today, recipient }
+
+    if (mailErr) {
+      failed++
+      logMail({ today, totalCandidates: candidates.length, recipient, subject, result: '실패', error: mailErr })
+
+      // 실패 로그 DB 기록
+      const { error: dbErr } = await supabase.from('onboarding_mail_logs').upsert(
+        { ...logBase, status: 'failed' },
+        { onConflict: 'employee_id,stage_key,scheduled_date' }
+      )
+      if (dbErr) console.error('[메일자동발송] ❌ DB 실패 로그 기록 오류 →', dbErr.message)
+
+    } else {
+      sent++
+      logMail({ today, totalCandidates: candidates.length, recipient, subject, result: '성공' })
+
+      // 성공 로그 DB 기록
+      const { error: dbErr } = await supabase.from('onboarding_mail_logs').upsert(
+        { ...logBase, status: 'sent', sent_at: new Date().toISOString() },
+        { onConflict: 'employee_id,stage_key,scheduled_date' }
+      )
+      if (dbErr) console.error('[메일자동발송] ❌ DB 성공 로그 기록 오류 →', dbErr.message)
+
+      // onboarding_tasks UI 상태 업데이트
+      const stageIdx = STAGES.findIndex(s => s.id === stage.id)
+      const { error: taskDbErr } = await supabase.from('onboarding_tasks').upsert(
+        {
+          employee_id: String(emp.id),
+          stage_id:    stage.id,
+          stage_label: stage.label,
+          timing:      stage.timing,
+          sort_order:  stageIdx,
+          mail_sent:   true,
+          mail_sent_at: new Date().toISOString(),
+        },
+        { onConflict: 'employee_id,stage_id' }
+      )
+      if (taskDbErr) console.error('[메일자동발송] ❌ onboarding_tasks 업데이트 오류 →', taskDbErr.message)
+    }
+  }
+
+  console.log(
+    `\n[메일자동발송] 완료\n` +
+    `오늘 날짜: ${today}\n` +
+    `발송 성공: ${sent}건\n` +
+    `스킵: ${skipped}건\n` +
+    `실패: ${failed}건`
+  )
+
+  return NextResponse.json({ ok: true, today, sent, skipped, failed, total: candidates.length })
 }
