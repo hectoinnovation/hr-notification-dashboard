@@ -8,9 +8,25 @@ export const runtime = 'nodejs'
 export const maxDuration = 60
 
 // ─────────────────────────────────────────────────────────────────────────────
-// KST 날짜 헬퍼
-// Vercel 서버는 UTC로 동작하므로 +9h 보정
+// 시간 헬퍼
+//
+// Vercel Cron 스케줄: "0 23 * * *" (UTC 23:00 = KST 다음날 08:00)
+// → 발송 대상 날짜는 KST 기준으로 계산
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** UTC 기준 현재 시각 문자열 (로그용) */
+function getNowUTC(): string {
+  return new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+}
+
+/** KST 기준 현재 시각 문자열 (로그용) */
+function getNowKST(): string {
+  const now = new Date()
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().replace('T', ' ').slice(0, 19) + ' KST'
+}
+
+/** KST 기준 오늘 날짜 (YYYY-MM-DD) — Cron이 UTC 23:00에 실행되면 KST 다음날 08:00이므로 +9h 후의 날짜를 반환 */
 function getTodayKST(): string {
   const now = new Date()
   const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000)
@@ -115,14 +131,17 @@ export async function GET(req: NextRequest) {
 
   console.log(
     `\n[메일자동발송] 시작\n` +
-    `오늘 날짜: ${today} (KST)\n` +
+    `Cron 실행 시간: ${getNowKST()} (스케줄: 매일 08:00 KST)\n` +
+    `현재 UTC 시간: ${getNowUTC()}\n` +
+    `현재 KST 시간: ${getNowKST()}\n` +
+    `발송 기준 날짜: ${today} (KST)\n` +
     `force 모드: ${forceParam}\n` +
     `재직자 수: ${empList.length}명\n` +
-    `발송 대상 후보: ${candidates.length}건`
+    `발송 대상 건수: ${candidates.length}건`
   )
 
   if (candidates.length === 0) {
-    console.log('[메일자동발송] 오늘 발송 대상 없음 — 종료')
+    console.log(`[메일자동발송] ${today} 발송 대상 없음 — 종료`)
     return NextResponse.json({ ok: true, today, sent: 0, skipped: 0, failed: 0, total: 0 })
   }
 
@@ -218,7 +237,10 @@ export async function GET(req: NextRequest) {
 
   console.log(
     `\n[메일자동발송] 완료\n` +
-    `오늘 날짜: ${today}\n` +
+    `Cron 실행 시간: ${getNowKST()}\n` +
+    `현재 UTC 시간: ${getNowUTC()}\n` +
+    `발송 기준 날짜: ${today} (KST)\n` +
+    `발송 대상 건수: ${sent + skipped + failed}건\n` +
     `발송 성공: ${sent}건\n` +
     `스킵: ${skipped}건\n` +
     `실패: ${failed}건`
