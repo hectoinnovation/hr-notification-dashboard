@@ -81,6 +81,23 @@ function empLabel(emp: { status: string; join_reason?: string }): string {
   return '입사'
 }
 
+/**
+ * 포인트 계산 기준일 반환
+ * ─ 휴직자: 휴직시작일(exit_date) − 1일  (전날까지 근무 인정)
+ * ─ 퇴사자 / 기타: exit_date 그대로 반환 (기존 로직 유지)
+ * ─ exit_date 없음: null 반환
+ *
+ * ※ 입사자·퇴사자·전적자·휴직복귀자에는 일체 영향 없음
+ */
+function calcEffectiveLeaveDate(emp: Employee): string | null {
+  if (!emp.exit_date) return null
+  if (emp.join_reason !== '휴직') return emp.exit_date   // 퇴사자 등: 변경 없음
+  // 휴직자 전용: 휴직시작일 − 1일
+  const d = new Date(emp.exit_date)
+  d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
 }
@@ -310,7 +327,9 @@ ${closingP}`
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분     = empLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
-  const date      = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+  // 휴직자: effectiveDate(휴직시작일-1일) 기준 / 그 외: exit_date 그대로
+  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+  const date      = (type === 'hire' ? emp.join_date : effectiveLeaveDt) ?? '-'
   const isLeaveType = type === 'leave' || emp.join_reason === '휴직'
 
   if (isTransfer) {
@@ -336,14 +355,15 @@ ${closingP}`
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
   const 구분     = empLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
-  // 휴직자: exit_date = 휴직시작일 / 휴직복귀자: join_date = 복귀일
-  const date = (type === 'hire' ? emp.join_date : (emp.exit_date ?? emp.leave_date)) ?? '-'
+  // 휴직자: effectiveDate(휴직시작일-1일) / 휴직복귀자·입사자: join_date / 퇴사자: exit_date 그대로
+  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+  const date = (type === 'hire' ? emp.join_date : (effectiveLeaveDt ?? emp.leave_date)) ?? '-'
   const isLeaveType = type === 'leave' || emp.join_reason === '휴직'
   const phone = emp.phone ?? ''
 
   if (!isTransfer) {
     if (!isLeaveType && emp.join_date) {
-      // 입사자 / 휴직복귀자
+      // 입사자 / 휴직복귀자 — 기존 로직 유지
       const amt = calcWellnessHire(emp.join_date).toLocaleString() + '원'
       const titleSuffix = emp.join_reason === '휴직복귀' ? '지급 안내' : '안내'
       return `<h3 style="color:#ea580c">[웰니스포인트 ${titleSuffix}] ${emp.name} (${구분})</h3>
@@ -352,8 +372,8 @@ ${greetingP(type, emp.join_reason)}
 <tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${amt}</td><td style="${TD}">${구분}</td></tr></table>
 ${closingP}`
     } else if (isLeaveType) {
-      // 퇴사자 / 휴직자
-      const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+      // 퇴사자: exit_date 그대로 / 휴직자: effectiveDate(휴직시작일-1일)
+      const leaveDateForCalc = effectiveLeaveDt ?? emp.leave_date
       let leaveAmt = '-'
       if (!emp.join_date) {
         leaveAmt = '입사일자 확인 필요'
@@ -423,7 +443,9 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, points, isTransfer }) => {
     const label = empLabel(emp)
-    const date  = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+    // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
+    const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+    const date  = (empType === 'hire' ? emp.join_date : effectiveLeaveDt) ?? '-'
     const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
     const noDate = isLeaveType && !emp.exit_date
     const amt = isTransfer
@@ -461,14 +483,16 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
   if (leaves.length > 0) {
     const leaveRows = leaves.map(({ emp, isTransfer }) => {
       const 구분    = empLabel(emp)
-      const exitDateDisp = emp.exit_date ?? '-'
-      const exitLabel    = emp.join_reason === '휴직' ? '휴직시작일' : '퇴사일'
+      // 휴직자: effectiveDate(휴직시작일-1일) / 퇴사자: exit_date 그대로
+      const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+      const exitDateDisp = effectiveLeaveDt ?? '-'
       let amt = '해당 없음'
       if (!isTransfer) {
         if (!emp.join_date) {
           amt = '입사일자 확인 필요'
         } else {
-          const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+          // 퇴사자: exit_date 그대로 / 휴직자: effectiveDate
+          const leaveDateForCalc = effectiveLeaveDt ?? emp.leave_date
           if (leaveDateForCalc) {
             const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
             amt = `선지급 ${prePaid.toLocaleString()}원 / 인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
@@ -936,9 +960,11 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = empLabel(emp)
   const dateLabel  = getDateLabel(type, isTransfer, emp.join_reason)
+  // 휴직자: effectiveDate(휴직시작일-1일) 기준 표시 / 그 외: exit_date 그대로
+  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
   const date       = type === 'hire'
     ? (emp.join_date ?? '-')
-    : (emp.exit_date ?? '-')
+    : (effectiveLeaveDt ?? '-')
   const defaultSubject = variant === 'cafe'
     ? `[헥토이노베이션] 카페포인트 ${emp.join_reason === '휴직' ? '정산' : emp.join_reason === '휴직복귀' ? '지급' : '요청'}의 건`
     : `[헥토이노베이션] 웰니스포인트 ${emp.join_reason === '휴직' ? '정산' : emp.join_reason === '휴직복귀' ? '지급' : '요청'}의 건`
@@ -1010,7 +1036,8 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
             }
             // 퇴사자 / 휴직자
             if (!emp.join_date) return <p className="text-xs text-red-500 font-semibold">⚠️ 입사일자 확인 필요</p>
-            const leaveDateForCalc = emp.exit_date ?? emp.leave_date
+            // 퇴사자: exit_date 그대로 / 휴직자: effectiveDate(휴직시작일-1일)
+            const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.leave_date
             if (!leaveDateForCalc) return <p className="text-xs text-gray-400">* {emp.join_reason === '휴직' ? '휴직시작일' : '퇴사일'} 등록 후 자동 계산됩니다</p>
             const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
             return (
@@ -1900,7 +1927,9 @@ export default function HRDashboard() {
                   const sel = filteredCafe.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const selWithPoints = sel.map(({ emp, empType, mailKey }) => {
                     const isTransfer = emp.join_reason === '전적' && empType === 'hire'
-                    const dateStr = empType === 'hire' ? emp.join_date ?? null : emp.exit_date ?? null
+                    // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
+                    const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+                    const dateStr = empType === 'hire' ? emp.join_date ?? null : effectiveLeaveDt
                     // 휴직자는 leave 시트(퇴사자) 기준으로 포인트 조회
                     const sheetType = emp.join_reason === '휴직' ? 'leave' : empType
                     return { emp, empType, mailKey, isTransfer, points: isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, sheetType) }
@@ -1929,7 +1958,9 @@ export default function HRDashboard() {
                   <PagedList items={filteredCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
                     renderItem={(entry: PointEntry) => {
                       const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
-                      const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : entry.emp.exit_date ?? null
+                      // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
+                      const effectiveLeaveDt = calcEffectiveLeaveDate(entry.emp)
+                      const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : effectiveLeaveDt
                       // 휴직자는 leave 시트(퇴사자) 기준으로 포인트 조회
                       const sheetType = entry.emp.join_reason === '휴직' ? 'leave' : entry.empType
                       return (
