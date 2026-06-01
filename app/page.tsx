@@ -1418,12 +1418,26 @@ export default function HRDashboard() {
       const [, empType, pointType, empId] = m
       const emp = employees.find(e => String(e.id) === String(empId))
       const dateStr = empType === 'hire' ? emp?.join_date ?? null : emp?.exit_date ?? null
-      const { error } = await supabase.from('point_requests').upsert({
+      const payload = {
         employee_id: empId, employee_type: empType, point_type: pointType,
         base_month: formatMonth(dateStr), extra_recipients: [],
         mail_sent: true, mail_sent_at: new Date().toISOString(),
-      }, { onConflict: 'employee_id,point_type' })
-      dbErr = error?.message ?? null
+      }
+      // point_requests 에 unique 제약 없음 → upsert 대신 SELECT → UPDATE/INSERT
+      const { data: existing } = await supabase
+        .from('point_requests')
+        .select('id')
+        .eq('employee_id', empId)
+        .eq('employee_type', empType)
+        .eq('point_type', pointType)
+        .maybeSingle()
+      if (existing?.id) {
+        const { error } = await supabase.from('point_requests').update(payload).eq('id', existing.id)
+        dbErr = error?.message ?? null
+      } else {
+        const { error } = await supabase.from('point_requests').insert(payload)
+        dbErr = error?.message ?? null
+      }
     } else if (key.startsWith('mail_')) {
       const match = key.match(/^mail_(.+)_(s\d+)$/)
       if (match) {
