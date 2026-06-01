@@ -327,10 +327,11 @@ ${closingP}`
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
   const 구분     = empLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
-  // 휴직자: effectiveDate(휴직시작일-1일) 기준 / 그 외: exit_date 그대로
-  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
-  const date      = (type === 'hire' ? emp.join_date : effectiveLeaveDt) ?? '-'
+  // 표시용: 사용자가 입력한 날짜 그대로 (휴직자도 입력한 휴직시작일 표시)
+  const displayDate = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const isLeaveType = type === 'leave' || emp.join_reason === '휴직'
+  // 포인트 계산용: 카페포인트는 points 파라미터로 전달받으므로 여기선 미사용
+  const date = displayDate
 
   if (isTransfer) {
     return `<h3 style="color:#ea580c">[카페포인트] 전적 안내 — ${emp.name}</h3>
@@ -355,9 +356,10 @@ ${closingP}`
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
   const 구분     = empLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
-  // 휴직자: effectiveDate(휴직시작일-1일) / 휴직복귀자·입사자: join_date / 퇴사자: exit_date 그대로
-  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
-  const date = (type === 'hire' ? emp.join_date : (effectiveLeaveDt ?? emp.leave_date)) ?? '-'
+  // 표시용: 사용자가 입력한 날짜 그대로 (휴직자 → 입력한 휴직시작일, 퇴사자 → exit_date)
+  const displayDate = (type === 'hire' ? emp.join_date : (emp.exit_date ?? emp.leave_date)) ?? '-'
+  // 계산용: 휴직자는 휴직시작일-1일, 퇴사자는 exit_date 그대로
+  const calcDate = calcEffectiveLeaveDate(emp)
   const isLeaveType = type === 'leave' || emp.join_reason === '휴직'
   const phone = emp.phone ?? ''
 
@@ -369,11 +371,11 @@ function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boo
       return `<h3 style="color:#ea580c">[웰니스포인트 ${titleSuffix}] ${emp.name} (${구분})</h3>
 ${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">${dateLabel}</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${amt}</td><td style="${TD}">${구분}</td></tr></table>
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${displayDate}</td><td style="${TD}">${phone}</td><td style="${TD}">${amt}</td><td style="${TD}">${구분}</td></tr></table>
 ${closingP}`
     } else if (isLeaveType) {
-      // 퇴사자: exit_date 그대로 / 휴직자: effectiveDate(휴직시작일-1일)
-      const leaveDateForCalc = effectiveLeaveDt ?? emp.leave_date
+      // 퇴사자: exit_date 그대로 / 휴직자: 계산 기준일(휴직시작일-1일), 표시는 입력한 날짜
+      const leaveDateForCalc = calcDate ?? emp.leave_date
       let leaveAmt = '-'
       if (!emp.join_date) {
         leaveAmt = '입사일자 확인 필요'
@@ -385,7 +387,7 @@ ${closingP}`
       return `<h3 style="color:#ea580c">[웰니스포인트 ${titleSuffix}] ${emp.name} (${구분})</h3>
 ${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">입사일</th><th style="${TH}">${dateLabel}</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${leaveAmt}</td><td style="${TD}">${구분}</td></tr></table>
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${displayDate}</td><td style="${TD}">${phone}</td><td style="${TD}">${leaveAmt}</td><td style="${TD}">${구분}</td></tr></table>
 ${closingP}`
     }
   }
@@ -395,7 +397,7 @@ ${closingP}`
   return `<h3 style="color:#ea580c">[웰니스포인트 안내] ${emp.name} (${구분})</h3>
 ${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">${dateLabel}</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th><th style="${TH}">구분</th></tr>
-<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${date}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td><td style="${TD}">${구분}</td></tr></table>
+<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${displayDate}</td><td style="${TD}">${phone}</td><td style="${TD}">${hireAmt}</td><td style="${TD}">${구분}</td></tr></table>
 ${closingP}`
 }
 
@@ -443,9 +445,9 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, points, isTransfer }) => {
     const label = empLabel(emp)
-    // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
-    const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
-    const date  = (empType === 'hire' ? emp.join_date : effectiveLeaveDt) ?? '-'
+    // 표시용: 사용자가 입력한 날짜 그대로 (휴직자도 입력한 휴직시작일 표시)
+    const displayDate = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+    const date = displayDate   // 카페포인트 계산은 points 파라미터로 전달받음
     const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
     const noDate = isLeaveType && !emp.exit_date
     const amt = isTransfer
@@ -483,23 +485,24 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
   if (leaves.length > 0) {
     const leaveRows = leaves.map(({ emp, isTransfer }) => {
       const 구분    = empLabel(emp)
-      // 휴직자: effectiveDate(휴직시작일-1일) / 퇴사자: exit_date 그대로
-      const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
-      const exitDateDisp = effectiveLeaveDt ?? '-'
+      // 표시용: 사용자가 입력한 날짜 그대로 (휴직자 → 입력한 휴직시작일, 퇴사자 → exit_date)
+      const displayDate = emp.exit_date ?? '-'
+      // 계산용: 휴직자 → 휴직시작일-1일, 퇴사자 → exit_date 그대로
+      const calcDate = calcEffectiveLeaveDate(emp)
       let amt = '해당 없음'
       if (!isTransfer) {
         if (!emp.join_date) {
           amt = '입사일자 확인 필요'
         } else {
-          // 퇴사자: exit_date 그대로 / 휴직자: effectiveDate
-          const leaveDateForCalc = effectiveLeaveDt ?? emp.leave_date
+          // 퇴사자: exit_date 그대로 / 휴직자: 계산 기준일(휴직시작일-1일)
+          const leaveDateForCalc = calcDate ?? emp.leave_date
           if (leaveDateForCalc) {
             const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
             amt = `선지급 ${prePaid.toLocaleString()}원 / 인정 ${recognized.toLocaleString()}원 / 환수 ${reclaim.toLocaleString()}원`
           }
         }
       }
-      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${exitDateDisp}</td><td style="${TD}">${emp.phone??''}</td><td style="${TD}">${amt}</td></tr>`
+      return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${displayDate}</td><td style="${TD}">${emp.phone??''}</td><td style="${TD}">${amt}</td></tr>`
     }).join('')
     const sectionTitle = leaves.some(e => e.emp.join_reason === '휴직') ? '[퇴사자 · 휴직자]' : '[퇴사자]'
     body += `<p style="${PP};font-weight:700;color:#7e22ce;margin:16px 0 6px">${sectionTitle}</p><div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">구분</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일/휴직시작일</th><th style="${TH}">휴대폰번호</th><th style="${TH}">웰니스포인트 금액</th></tr></thead><tbody>${leaveRows}</tbody></table></div>`
@@ -960,11 +963,10 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = empLabel(emp)
   const dateLabel  = getDateLabel(type, isTransfer, emp.join_reason)
-  // 휴직자: effectiveDate(휴직시작일-1일) 기준 표시 / 그 외: exit_date 그대로
-  const effectiveLeaveDt = calcEffectiveLeaveDate(emp)
+  // 표시용: 사용자가 입력한 날짜 그대로 (휴직자도 입력한 휴직시작일 표시)
   const date       = type === 'hire'
     ? (emp.join_date ?? '-')
-    : (effectiveLeaveDt ?? '-')
+    : (emp.exit_date ?? '-')
   const defaultSubject = variant === 'cafe'
     ? `[헥토이노베이션] 카페포인트 ${emp.join_reason === '휴직' ? '정산' : emp.join_reason === '휴직복귀' ? '지급' : '요청'}의 건`
     : `[헥토이노베이션] 웰니스포인트 ${emp.join_reason === '휴직' ? '정산' : emp.join_reason === '휴직복귀' ? '지급' : '요청'}의 건`
