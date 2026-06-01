@@ -277,19 +277,32 @@ function bulkGreetingP(types: Array<'hire' | 'leave'>): string {
 }
 
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
-  const isTransfer = type === 'hire' && emp.join_reason === '전적'
-  const dateLabel  = getDateLabel(type, isTransfer)
-  const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
-  const label      = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
+  const isTransfer  = type === 'hire' && emp.join_reason === '전적'
+  const isOnLeave   = emp.join_reason === '휴직'
+  const dateLabel   = getDateLabel(type, isTransfer, emp.join_reason)
+  const date        = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+  const label       = empLabel(emp)
+
+  // 퇴사자 or 휴직자 (leave-type)
   if (type === 'leave') {
-    return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
-${greetingP(type)}
+    if (isOnLeave) {
+      // 휴직자: 마지막출근일 없이 휴직시작일만 표시
+      return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 휴직</h3>
+${greetingP(type, emp.join_reason)}
+<table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
+<tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
+${closingP}`
+    }
+    // 퇴사자: 마지막출근일 포함
+    return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 퇴사</h3>
+${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
 <tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
 ${closingP}`
   }
+  // 입사자 / 전적자 / 휴직복귀자 (hire-type)
   return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
-${greetingP(type)}
+${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th><th style="${TH}">직급</th></tr>
 <tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td><td style="${TD}">${emp.position??'-'}</td></tr></table>
 ${closingP}`
@@ -771,13 +784,15 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
 }) {
   const [expanded, setExpanded] = useState(false)
   const isTransfer = type === 'hire' && emp.join_reason === '전적'
-  const typeLabel  = isTransfer ? '전적' : (type === 'hire' ? '입사' : '퇴사')
-  const dateLabel  = getDateLabel(type, isTransfer)
+  const isOnLeave  = emp.join_reason === '휴직'
+  const typeLabel  = empLabel(emp)
+  const dateLabel  = getDateLabel(type, isTransfer, emp.join_reason)
   const date       = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
   const htmlBody   = makeNotifHtml(emp, type)
-  const subject    = type === 'leave'
-    ? '[헥토이노베이션] 퇴사자 공유의 건'
-    : '[헥토이노베이션] 신규 입사자 공유의 건'
+  const subject    = emp.join_reason === '휴직'         ? '[헥토이노베이션] 휴직자 공유의 건'
+                   : emp.join_reason === '휴직복귀'     ? '[헥토이노베이션] 휴직복귀자 공유의 건'
+                   : type === 'leave'                   ? '[헥토이노베이션] 퇴사자 공유의 건'
+                   : '[헥토이노베이션] 신규 입사자 공유의 건'
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -788,7 +803,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
-            {type === 'leave' && <InfoRow label="마지막 출근일"><span className="text-xs font-semibold text-gray-700">{emp.leave_date ?? '-'}</span></InfoRow>}
+            {type === 'leave' && !isOnLeave && <InfoRow label="마지막 출근일"><span className="text-xs font-semibold text-gray-700">{emp.leave_date ?? '-'}</span></InfoRow>}
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
             {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
             {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
@@ -1213,7 +1228,7 @@ export default function HRDashboard() {
   const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
-  const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave'>('all')
+  const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
   const [notifySectCollapsed, setNotifySectCollapsed] = useState<Set<string>>(new Set())
   const [search,    setSearch]    = useState('')
   const [typeF,     setTypeF]     = useState('전체')
@@ -1298,9 +1313,11 @@ export default function HRDashboard() {
   }
 
   // 탭별 데이터
+  // allNotify: 입사/전적/휴직복귀(hire) + 퇴사/휴직자(leave) 모두 포함
   const allNotify: NotifyEntry[] = [
-    ...newHires.map(e  => ({ emp: e, type: 'hire'  as const, mailKey: `hire_notif_${e.id}` })),
+    ...newHires.map(e  => ({ emp: e, type: 'hire'  as const, mailKey: `hire_notif_${e.id}`  })),
     ...departures.map(e => ({ emp: e, type: 'leave' as const, mailKey: `leave_notif_${e.id}` })),
+    ...onLeave.map(e   => ({ emp: e, type: 'leave' as const, mailKey: `leave_notif_${e.id}` })),
   ]
   // 카페/웰니스: hire-type = newHires(입사/전적/휴직복귀), leave-type = departures(퇴사) + onLeave(휴직자)
   const allCafe: PointEntry[] = [
@@ -1717,35 +1734,53 @@ export default function HRDashboard() {
                 <span className="text-sm">불러오는 중...</span>
               </div>
             ) : activeTab === 'notify' ? (() => {
-              const notifyHire     = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason !== '전적')
-              const notifyTransfer = filteredNotify.filter(e => e.type === 'hire' && e.emp.join_reason === '전적')
-              const notifyLeave    = filteredNotify.filter(e => e.type === 'leave')
+              // 하위 필터별 직원 목록
+              const notifyHire     = filteredNotify.filter(e => e.type === 'hire'  && !['전적', '휴직복귀'].includes(e.emp.join_reason ?? ''))
+              const notifyTransfer = filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '전적')
+              const notifyReturn   = filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '휴직복귀')
+              const notifyLeave    = filteredNotify.filter(e => e.type === 'leave' && e.emp.status === 'resigned')
+              const notifyOnLeave  = filteredNotify.filter(e => e.type === 'leave' && e.emp.join_reason === '휴직')
+
               const NOTIFY_SUB_TABS = [
-                { id: 'hire'     as const, label: '입사', count: notifyHire.length     },
-                { id: 'transfer' as const, label: '전적', count: notifyTransfer.length },
-                { id: 'leave'    as const, label: '퇴사', count: notifyLeave.length    },
+                { id: 'hire'     as const, label: '입사',       count: notifyHire.length     },
+                { id: 'transfer' as const, label: '전적',       count: notifyTransfer.length },
+                { id: 'leave'    as const, label: '퇴사',       count: notifyLeave.length    },
+                { id: 'onleave'  as const, label: '휴직자',     count: notifyOnLeave.length  },
+                { id: 'return'   as const, label: '휴직복귀자', count: notifyReturn.length   },
               ]
+
               const showHire     = notifySubTab === 'all' || notifySubTab === 'hire'
               const showTransfer = notifySubTab === 'all' || notifySubTab === 'transfer'
               const showLeave    = notifySubTab === 'all' || notifySubTab === 'leave'
+              const showOnLeave  = notifySubTab === 'all' || notifySubTab === 'onleave'
+              const showReturn   = notifySubTab === 'all' || notifySubTab === 'return'
+
               const visibleItems = [
                 ...(showHire     ? notifyHire     : []),
                 ...(showTransfer ? notifyTransfer : []),
                 ...(showLeave    ? notifyLeave    : []),
+                ...(showOnLeave  ? notifyOnLeave  : []),
+                ...(showReturn   ? notifyReturn   : []),
               ]
+
               const allSel      = visibleItems.filter(({ mailKey }) => selectedKeys.has(mailKey))
               const selHasLeave = allSel.some(e => e.type === 'leave')
               const selHasHire  = allSel.some(e => e.type === 'hire')
               const defRcp      = selHasLeave ? FR.leave : FR.hire
               const defCC       = selHasLeave ? FR.leaveCC : []
               const bulkHtml    = allSel.length > 0 ? makeBulkNotifHtml(allSel.map(({ emp, type }) => ({ emp, type }))) : ''
-              const bulkSubject = selHasLeave
-                ? '[헥토이노베이션] 퇴사자 공유의 건'
-                : '[헥토이노베이션] 신규 입사자 공유의 건'
+              const bulkSubject = selHasLeave && selHasHire
+                ? '[헥토이노베이션] 인사 공유의 건'
+                : selHasLeave
+                  ? '[헥토이노베이션] 퇴사·휴직자 공유의 건'
+                  : '[헥토이노베이션] 신규 입사자 공유의 건'
+
               const SECTIONS = [
-                { id: 'hire'     as const, title: '입사', color: 'blue'   as const, items: notifyHire     },
-                { id: 'transfer' as const, title: '전적', color: 'amber'  as const, items: notifyTransfer },
-                { id: 'leave'    as const, title: '퇴사', color: 'purple' as const, items: notifyLeave    },
+                { id: 'hire'     as const, title: '입사',       color: 'blue'    as const, items: notifyHire     },
+                { id: 'transfer' as const, title: '전적',       color: 'amber'   as const, items: notifyTransfer },
+                { id: 'leave'    as const, title: '퇴사',       color: 'purple'  as const, items: notifyLeave    },
+                { id: 'onleave'  as const, title: '휴직자',     color: 'cyan'    as const, items: notifyOnLeave  },
+                { id: 'return'   as const, title: '휴직복귀자', color: 'emerald' as const, items: notifyReturn   },
               ]
               return (
               <div className="space-y-3">
@@ -1804,11 +1839,12 @@ export default function HRDashboard() {
                 {/* 섹션별 목록 */}
                 {SECTIONS.filter(s => notifySubTab === 'all' || notifySubTab === s.id).map(s => {
                   const isCollapsed = notifySectCollapsed.has(s.id)
-                  const colorCls = s.color === 'blue'
-                    ? 'text-blue-700 bg-blue-50 border-blue-200'
-                    : s.color === 'amber'
-                    ? 'text-amber-700 bg-amber-50 border-amber-200'
-                    : 'text-purple-700 bg-purple-50 border-purple-200'
+                  const colorCls = s.color === 'blue'    ? 'text-blue-700 bg-blue-50 border-blue-200'
+                                 : s.color === 'amber'   ? 'text-amber-700 bg-amber-50 border-amber-200'
+                                 : s.color === 'purple'  ? 'text-purple-700 bg-purple-50 border-purple-200'
+                                 : s.color === 'cyan'    ? 'text-cyan-700 bg-cyan-50 border-cyan-200'
+                                 : s.color === 'emerald' ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                 : 'text-gray-700 bg-gray-50 border-gray-200'
                   return (
                     <div key={s.id} className="space-y-2">
                       <button
