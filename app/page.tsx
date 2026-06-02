@@ -1371,7 +1371,9 @@ export default function HRDashboard() {
     if (sentF === '미발송'   &&  mailSent[mailKey]) return false
     return true
   })
+  // 온보딩 대상: 입사/전적만 포함. 휴직복귀자는 온보딩 대상 아님
   const filteredOnboard = newHires.filter(e => {
+    if (e.join_reason === '휴직복귀') return false          // 휴직복귀자 제외
     const q = search.trim().toLowerCase()
     if (q) {
       const text = [e.name, e.department, e.division, e.team].filter(Boolean).join(' ').toLowerCase()
@@ -1386,7 +1388,7 @@ export default function HRDashboard() {
 
   const TABS = [
     { id: 'notify'   as TabId, label: '입사/퇴사 관리', count: allNotify.length },
-    { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.length },
+    { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.filter(e => e.join_reason !== '휴직복귀').length },
     { id: 'cafe'     as TabId, label: '카페포인트',       count: allCafe.length },
     { id: 'wellness' as TabId, label: '웰니스포인트',     count: allWellness.length },
   ]
