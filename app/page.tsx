@@ -1316,7 +1316,8 @@ export default function HRDashboard() {
   const departures = employees.filter(e => e.status === 'resigned')                             // 퇴사자
 
   const todayStr    = new Date().toISOString().slice(0, 10)
-  const todayHires  = newHires.filter(h  => h.join_date  === todayStr).length
+  // 오늘 입사자: 휴직복귀자 제외 (휴직복귀자는 포인트 계산에만 입사자 로직 사용)
+  const todayHires  = newHires.filter(h => h.join_date === todayStr && h.join_reason !== '휴직복귀').length
   const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
 
   // 검색/필터/탭 변경 시 초기화
