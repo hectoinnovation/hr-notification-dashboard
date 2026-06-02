@@ -511,6 +511,163 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
   return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 요청의 건 (${entries.length}명)</h3>${body}${closingP}`
 }
 
+// ─── 엑셀 다운로드 ────────────────────────────────────────────────────────────
+
+type XlsxEntry = {
+  emp: Employee
+  empType: 'hire' | 'leave'
+  mailKey: string
+  isTransfer: boolean
+  points: DayPointData | null   // 카페포인트용 (없으면 null)
+}
+
+/** XLSX 파일 생성 및 브라우저 다운로드 */
+function exportToExcel(rows: Record<string, unknown>[], filename: string) {
+  if (rows.length === 0) {
+    alert('다운로드할 대상자를 선택해주세요.')
+    return
+  }
+  const ws = XLSX.utils.json_to_sheet(rows)
+  // 컬럼 너비 자동 설정
+  ws['!cols'] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length * 2, 16) }))
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '정산내역')
+  XLSX.writeFile(wb, filename)
+}
+
+/** 카페포인트 엑셀 행 생성 */
+function buildCafeExcelRows(
+  entries: XlsxEntry[],
+  sentMap: Record<string, boolean>,
+): Record<string, unknown>[] {
+  return entries.map(({ emp, empType, mailKey, isTransfer, points }) => {
+    const 구분       = empLabel(emp)
+    const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
+    const calcDate  = calcEffectiveLeaveDate(emp)               // 계산 기준일
+    const 표시일    = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+    const 기준일    = isLeaveType ? (calcDate ?? 표시일) : 표시일
+
+    let 총부여포인트 = '-'
+    let 정산포인트   = '-'
+    let 지급환수구분 = '-'
+    let 최종처리금액 = '-'
+    let 계산기준설명 = '-'
+
+    if (isTransfer) {
+      지급환수구분 = '해당 없음'
+      계산기준설명 = '전적자는 카페포인트 계산 대상 아님'
+    } else if (isLeaveType && !emp.exit_date) {
+      총부여포인트 = '기준일 미입력'
+      정산포인트   = '기준일 미입력'
+      계산기준설명 = emp.join_reason === '휴직' ? '휴직시작일(exit_date) 미입력' : '퇴사일 미입력'
+    } else if (points) {
+      총부여포인트 = `${points.totalPoints.toLocaleString()}P`
+      정산포인트   = `${points.settlementPoints.toLocaleString()}P`
+      최종처리금액 = 정산포인트
+      지급환수구분 = empType === 'hire' ? '지급' : '환수/정산'
+      if (emp.join_reason === '휴직') {
+        계산기준설명 = `휴직시작일 ${emp.exit_date} / 계산 기준일 ${calcDate} (전날 기준)`
+      } else if (emp.join_reason === '휴직복귀') {
+        계산기준설명 = `복귀일 ${표시일} 기준 입사자 계산`
+      } else if (empType === 'hire') {
+        계산기준설명 = `입사일 ${표시일} 기준`
+      } else {
+        계산기준설명 = `퇴사일 ${표시일} 기준`
+      }
+    } else {
+      계산기준설명 = '카페포인트 엑셀 데이터 없음 (엑셀 업로드 필요)'
+    }
+
+    return {
+      '구분': 구분, '이름': emp.name, '이메일': '-',
+      '부서': emp.department ?? '-', '직책/직급': emp.position ?? '-',
+      '표시일': 표시일, '기준일': 기준일 ?? '-',
+      '포인트 종류': '카페포인트',
+      '지급/환수 구분': 지급환수구분,
+      '총 부여포인트': 총부여포인트, '정산포인트': 정산포인트,
+      '지급 예정 금액': '-', '환수 예정 금액': '-',
+      '최종 처리 금액': 최종처리금액,
+      '계산 기준 설명': 계산기준설명,
+      '메일 발송 상태': sentMap[mailKey] ? '발송완료' : '미발송',
+      '비고': '',
+    }
+  })
+}
+
+/** 웰니스포인트 엑셀 행 생성 */
+function buildWellnessExcelRows(
+  entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }>,
+  sentMap: Record<string, boolean>,
+): Record<string, unknown>[] {
+  return entries.map(({ emp, empType, mailKey, isTransfer }) => {
+    const 구분       = empLabel(emp)
+    const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
+    const calcDate  = calcEffectiveLeaveDate(emp)
+    const 표시일    = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
+    const 기준일    = isLeaveType ? (calcDate ?? 표시일) : 표시일
+
+    let 지급예정금액 = '-'
+    let 환수예정금액 = '-'
+    let 최종처리금액 = '-'
+    let 지급환수구분 = '-'
+    let 계산기준설명 = '-'
+
+    if (isTransfer) {
+      지급환수구분 = '해당 없음'
+      계산기준설명 = '전적자는 웰니스포인트 계산 대상 아님'
+    } else if (!isLeaveType) {
+      // 입사자 / 휴직복귀자
+      if (emp.join_date) {
+        const amt = calcWellnessHire(emp.join_date)
+        지급예정금액 = `${amt.toLocaleString()}원`
+        최종처리금액 = 지급예정금액
+        지급환수구분 = '지급'
+        계산기준설명 = emp.join_reason === '휴직복귀'
+          ? `복귀일 ${표시일} 기준 입사자 계산 (월 만근 50,000원 / 12월 말 일할)`
+          : `입사일 ${표시일} 기준 입사자 계산 (월 만근 50,000원 / 12월 말 일할)`
+      } else {
+        계산기준설명 = '입사일/복귀일 미입력'
+      }
+    } else {
+      // 퇴사자 / 휴직자
+      if (!emp.join_date) {
+        계산기준설명 = '입사일 미입력'
+      } else {
+        const leaveDateForCalc = calcDate ?? emp.leave_date
+        if (leaveDateForCalc) {
+          const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+          지급예정금액 = recognized > 0 ? `${recognized.toLocaleString()}원` : '-'
+          환수예정금액 = reclaim > 0 ? `${reclaim.toLocaleString()}원` : '-'
+          최종처리금액 = reclaim > 0
+            ? `환수 ${reclaim.toLocaleString()}원`
+            : `인정 ${recognized.toLocaleString()}원`
+          지급환수구분 = reclaim > 0 ? '환수' : '인정/정산'
+          계산기준설명 = emp.join_reason === '휴직'
+            ? `휴직시작일 ${emp.exit_date} / 계산기준일 ${calcDate} / 선지급 ${prePaid.toLocaleString()}원 → 인정 ${recognized.toLocaleString()}원`
+            : `퇴사일 ${표시일} 기준 / 선지급 ${prePaid.toLocaleString()}원 → 인정 ${recognized.toLocaleString()}원`
+        } else {
+          계산기준설명 = emp.join_reason === '휴직' ? '휴직시작일 미입력' : '퇴사일 미입력'
+        }
+      }
+    }
+
+    return {
+      '구분': 구분, '이름': emp.name, '이메일': '-',
+      '부서': emp.department ?? '-', '직책/직급': emp.position ?? '-',
+      '입사일': emp.join_date ?? '-',
+      '표시일': 표시일, '기준일': 기준일 ?? '-',
+      '포인트 종류': '웰니스포인트',
+      '지급/환수 구분': 지급환수구분,
+      '지급 예정 금액': 지급예정금액,
+      '환수 예정 금액': 환수예정금액,
+      '최종 처리 금액': 최종처리금액,
+      '계산 기준 설명': 계산기준설명,
+      '메일 발송 상태': sentMap[mailKey] ? '발송완료' : '미발송',
+      '비고': '',
+    }
+  })
+}
+
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
 function TypeBadge({ type }: { type: string }) {
   const s = type === '입사'       ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -1941,22 +2098,39 @@ export default function HRDashboard() {
                   })
                   const bulkHtml = sel.length > 0 ? makeBulkCafeHtml(selWithPoints) : ''
                   return (
-                    <BulkControls
-                      total={filteredCafe.length}
-                      selectedCount={sel.length}
-                      onSelectAll={() => selectAll(filteredCafe.map(e => e.mailKey))}
-                      onDeselectAll={deselectAll}
-                      bulkSending={bulkSending} bulkResult={bulkResult}
-                      previewHtml={bulkHtml}
-                      defaultRecipients={FR.cafe}
-                      defaultCC={FR.cafeCC}
-                      onBulkSend={(to, cc) => handleBulkSend(
-                        to,
-                        `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
-                        bulkHtml,
-                        sel.map(e => e.mailKey),
-                        cc
-                      )} />
+                    <>
+                      <BulkControls
+                        total={filteredCafe.length}
+                        selectedCount={sel.length}
+                        onSelectAll={() => selectAll(filteredCafe.map(e => e.mailKey))}
+                        onDeselectAll={deselectAll}
+                        bulkSending={bulkSending} bulkResult={bulkResult}
+                        previewHtml={bulkHtml}
+                        defaultRecipients={FR.cafe}
+                        defaultCC={FR.cafeCC}
+                        onBulkSend={(to, cc) => handleBulkSend(
+                          to,
+                          `[헥토이노베이션] 카페포인트 요청의 건 (${sel.length}명)`,
+                          bulkHtml,
+                          sel.map(e => e.mailKey),
+                          cc
+                        )} />
+                      <div className="flex justify-end mt-1">
+                      <button
+                        onClick={() => {
+                          if (sel.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+                          const rows = buildCafeExcelRows(selWithPoints, mailSent)
+                          const today = new Date().toISOString().slice(0, 10)
+                          exportToExcel(rows, `카페포인트_정산내역_${today}.xlsx`)
+                        }}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        엑셀 다운로드{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
+                      </button>
+                    </div>
+                    </>
                   )
                 })()}
                 {filteredCafe.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
@@ -1986,26 +2160,44 @@ export default function HRDashboard() {
                 <p className="text-xs text-gray-400">{filteredWellness.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                 {filteredWellness.length > 0 && (() => {
                   const sel = filteredWellness.filter(({ mailKey }) => selectedKeys.has(mailKey))
-                  const bulkHtml = sel.length > 0 ? makeBulkWellnessHtml(sel.map(({ emp, empType }) => ({
-                    emp, empType, isTransfer: emp.join_reason === '전적' && empType === 'hire'
-                  }))) : ''
+                  const selWithMeta = sel.map(({ emp, empType, mailKey }) => ({
+                    emp, empType, mailKey, isTransfer: emp.join_reason === '전적' && empType === 'hire',
+                  }))
+                  const bulkHtml = sel.length > 0 ? makeBulkWellnessHtml(selWithMeta) : ''
                   return (
-                    <BulkControls
-                      total={filteredWellness.length}
-                      selectedCount={sel.length}
-                      onSelectAll={() => selectAll(filteredWellness.map(e => e.mailKey))}
-                      onDeselectAll={deselectAll}
-                      bulkSending={bulkSending} bulkResult={bulkResult}
-                      previewHtml={bulkHtml}
-                      defaultRecipients={FR.wellness}
-                      defaultCC={FR.wellnessCC}
-                      onBulkSend={(to, cc) => handleBulkSend(
-                        to,
-                        `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
-                        bulkHtml,
-                        sel.map(e => e.mailKey),
-                        cc
-                      )} />
+                    <>
+                      <BulkControls
+                        total={filteredWellness.length}
+                        selectedCount={sel.length}
+                        onSelectAll={() => selectAll(filteredWellness.map(e => e.mailKey))}
+                        onDeselectAll={deselectAll}
+                        bulkSending={bulkSending} bulkResult={bulkResult}
+                        previewHtml={bulkHtml}
+                        defaultRecipients={FR.wellness}
+                        defaultCC={FR.wellnessCC}
+                        onBulkSend={(to, cc) => handleBulkSend(
+                          to,
+                          `[헥토이노베이션] 웰니스포인트 요청의 건 (${sel.length}명)`,
+                          bulkHtml,
+                          sel.map(e => e.mailKey),
+                          cc
+                        )} />
+                      <div className="flex justify-end mt-1">
+                        <button
+                          onClick={() => {
+                            if (sel.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+                            const rows = buildWellnessExcelRows(selWithMeta, mailSent)
+                            const today = new Date().toISOString().slice(0, 10)
+                            exportToExcel(rows, `웰니스포인트_정산내역_${today}.xlsx`)
+                          }}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          엑셀 다운로드{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
+                        </button>
+                      </div>
+                    </>
                   )
                 })()}
                 {filteredWellness.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
