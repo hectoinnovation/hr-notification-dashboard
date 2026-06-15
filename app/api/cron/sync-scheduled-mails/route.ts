@@ -1,13 +1,16 @@
 /**
  * GET /api/cron/sync-scheduled-mails
  *
- * 기존 employees 테이블을 스캔해 scheduled_mails를 생성(백필)하는 유틸리티 엔드포인트.
- * - 신규 직원 등록 이전에 이미 존재하는 active 입사자의 D-7/D-1/D-Day 메일을 생성
- * - ?dry=1 : 실제 INSERT 없이 생성될 행만 미리보기
- * - ?secret=<CRON_SECRET> : 인증
+ * 기존 employees 기준 온보딩 예약메일 백필(backfill) 유틸리티
  *
- * 중복 방지: 이미 sent인 메일은 재생성하지 않음.
+ * - ?dry=1   : DB 변경 없이 생성 대상만 JSON으로 표시
+ * - ?secret= : 인증 (CRON_SECRET 없는 환경은 자유 호출 가능)
+ *
+ * 대상 조건: status='active' AND join_date IS NOT NULL
+ *            AND (join_reason='입사' OR join_reason IS NULL)
+ * 생성 스테이지: D-7(s5), D-1(s6), D-Day(s7)
  * 수신자: inno_hm@hecto.co.kr
+ * 중복 방지: 동일 subject가 pending/sent면 스킵
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
@@ -18,17 +21,17 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const ONBOARD_RECIPIENT = 'inno_hm@hecto.co.kr'
-const TARGET_STAGE_IDS  = ['s5', 's6', 's7'] as const   // D-7, D-1, D-Day
+const TARGET_STAGES     = STAGES.filter(s => ['s5', 's6', 's7'].includes(s.id))
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
-  const dry  = url.searchParams.get('dry') === '1'
+  const dry = url.searchParams.get('dry') === '1'
 
   // ── 인증 ────────────────────────────────────────────────────────────────────
   const cronSecret = process.env.CRON_SECRET
   if (cronSecret) {
-    const bearer = req.headers.get('Authorization') ?? req.headers.get('authorization')
-    const qs     = url.searchParams.get('secret')
+    const bearer = req.headers.get('Authorization') ?? req.headers.get('authorization') ?? ''
+    const qs     = url.searchParams.get('secret') ?? ''
     if (bearer !== `Bearer ${cronSecret}` && qs !== cronSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -42,141 +45,137 @@ export async function GET(req: NextRequest) {
   }
   const supabase = createClient(supabaseUrl, supabaseKey)
 
-  // ── 활성 입사자 조회 ─────────────────────────────────────────────────────────
-  const { data: employees, error: empErr } = await supabase
+  // ── 활성 입사자 조회 (전적·휴직복귀 제외) ────────────────────────────────────
+  // join_reason = '입사' 또는 null (join_reason이 없는 경우 입사로 간주)
+  const { data: empData, error: empErr } = await supabase
     .from('employees')
     .select('id, name, join_date, department, division, team, position, leader, join_reason, phone, status')
     .eq('status', 'active')
     .not('join_date', 'is', null)
-    .in('join_reason', ['입사', null])  // 전적·휴직복귀 제외
 
   if (empErr) {
-    return NextResponse.json({ error: empErr.message }, { status: 500 })
+    return NextResponse.json({ error: `employees 조회 실패: ${empErr.message}` }, { status: 500 })
   }
 
-  const empList = (employees ?? []) as Employee[]
+  // 전적·휴직복귀 클라이언트 필터
+  const empList = ((empData ?? []) as Employee[]).filter(
+    e => !e.join_reason || e.join_reason === '입사'
+  )
 
-  // ── 이미 scheduled or sent된 subject 목록 조회 (중복 방지) ──────────────────
-  const { data: existingMails } = await supabase
+  // ── 이미 pending/sent인 subject 목록 (중복 방지) ─────────────────────────────
+  const { data: existingData } = await supabase
     .from('scheduled_mails')
     .select('subject, status')
     .eq('to_email', ONBOARD_RECIPIENT)
     .in('status', ['pending', 'sent'])
 
-  const existingSubjects = new Set((existingMails ?? []).map((m: { subject: string }) => m.subject))
+  const existingSubjects = new Set(
+    ((existingData ?? []) as { subject: string; status: string }[]).map(m => m.subject)
+  )
 
-  // ── 생성할 행 계산 ───────────────────────────────────────────────────────────
-  const onboardStages = STAGES.filter(s => (TARGET_STAGE_IDS as readonly string[]).includes(s.id))
-  const nowIso        = new Date().toISOString()
-
-  type MailRow = {
-    to_email: string
-    subject:  string
-    html:     string
-    scheduled_at: string
-    status:   string
-    employeeName?: string
-    targetDate?: string
-    stage?: string
+  // ── 생성 대상 계산 ───────────────────────────────────────────────────────────
+  type PreviewRow = {
+    name: string; stage: string; targetDate: string
+    subject: string; scheduled_at: string; to_email: string
+  }
+  type DbRow = {
+    to_email: string; subject: string; html: string
+    scheduled_at: string; status: string
   }
 
-  const toInsert: MailRow[] = []
+  const preview:  PreviewRow[] = []
+  const dbRows:   DbRow[]      = []
   const skipped:  { name: string; stage: string; reason: string }[] = []
 
   for (const emp of empList) {
     if (!emp.join_date) continue
-    // 전적·휴직복귀 제외 (join_reason null은 입사로 간주)
-    if (emp.join_reason && !['입사'].includes(emp.join_reason)) {
-      skipped.push({ name: emp.name, stage: '전체', reason: `join_reason=${emp.join_reason}` })
-      continue
-    }
 
     const empObj: Employee = {
       id: emp.id, name: emp.name,
-      join_date:  emp.join_date,
-      department: emp.department ?? undefined,
-      division:   emp.division   ?? undefined,
-      team:       emp.team       ?? undefined,
-      position:   emp.position   ?? undefined,
-      leader:     emp.leader     ?? undefined,
+      join_date:   emp.join_date,
+      department:  (emp as { department?: string }).department  ?? undefined,
+      division:    (emp as { division?: string }).division     ?? undefined,
+      team:        (emp as { team?: string }).team         ?? undefined,
+      position:    (emp as { position?: string }).position     ?? undefined,
+      leader:      (emp as { leader?: string }).leader       ?? undefined,
       join_reason: emp.join_reason ?? '입사',
-      phone:      emp.phone      ?? undefined,
-      status:     emp.status,
+      phone:       (emp as { phone?: string }).phone        ?? undefined,
+      status:      emp.status,
     }
 
-    for (const stage of onboardStages) {
+    for (const stage of TARGET_STAGES) {
       const targetDate = calcDday(emp.join_date, stage.timing)
       if (!targetDate) continue
 
       const subject = `[온보딩 알림] ${emp.name}님 ${stage.label} 진행 요청`
 
       if (existingSubjects.has(subject)) {
-        skipped.push({ name: emp.name, stage: stage.timing, reason: '이미 pending 또는 sent 존재' })
+        skipped.push({ name: emp.name, stage: stage.timing, reason: '이미 pending/sent 존재' })
         continue
       }
 
-      toInsert.push({
+      // scheduled_at: 해당 날짜 KST 00:00 → UTC 전날 15:00 (= T15:00:00.000Z)
+      // cron이 UTC 01:00에 실행되므로 어느 시각이든 당일 자정이면 픽업됨
+      const scheduled_at = `${targetDate}T00:00:00.000Z`
+
+      preview.push({ name: emp.name, stage: stage.timing, targetDate, subject, scheduled_at, to_email: ONBOARD_RECIPIENT })
+      dbRows.push({
         to_email:     ONBOARD_RECIPIENT,
         subject,
         html:         makeOnboardingMailHtml(empObj, stage.label, stage.timing, targetDate),
-        scheduled_at: `${targetDate}T00:00:00.000Z`,
+        scheduled_at,
         status:       'pending',
-        // 미리보기용 메타 (INSERT 전 제거)
-        employeeName: emp.name,
-        targetDate,
-        stage: stage.timing,
       })
     }
   }
 
-  // ── dry=1 이면 미리보기만 ────────────────────────────────────────────────────
+  // ── dry=1: 미리보기만 반환 ────────────────────────────────────────────────────
   if (dry) {
     return NextResponse.json({
-      ok:       true,
-      dry:      true,
-      total:    empList.length,
-      toInsert: toInsert.map(r => ({
-        name:         r.employeeName,
-        stage:        r.stage,
-        targetDate:   r.targetDate,
-        subject:      r.subject,
-        scheduled_at: r.scheduled_at,
-      })),
-      skipped,
+      ok:            true,
+      dry:           true,
+      employeeCount: empList.length,
+      willInsert:    preview.length,
+      skipped:       skipped.length,
+      toInsert:      preview,
+      skippedList:   skipped,
     })
   }
 
   // ── 실제 INSERT ──────────────────────────────────────────────────────────────
-  const dbRows = toInsert.map(({ employeeName: _n, targetDate: _d, stage: _s, ...rest }) => rest)
-
-  type InsertedRow = { id: string; to_email: string; subject: string; scheduled_at: string; status: string }
-  let inserted: InsertedRow[] = []
-  let insertErr: string | null = null
-
-  if (dbRows.length > 0) {
-    const { data, error } = await supabase
-      .from('scheduled_mails')
-      .insert(dbRows)
-      .select('id, to_email, subject, scheduled_at, status')
-
-    if (error) insertErr = error.message
-    else inserted = (data ?? []) as InsertedRow[]
+  if (dbRows.length === 0) {
+    return NextResponse.json({
+      ok: true, inserted: 0, skipped: skipped.length,
+      message: '생성할 신규 예약메일 없음 (모두 이미 존재)',
+      skippedList: skipped,
+    })
   }
 
-  console.log(`[sync-scheduled-mails] 직원 ${empList.length}명 → ${inserted.length}건 생성, ${skipped.length}건 스킵`)
+  const { data: inserted, error: insErr } = await supabase
+    .from('scheduled_mails')
+    .insert(dbRows)
+    .select('id, to_email, subject, scheduled_at, status')
+
+  if (insErr) {
+    console.error('[sync-scheduled-mails] INSERT 실패:', insErr.message)
+    return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 })
+  }
+
+  const insertedRows = (inserted ?? []) as { id: string; to_email: string; subject: string; scheduled_at: string; status: string }[]
+  console.log(`[sync-scheduled-mails] ${insertedRows.length}건 생성 완료`)
 
   return NextResponse.json({
-    ok:            !insertErr,
+    ok:            true,
     employeeCount: empList.length,
-    inserted:      toInsert.map((r, i) => ({
-      name:         r.employeeName,
-      stage:        r.stage,
-      targetDate:   r.targetDate,
+    inserted:      insertedRows.length,
+    skipped:       skipped.length,
+    rows:          insertedRows.map(r => ({
+      id:           r.id,
+      to_email:     r.to_email,
       subject:      r.subject,
       scheduled_at: r.scheduled_at,
-      id:           inserted[i]?.id ?? null,
+      status:       r.status,
     })),
-    skipped,
-    error:         insertErr,
+    skippedList: skipped,
   })
 }
