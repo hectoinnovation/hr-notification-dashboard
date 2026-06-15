@@ -1622,11 +1622,70 @@ export default function HRDashboard() {
       phone: form.phone || null,
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
     }
-    const { error } = editTarget
-      ? await supabase.from('employees').update(payload).eq('id', editTarget.id)
-      : await supabase.from('employees').insert(payload)
-    if (error) setError(error.message); else closeForm()
-    setSubmitting(false); fetchAllData()
+
+    // ── 직원 저장 ────────────────────────────────────────────────────────────
+    let savedId: number | null = null
+    if (editTarget) {
+      const { error } = await supabase.from('employees').update(payload).eq('id', editTarget.id)
+      if (error) { setError(error.message); setSubmitting(false); return }
+      savedId = editTarget.id
+    } else {
+      const { data, error } = await supabase.from('employees').insert(payload).select('id').single()
+      if (error) { setError(error.message); setSubmitting(false); return }
+      savedId = data?.id ?? null
+    }
+
+    // ── 온보딩 예약메일 생성 (입사자만, D-7 / D-1 / D-Day) ──────────────────
+    const isNewHire = form.status === 'active' && form.join_date &&
+                      (form.join_reason === '입사' || !form.join_reason)
+    if (savedId && isNewHire) {
+      const name     = form.name.trim()
+      const joinDate = form.join_date
+      const nowIso   = new Date().toISOString()
+      const recipient = FR.onboard[0].email  // inno_hm@hecto.co.kr
+      const empObj: Employee = {
+        id: savedId, name,
+        join_date:  form.join_date  || undefined,
+        department: form.department || undefined,
+        division:   form.division   || undefined,
+        team:       form.team       || undefined,
+        position:   form.position   || undefined,
+        leader:     form.leader     || undefined,
+        join_reason: form.join_reason || '입사',
+        phone:      form.phone || undefined,
+        status:     form.status as Employee['status'],
+      }
+
+      // 기존 pending 메일 취소 (입사일 변경 시 중복 방지)
+      await supabase
+        .from('scheduled_mails')
+        .update({ status: 'cancelled', updated_at: nowIso })
+        .eq('status', 'pending')
+        .ilike('subject', `[온보딩 알림] ${name}님%`)
+
+      // D-7(s5), D-1(s6), D-Day(s7) 예약메일 생성
+      const onboardStages = STAGES.filter(s => ['s5', 's6', 's7'].includes(s.id))
+      const mailRows = onboardStages.flatMap(stage => {
+        const targetDate = calcDday(joinDate, stage.timing)
+        if (!targetDate) return []
+        return [{
+          to_email:     recipient,
+          subject:      `[온보딩 알림] ${name}님 ${stage.label} 진행 요청`,
+          html:         makeOnboardingMailHtml(empObj, stage.label, stage.timing, targetDate),
+          scheduled_at: `${targetDate}T00:00:00.000Z`,
+          status:       'pending',
+        }]
+      })
+
+      if (mailRows.length > 0) {
+        const { error: mailErr } = await supabase.from('scheduled_mails').insert(mailRows)
+        if (mailErr) console.error('[handleSubmit] scheduled_mails 생성 실패:', mailErr.message)
+      }
+    }
+
+    closeForm()
+    setSubmitting(false)
+    fetchAllData()
   }
 
   async function handleDelete(id: string, name: string) {
