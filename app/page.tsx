@@ -1005,9 +1005,9 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
 }
 
 // ─── 온보딩 단계 행 ───────────────────────────────────────────────────────────
-function OnboardingRow({ stage, idx, isDone, isSent, hire, onToggleDone, onSendMail }: {
+function OnboardingRow({ stage, idx, isDone, isSent, sentAt, hire, onToggleDone, onSendMail }: {
   stage: Stage; idx: number
-  isDone: boolean; isSent: boolean; hire: Employee
+  isDone: boolean; isSent: boolean; sentAt?: string; hire: Employee
   onToggleDone: () => void; onSendMail: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -1034,7 +1034,12 @@ function OnboardingRow({ stage, idx, isDone, isSent, hire, onToggleDone, onSendM
         <button onClick={() => setOpen(p => !p)}
           className={`text-xs px-2 py-1 rounded-lg border transition-colors flex-shrink-0 flex items-center gap-1 ${open ? 'bg-orange-100 border-orange-200 text-orange-700' : isSent ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
           <svg className="w-3 h-3" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M2 4h12v9H2zM2 4l6 5 6-5"/></svg>
-          {isSent ? '발송완료' : '메일'}
+          {isSent ? (
+            <span className="flex flex-col items-start leading-none gap-0.5">
+              <span>발송완료</span>
+              {sentAt && <span className="text-[10px] opacity-70">{new Date(sentAt).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit', timeZone: 'Asia/Seoul' })}</span>}
+            </span>
+          ) : '메일'}
         </button>
       </div>
       {open && (
@@ -1049,8 +1054,9 @@ function OnboardingRow({ stage, idx, isDone, isSent, hire, onToggleDone, onSendM
 }
 
 // ─── 온보딩 카드 ──────────────────────────────────────────────────────────────
-function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }: {
+function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone, onSendMail }: {
   hire: Employee; stageDone: Record<string, boolean>; mailSent: Record<string, boolean>
+  onboardSentAt: Record<string, string>
   onToggleDone: (empId: string, stageId: string) => void; onSendMail: (key: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -1097,7 +1103,9 @@ function OnboardingCard({ hire, stageDone, mailSent, onToggleDone, onSendMail }:
             const key = `${hire.id}_${stage.id}`
             return (
               <OnboardingRow key={stage.id} stage={stage} idx={idx}
-                isDone={!!stageDone[key]} isSent={!!mailSent[`mail_${key}`]} hire={hire}
+                isDone={!!stageDone[key]} isSent={!!mailSent[`mail_${key}`]}
+                sentAt={onboardSentAt[`mail_${key}`]}
+                hire={hire}
                 onToggleDone={() => onToggleDone(String(hire.id), String(stage.id))}
                 onSendMail={() => onSendMail(`mail_${key}`)}
               />
@@ -1408,8 +1416,9 @@ export default function HRDashboard() {
   const [editTarget, setEditTarget] = useState<Employee | null>(null)
   const [form,       setForm]       = useState<EmployeeForm>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
-  const [stageDone,  setStageDone]  = useState<Record<string, boolean>>({})
-  const [mailSent,   setMailSent]   = useState<Record<string, boolean>>({})
+  const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
+  const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
+  const [onboardSentAt,  setOnboardSentAt]  = useState<Record<string, string>>({})
   const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
   const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
 
@@ -1573,20 +1582,36 @@ export default function HRDashboard() {
 
   async function fetchAllData() {
     setLoading(true); setError(null)
-    const [empRes, taskRes, notifRes, pointRes, excelRes] = await Promise.all([
+    const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
       supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent'),
       supabase.from('notifications').select('employee_id,notification_type,mail_sent'),
       supabase.from('point_requests').select('employee_id,employee_type,point_type,mail_sent'),
       supabase.from('cafe_excel_data').select('file_name,data').eq('id', 'singleton').maybeSingle(),
+      supabase.from('scheduled_mails').select('subject,sent_at').eq('status', 'sent').like('subject', '[온보딩 알림]%'),
     ])
     if (empRes.error) { setError(empRes.error.message); setLoading(false); return }
-    setEmployees(empRes.data ?? [])
-    const newDone: Record<string, boolean> = {}
-    const newMail: Record<string, boolean> = {}
+    const empData = empRes.data ?? []
+    setEmployees(empData)
+    const newDone:    Record<string, boolean> = {}
+    const newMail:    Record<string, boolean> = {}
+    const newSentAt:  Record<string, string>  = {}
     for (const t of taskRes.data ?? []) {
       if (t.is_done)   newDone[`${t.employee_id}_${t.stage_id}`]      = true
       if (t.mail_sent) newMail[`mail_${t.employee_id}_${t.stage_id}`] = true
+    }
+    // scheduled_mails sent 항목 → mailSent 및 sent_at 반영
+    for (const m of (sentMailRes.data ?? [])) {
+      const match = (m.subject as string).match(/^\[온보딩 알림\] (.+)님 (.+) 진행 요청$/)
+      if (!match) continue
+      const [, name, label] = match
+      const emp = empData.find(e => e.name === name)
+      if (!emp) continue
+      const stage = STAGES.find(s => s.label === label)
+      if (!stage) continue
+      const k = `mail_${emp.id}_${stage.id}`
+      newMail[k] = true
+      if (m.sent_at) newSentAt[k] = m.sent_at as string
     }
     for (const n of notifRes.data ?? []) {
       const k = n.notification_type === 'hire' ? `hire_notif_${n.employee_id}` : `leave_notif_${n.employee_id}`
@@ -1599,7 +1624,7 @@ export default function HRDashboard() {
       setCafeExcel(excelRes.data.data as Record<number, ExcelSheetData>)
       setCafeExcelFileName(excelRes.data.file_name ?? null)
     }
-    setStageDone(newDone); setMailSent(newMail); setLoading(false)
+    setStageDone(newDone); setMailSent(newMail); setOnboardSentAt(newSentAt); setLoading(false)
   }
 
   async function handleCafeExcelUpload(data: Record<number, ExcelSheetData>, fileName: string) {
@@ -2133,6 +2158,7 @@ export default function HRDashboard() {
                   <PagedList items={filteredOnboard} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
                     renderItem={(hire: Employee) => (
                       <OnboardingCard hire={hire} stageDone={stageDone} mailSent={mailSent}
+                        onboardSentAt={onboardSentAt}
                         onToggleDone={toggleDone} onSendMail={sendMail} />
                     )} />
                 )}
