@@ -15,13 +15,19 @@ const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/']
 export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
 
+  // ── Public paths (IP/Host 체크보다 먼저) ─────────────────────────────────
+  // /api/cron/ 은 Vercel Cron·GitHub Actions 등 외부에서 세션 없이 호출하므로
+  // ALLOWED_IPS·PRODUCTION_HOST 체크 전에 통과시켜야 함
+  if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+    return NextResponse.next()
+  }
+
   // ── IP 감지 ───────────────────────────────────────────────────────────────
   const forwarded = req.headers.get('x-forwarded-for')
   const ip = (forwarded ? forwarded.split(',')[0] : req.headers.get('x-real-ip') ?? '127.0.0.1').trim()
   const isLocalhost = ip === '127.0.0.1' || ip === '::1'
 
   // ── Preview 배포 차단 ─────────────────────────────────────────────────────
-  // PRODUCTION_HOST가 설정된 경우, localhost 및 Production 이외의 호스트(Preview 등)를 차단합니다.
   const productionHost = process.env.PRODUCTION_HOST ?? ''
   const host = req.headers.get('host') ?? ''
   if (productionHost && !isLocalhost && host !== productionHost && !pathname.startsWith('/blocked')) {
@@ -38,11 +44,6 @@ export default async function proxy(req: NextRequest) {
       url.pathname = '/blocked'
       return NextResponse.redirect(url)
     }
-  }
-
-  // ── Public paths ──────────────────────────────────────────────────────────
-  if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
-    return NextResponse.next()
   }
 
   // ── Session check ─────────────────────────────────────────────────────────
