@@ -87,16 +87,6 @@ function isOnboardingExcluded(emp: { join_reason?: string; is_onboarding_exclude
   return emp.join_reason === '휴직복귀' || emp.join_reason === '인턴' || emp.is_onboarding_excluded === true
 }
 
-/**
- * 카페/웰니스포인트 탭 그룹 필터: 입사자/휴직복귀자(hire) 묶음 vs 퇴사자/휴직자(leave) 묶음.
- * allCafe/allWellness가 이미 newHires(hire)·departures+onLeave(leave)로 empType을 나눠 채워주므로
- * 그 empType 그대로 사용 (전적·인턴도 newHires 소속이라 자연스럽게 "입사자/휴직복귀자" 묶음에 포함됨).
- */
-type PointGroupFilter = '전체' | '입사자/휴직복귀자' | '퇴사자/휴직자'
-function matchesPointGroup(entry: { empType: 'hire' | 'leave' }, filter: PointGroupFilter): boolean {
-  if (filter === '전체') return true
-  return filter === '입사자/휴직복귀자' ? entry.empType === 'hire' : entry.empType === 'leave'
-}
 
 /** 카드 정렬 기준일: hire=입사일/복귀일(join_date), leave=퇴사일/휴직시작일(exit_date) */
 function pointEntryDate(entry: { emp: Employee; empType: 'hire' | 'leave' }): string | null {
@@ -111,6 +101,12 @@ function sortByDateAsc<T>(items: T[], getDate: (item: T) => string | null): T[] 
     if (!db) return -1
     return da < db ? -1 : da > db ? 1 : 0
   })
+}
+/** Set 안의 id를 있으면 빼고 없으면 넣은 새 Set 반환 (접기/펼치기 토글용) */
+function toggleSetMember(set: Set<string>, id: string): Set<string> {
+  const next = new Set(set)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  return next
 }
 
 /**
@@ -1415,21 +1411,30 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
-// ─── 카페/웰니스 그룹 필터 칩 ─────────────────────────────────────────────────
-function PointGroupChips({ value, onChange, counts }: {
-  value: PointGroupFilter
-  onChange: (v: PointGroupFilter) => void
-  counts: Record<PointGroupFilter, number>
+// ─── 접기/펼치기 그룹 섹션 (입사/퇴사 관리 탭의 Accordion과 동일한 스타일) ───────
+function AccordionSection({ title, count, color, collapsed, onToggle, hasFilter, emptyLabel, children }: {
+  title: string; count: number
+  color: 'blue' | 'amber' | 'purple' | 'cyan' | 'emerald'
+  collapsed: boolean; onToggle: () => void
+  hasFilter: boolean; emptyLabel: string
+  children: ReactNode
 }) {
-  const options: PointGroupFilter[] = ['전체', '입사자/휴직복귀자', '퇴사자/휴직자']
+  const colorCls = color === 'blue'    ? 'text-blue-700 bg-blue-50 border-blue-200'
+                 : color === 'amber'   ? 'text-amber-700 bg-amber-50 border-amber-200'
+                 : color === 'purple'  ? 'text-purple-700 bg-purple-50 border-purple-200'
+                 : color === 'cyan'    ? 'text-cyan-700 bg-cyan-50 border-cyan-200'
+                 : 'text-emerald-700 bg-emerald-50 border-emerald-200'
   return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      {options.map(o => (
-        <button key={o} onClick={() => onChange(o)}
-          className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${value === o ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
-          {o} <span className="opacity-70">({counts[o]})</span>
-        </button>
-      ))}
+    <div className="space-y-2">
+      <button onClick={onToggle}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-semibold transition-colors ${colorCls}`}>
+        <svg className={`w-3.5 h-3.5 transition-transform ${collapsed ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+        {title}
+        <span className="text-xs font-normal opacity-70">{count}명{hasFilter ? ' (필터)' : ''}</span>
+      </button>
+      {!collapsed && (count === 0 ? <p className="text-sm text-gray-400 pl-2">{emptyLabel}</p> : children)}
     </div>
   )
 }
@@ -1488,8 +1493,8 @@ export default function HRDashboard() {
   const [typeF,     setTypeF]     = useState('전체')
   const [sentF,     setSentF]     = useState('전체')
   const [limit,     setLimit]     = useState(PAGE_SIZE)
-  const [cafeGroupF,     setCafeGroupF]     = useState<PointGroupFilter>('전체')
-  const [wellnessGroupF, setWellnessGroupF] = useState<PointGroupFilter>('전체')
+  const [cafeSectCollapsed,     setCafeSectCollapsed]     = useState<Set<string>>(new Set())
+  const [wellnessSectCollapsed, setWellnessSectCollapsed] = useState<Set<string>>(new Set())
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [bulkSending,  setBulkSending]  = useState(false)
@@ -1548,8 +1553,8 @@ export default function HRDashboard() {
   const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
 
   // 검색/필터/탭 변경 시 초기화
-  useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, notifySubTab, search, typeF, sentF, cafeGroupF, wellnessGroupF])
-  useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, notifySubTab, search, typeF, sentF, cafeGroupF, wellnessGroupF])
+  useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, notifySubTab, search, typeF, sentF])
+  useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, notifySubTab, search, typeF, sentF])
 
   // 직원 타입 레이블 (필터용)
   function empTypeLabel(e: Employee): string {
@@ -1615,26 +1620,15 @@ export default function HRDashboard() {
   const filteredCafe     = allCafe.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
   const filteredWellness = allWellness.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
 
-  // 카페/웰니스 그룹 필터 옆 인원수 표시 (검색/구분/발송여부 필터 반영, 그룹 필터 자체는 미반영)
-  const cafeGroupCounts: Record<PointGroupFilter, number> = {
-    전체: filteredCafe.length,
-    '입사자/휴직복귀자': filteredCafe.filter(e => e.empType === 'hire').length,
-    '퇴사자/휴직자':     filteredCafe.filter(e => e.empType === 'leave').length,
-  }
-  const wellnessGroupCounts: Record<PointGroupFilter, number> = {
-    전체: filteredWellness.length,
-    '입사자/휴직복귀자': filteredWellness.filter(e => e.empType === 'hire').length,
-    '퇴사자/휴직자':     filteredWellness.filter(e => e.empType === 'leave').length,
-  }
-  // 그룹 필터 적용 + 정렬: 기준일(입사일/복귀일/퇴사일/휴직시작일)이 빠른 사람 → 위, 늦은 사람 → 아래
-  const visibleCafe = sortByDateAsc(
-    filteredCafe.filter(e => matchesPointGroup(e, cafeGroupF)),
-    pointEntryDate
-  )
-  const visibleWellness = sortByDateAsc(
-    filteredWellness.filter(e => matchesPointGroup(e, wellnessGroupF)),
-    pointEntryDate
-  )
+  // 카페/웰니스 탭: 입사(입사+휴직복귀) / 퇴사(퇴사+휴직) 그룹별로 나눠 표시 (입사/퇴사 관리 탭과 동일한 Accordion 구조)
+  // 각 그룹 내부는 기준일(입사일/복귀일/퇴사일/휴직시작일) 오름차순 정렬: 빠른 사람 → 위, 늦은 사람 → 아래
+  const cafeHireGroup      = sortByDateAsc(filteredCafe.filter(e => e.empType === 'hire'), pointEntryDate)
+  const cafeLeaveGroup     = sortByDateAsc(filteredCafe.filter(e => e.empType === 'leave'), pointEntryDate)
+  const wellnessHireGroup  = sortByDateAsc(filteredWellness.filter(e => e.empType === 'hire'), pointEntryDate)
+  const wellnessLeaveGroup = sortByDateAsc(filteredWellness.filter(e => e.empType === 'leave'), pointEntryDate)
+  // 체크박스 전체선택/일괄발송/엑셀다운로드는 두 그룹을 합친 전체 목록 기준으로 동작
+  const cafeVisibleAll     = [...cafeHireGroup, ...cafeLeaveGroup]
+  const wellnessVisibleAll = [...wellnessHireGroup, ...wellnessLeaveGroup]
 
   const TABS = [
     { id: 'notify'   as TabId, label: '입사/퇴사 관리', count: allNotify.length },
@@ -1893,7 +1887,7 @@ export default function HRDashboard() {
 
   useEffect(() => { fetchAllData() }, [])
 
-  const hasFilter = search || typeF !== '전체' || sentF !== '전체'
+  const hasFilter = !!search || typeF !== '전체' || sentF !== '전체'
   const pendingNotif = allNotify.filter(({ mailKey }) => !mailSent[mailKey]).length
   const pendingMail  = [...allCafe, ...allWellness].filter(({ mailKey }) => !mailSent[mailKey]).length
 
@@ -2254,15 +2248,32 @@ export default function HRDashboard() {
                 )}
               </div>
 
-            ) : activeTab === 'cafe' ? (
+            ) : activeTab === 'cafe' ? (() => {
+              const renderCafeCard = (entry: PointEntry) => {
+                const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
+                // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
+                const effectiveLeaveDt = calcEffectiveLeaveDate(entry.emp)
+                const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : effectiveLeaveDt
+                // 휴직자는 leave 시트(퇴사자) 기준으로 포인트 조회
+                const sheetType = entry.emp.join_reason === '휴직' ? 'leave' : entry.empType
+                return (
+                  <PointCard key={entry.mailKey} emp={entry.emp} type={entry.empType} variant="cafe"
+                    mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
+                    fixedRecipients={FR.cafe} fixedCC={FR.cafeCC}
+                    points={isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, sheetType)}
+                    isTransfer={isTransfer}
+                    selected={selectedKeys.has(entry.mailKey)}
+                    onSelect={checked => toggleSelect(entry.mailKey, checked)} />
+                )
+              }
+              return (
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <p className="text-xs text-gray-400">{visibleCafe.length}명{hasFilter || cafeGroupF !== '전체' ? ' (필터 적용)' : ''}</p>
+                  <p className="text-xs text-gray-400">{cafeVisibleAll.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
-                <PointGroupChips value={cafeGroupF} onChange={setCafeGroupF} counts={cafeGroupCounts} />
-                {visibleCafe.length > 0 && (() => {
-                  const sel = visibleCafe.filter(({ mailKey }) => selectedKeys.has(mailKey))
+                {cafeVisibleAll.length > 0 && (() => {
+                  const sel = cafeVisibleAll.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const selWithPoints = sel.map(({ emp, empType, mailKey }) => {
                     const isTransfer = emp.join_reason === '전적' && empType === 'hire'
                     // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
@@ -2276,9 +2287,9 @@ export default function HRDashboard() {
                   return (
                     <>
                       <BulkControls
-                        total={visibleCafe.length}
+                        total={cafeVisibleAll.length}
                         selectedCount={sel.length}
-                        onSelectAll={() => selectAll(visibleCafe.map(e => e.mailKey))}
+                        onSelectAll={() => selectAll(cafeVisibleAll.map(e => e.mailKey))}
                         onDeselectAll={deselectAll}
                         bulkSending={bulkSending} bulkResult={bulkResult}
                         previewHtml={bulkHtml}
@@ -2309,34 +2320,42 @@ export default function HRDashboard() {
                     </>
                   )
                 })()}
-                {visibleCafe.length === 0 ? <EmptyState label={hasFilter || cafeGroupF !== '전체' ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
-                  <PagedList items={visibleCafe} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
-                    renderItem={(entry: PointEntry) => {
-                      const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
-                      // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
-                      const effectiveLeaveDt = calcEffectiveLeaveDate(entry.emp)
-                      const dateStr = entry.empType === 'hire' ? entry.emp.join_date ?? null : effectiveLeaveDt
-                      // 휴직자는 leave 시트(퇴사자) 기준으로 포인트 조회
-                      const sheetType = entry.emp.join_reason === '휴직' ? 'leave' : entry.empType
-                      return (
-                        <PointCard emp={entry.emp} type={entry.empType} variant="cafe"
-                          mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
-                          fixedRecipients={FR.cafe} fixedCC={FR.cafeCC}
-                          points={isTransfer ? null : lookupExcelPoints(cafeExcel, dateStr, sheetType)}
-                          isTransfer={isTransfer}
-                          selected={selectedKeys.has(entry.mailKey)}
-                          onSelect={checked => toggleSelect(entry.mailKey, checked)} />
-                      )
-                    }} />
-                )}
+                <AccordionSection title="입사 (입사 + 휴직복귀)" count={cafeHireGroup.length} color="blue"
+                  collapsed={cafeSectCollapsed.has('hire')}
+                  onToggle={() => setCafeSectCollapsed(p => toggleSetMember(p, 'hire'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {cafeHireGroup.map(renderCafeCard)}
+                  </div>
+                </AccordionSection>
+                <AccordionSection title="퇴사 (퇴사 + 휴직)" count={cafeLeaveGroup.length} color="purple"
+                  collapsed={cafeSectCollapsed.has('leave')}
+                  onToggle={() => setCafeSectCollapsed(p => toggleSetMember(p, 'leave'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {cafeLeaveGroup.map(renderCafeCard)}
+                  </div>
+                </AccordionSection>
               </div>
+              )
+            })()
 
-            ) : (
+            : (() => {
+              const renderWellnessCard = (entry: PointEntry) => {
+                const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
+                return (
+                  <PointCard key={entry.mailKey} emp={entry.emp} type={entry.empType} variant="wellness"
+                    mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
+                    fixedRecipients={FR.wellness} fixedCC={FR.wellnessCC} points={null} isTransfer={isTransfer}
+                    selected={selectedKeys.has(entry.mailKey)}
+                    onSelect={checked => toggleSelect(entry.mailKey, checked)} />
+                )
+              }
+              return (
               <div className="space-y-3">
-                <p className="text-xs text-gray-400">{visibleWellness.length}명{hasFilter || wellnessGroupF !== '전체' ? ' (필터 적용)' : ''}</p>
-                <PointGroupChips value={wellnessGroupF} onChange={setWellnessGroupF} counts={wellnessGroupCounts} />
-                {visibleWellness.length > 0 && (() => {
-                  const sel = visibleWellness.filter(({ mailKey }) => selectedKeys.has(mailKey))
+                <p className="text-xs text-gray-400">{wellnessVisibleAll.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
+                {wellnessVisibleAll.length > 0 && (() => {
+                  const sel = wellnessVisibleAll.filter(({ mailKey }) => selectedKeys.has(mailKey))
                   const selWithMeta = sel.map(({ emp, empType, mailKey }) => ({
                     emp, empType, mailKey, isTransfer: emp.join_reason === '전적' && empType === 'hire',
                   }))
@@ -2344,9 +2363,9 @@ export default function HRDashboard() {
                   return (
                     <>
                       <BulkControls
-                        total={visibleWellness.length}
+                        total={wellnessVisibleAll.length}
                         selectedCount={sel.length}
-                        onSelectAll={() => selectAll(visibleWellness.map(e => e.mailKey))}
+                        onSelectAll={() => selectAll(wellnessVisibleAll.map(e => e.mailKey))}
                         onDeselectAll={deselectAll}
                         bulkSending={bulkSending} bulkResult={bulkResult}
                         previewHtml={bulkHtml}
@@ -2377,21 +2396,25 @@ export default function HRDashboard() {
                     </>
                   )
                 })()}
-                {visibleWellness.length === 0 ? <EmptyState label={hasFilter || wellnessGroupF !== '전체' ? '검색 결과가 없습니다' : '등록된 직원이 없습니다'} /> : (
-                  <PagedList items={visibleWellness} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)} grid
-                    renderItem={(entry: PointEntry) => {
-                      const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
-                      return (
-                        <PointCard emp={entry.emp} type={entry.empType} variant="wellness"
-                          mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
-                          fixedRecipients={FR.wellness} fixedCC={FR.wellnessCC} points={null} isTransfer={isTransfer}
-                          selected={selectedKeys.has(entry.mailKey)}
-                          onSelect={checked => toggleSelect(entry.mailKey, checked)} />
-                      )
-                    }} />
-                )}
+                <AccordionSection title="입사 (입사 + 휴직복귀)" count={wellnessHireGroup.length} color="blue"
+                  collapsed={wellnessSectCollapsed.has('hire')}
+                  onToggle={() => setWellnessSectCollapsed(p => toggleSetMember(p, 'hire'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {wellnessHireGroup.map(renderWellnessCard)}
+                  </div>
+                </AccordionSection>
+                <AccordionSection title="퇴사 (퇴사 + 휴직)" count={wellnessLeaveGroup.length} color="purple"
+                  collapsed={wellnessSectCollapsed.has('leave')}
+                  onToggle={() => setWellnessSectCollapsed(p => toggleSetMember(p, 'leave'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {wellnessLeaveGroup.map(renderWellnessCard)}
+                  </div>
+                </AccordionSection>
               </div>
-            )}
+              )
+            })()}
           </div>
         </div>
 
