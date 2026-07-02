@@ -87,14 +87,15 @@ function isOnboardingExcluded(emp: { join_reason?: string; is_onboarding_exclude
   return emp.join_reason === '휴직복귀' || emp.join_reason === '인턴' || emp.is_onboarding_excluded === true
 }
 
-/** 카페/웰니스포인트 탭 그룹 필터: 입사자 / 휴직복귀자 / 퇴사자 / 휴직자 (전적·인턴 등은 '전체'에서만 표시) */
-type PointGroup = '입사자' | '휴직복귀자' | '퇴사자' | '휴직자'
-function pointGroupOf(emp: { status: string; join_reason?: string }): PointGroup | null {
-  if (emp.status === 'resigned')             return '퇴사자'
-  if (emp.join_reason === '휴직')            return '휴직자'
-  if (emp.join_reason === '휴직복귀')        return '휴직복귀자'
-  if ((emp.join_reason ?? '입사') === '입사') return '입사자'
-  return null
+/**
+ * 카페/웰니스포인트 탭 그룹 필터: 입사자/휴직복귀자(hire) 묶음 vs 퇴사자/휴직자(leave) 묶음.
+ * allCafe/allWellness가 이미 newHires(hire)·departures+onLeave(leave)로 empType을 나눠 채워주므로
+ * 그 empType 그대로 사용 (전적·인턴도 newHires 소속이라 자연스럽게 "입사자/휴직복귀자" 묶음에 포함됨).
+ */
+type PointGroupFilter = '전체' | '입사자/휴직복귀자' | '퇴사자/휴직자'
+function matchesPointGroup(entry: { empType: 'hire' | 'leave' }, filter: PointGroupFilter): boolean {
+  if (filter === '전체') return true
+  return filter === '입사자/휴직복귀자' ? entry.empType === 'hire' : entry.empType === 'leave'
 }
 
 /** 카드 정렬 기준일: hire=입사일/복귀일(join_date), leave=퇴사일/휴직시작일(exit_date) */
@@ -1416,11 +1417,11 @@ function EmptyState({ label }: { label: string }) {
 
 // ─── 카페/웰니스 그룹 필터 칩 ─────────────────────────────────────────────────
 function PointGroupChips({ value, onChange, counts }: {
-  value: '전체' | PointGroup
-  onChange: (v: '전체' | PointGroup) => void
-  counts: Record<'전체' | PointGroup, number>
+  value: PointGroupFilter
+  onChange: (v: PointGroupFilter) => void
+  counts: Record<PointGroupFilter, number>
 }) {
-  const options: ('전체' | PointGroup)[] = ['전체', '입사자', '휴직복귀자', '퇴사자', '휴직자']
+  const options: PointGroupFilter[] = ['전체', '입사자/휴직복귀자', '퇴사자/휴직자']
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       {options.map(o => (
@@ -1487,8 +1488,8 @@ export default function HRDashboard() {
   const [typeF,     setTypeF]     = useState('전체')
   const [sentF,     setSentF]     = useState('전체')
   const [limit,     setLimit]     = useState(PAGE_SIZE)
-  const [cafeGroupF,     setCafeGroupF]     = useState<'전체' | PointGroup>('전체')
-  const [wellnessGroupF, setWellnessGroupF] = useState<'전체' | PointGroup>('전체')
+  const [cafeGroupF,     setCafeGroupF]     = useState<PointGroupFilter>('전체')
+  const [wellnessGroupF, setWellnessGroupF] = useState<PointGroupFilter>('전체')
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [bulkSending,  setBulkSending]  = useState(false)
@@ -1615,27 +1616,23 @@ export default function HRDashboard() {
   const filteredWellness = allWellness.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
 
   // 카페/웰니스 그룹 필터 옆 인원수 표시 (검색/구분/발송여부 필터 반영, 그룹 필터 자체는 미반영)
-  const cafeGroupCounts: Record<'전체' | PointGroup, number> = {
-    전체:       filteredCafe.length,
-    입사자:     filteredCafe.filter(e => pointGroupOf(e.emp) === '입사자').length,
-    휴직복귀자: filteredCafe.filter(e => pointGroupOf(e.emp) === '휴직복귀자').length,
-    퇴사자:     filteredCafe.filter(e => pointGroupOf(e.emp) === '퇴사자').length,
-    휴직자:     filteredCafe.filter(e => pointGroupOf(e.emp) === '휴직자').length,
+  const cafeGroupCounts: Record<PointGroupFilter, number> = {
+    전체: filteredCafe.length,
+    '입사자/휴직복귀자': filteredCafe.filter(e => e.empType === 'hire').length,
+    '퇴사자/휴직자':     filteredCafe.filter(e => e.empType === 'leave').length,
   }
-  const wellnessGroupCounts: Record<'전체' | PointGroup, number> = {
-    전체:       filteredWellness.length,
-    입사자:     filteredWellness.filter(e => pointGroupOf(e.emp) === '입사자').length,
-    휴직복귀자: filteredWellness.filter(e => pointGroupOf(e.emp) === '휴직복귀자').length,
-    퇴사자:     filteredWellness.filter(e => pointGroupOf(e.emp) === '퇴사자').length,
-    휴직자:     filteredWellness.filter(e => pointGroupOf(e.emp) === '휴직자').length,
+  const wellnessGroupCounts: Record<PointGroupFilter, number> = {
+    전체: filteredWellness.length,
+    '입사자/휴직복귀자': filteredWellness.filter(e => e.empType === 'hire').length,
+    '퇴사자/휴직자':     filteredWellness.filter(e => e.empType === 'leave').length,
   }
   // 그룹 필터 적용 + 정렬: 기준일(입사일/복귀일/퇴사일/휴직시작일)이 빠른 사람 → 위, 늦은 사람 → 아래
   const visibleCafe = sortByDateAsc(
-    filteredCafe.filter(e => cafeGroupF === '전체' || pointGroupOf(e.emp) === cafeGroupF),
+    filteredCafe.filter(e => matchesPointGroup(e, cafeGroupF)),
     pointEntryDate
   )
   const visibleWellness = sortByDateAsc(
-    filteredWellness.filter(e => wellnessGroupF === '전체' || pointGroupOf(e.emp) === wellnessGroupF),
+    filteredWellness.filter(e => matchesPointGroup(e, wellnessGroupF)),
     pointEntryDate
   )
 
