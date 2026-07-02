@@ -78,7 +78,13 @@ function empLabel(emp: { status: string; join_reason?: string }): string {
   if (emp.join_reason === '전적')         return '전적'
   if (emp.join_reason === '휴직')         return '휴직자'
   if (emp.join_reason === '휴직복귀')     return '휴직복귀자'
+  if (emp.join_reason === '인턴')         return '인턴'
   return '입사'
+}
+
+/** 온보딩 목록 제외 대상 판별: 휴직복귀자 / 인턴 / 관리자가 제외 처리한 경우 */
+function isOnboardingExcluded(emp: { join_reason?: string; is_onboarding_excluded?: boolean }): boolean {
+  return emp.join_reason === '휴직복귀' || emp.join_reason === '인턴' || emp.is_onboarding_excluded === true
 }
 
 /**
@@ -1054,10 +1060,11 @@ function OnboardingRow({ stage, idx, isDone, isSent, sentAt, hire, onToggleDone,
 }
 
 // ─── 온보딩 카드 ──────────────────────────────────────────────────────────────
-function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone, onSendMail }: {
+function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone, onSendMail, onExclude }: {
   hire: Employee; stageDone: Record<string, boolean>; mailSent: Record<string, boolean>
   onboardSentAt: Record<string, string>
   onToggleDone: (empId: string, stageId: string) => void; onSendMail: (key: string) => void
+  onExclude?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const isTransfer = hire.join_reason === '전적'
@@ -1086,6 +1093,12 @@ function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone
               <p className="text-lg font-black text-orange-600 leading-none">{pct}%</p>
               <p className="text-xs text-gray-400 mt-0.5">{done}/{stages.length}</p>
             </div>
+            {onExclude && (
+              <button onClick={onExclude} title="온보딩 목록에서 제외"
+                className="w-7 h-7 flex items-center justify-center rounded text-gray-300 hover:bg-red-50 hover:text-red-400 flex-shrink-0">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 4h10M6 4V2h4v2M5 4v9h6V4"/></svg>
+              </button>
+            )}
             <button onClick={() => setExpanded(p => !p)}
               className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${expanded ? 'bg-orange-100 border-orange-200 text-orange-700' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
               {expanded ? '접기' : '펼치기'}
@@ -1352,6 +1365,7 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
                 <option value="전적">전적</option>
                 <option value="휴직">휴직자</option>
                 <option value="휴직복귀">휴직복귀자</option>
+                <option value="인턴">인턴</option>
               </select>
             </div>
           )}
@@ -1538,9 +1552,9 @@ export default function HRDashboard() {
     if (sentF === '미발송'   &&  mailSent[mailKey]) return false
     return true
   })
-  // 온보딩 대상: 입사/전적만 포함. 휴직복귀자는 온보딩 대상 아님
+  // 온보딩 대상: 입사/전적만 포함. 휴직복귀자·인턴·관리자 제외 처리 대상은 온보딩 목록에서 제외
   const filteredOnboard = newHires.filter(e => {
-    if (e.join_reason === '휴직복귀') return false          // 휴직복귀자 제외
+    if (isOnboardingExcluded(e)) return false
     const q = search.trim().toLowerCase()
     if (q) {
       const text = [e.name, e.department, e.division, e.team].filter(Boolean).join(' ').toLowerCase()
@@ -1555,7 +1569,7 @@ export default function HRDashboard() {
 
   const TABS = [
     { id: 'notify'   as TabId, label: '입사/퇴사 관리', count: allNotify.length },
-    { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.filter(e => e.join_reason !== '휴직복귀').length },
+    { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.filter(e => !isOnboardingExcluded(e)).length },
     { id: 'cafe'     as TabId, label: '카페포인트',       count: allCafe.length },
     { id: 'wellness' as TabId, label: '웰니스포인트',     count: allWellness.length },
   ]
@@ -1716,6 +1730,12 @@ export default function HRDashboard() {
   async function handleDelete(id: string, name: string) {
     if (!confirm(`"${name}" 직원을 삭제하시겠습니까?\n관련 데이터도 함께 삭제됩니다.`)) return
     const { error } = await supabase.from('employees').delete().eq('id', id)
+    if (error) setError(error.message); else fetchAllData()
+  }
+
+  async function handleExcludeOnboarding(id: number, name: string) {
+    if (!confirm(`"${name}"님을 온보딩 목록에서 제외하시겠습니까?\n직원 정보와 메일 발송 이력은 삭제되지 않으며, 온보딩 목록에서만 보이지 않게 됩니다.`)) return
+    const { error } = await supabase.from('employees').update({ is_onboarding_excluded: true }).eq('id', id)
     if (error) setError(error.message); else fetchAllData()
   }
 
@@ -1953,7 +1973,7 @@ export default function HRDashboard() {
               className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {['전체', '입사', '퇴사', '전적', '휴직자', '휴직복귀자'].map(t => (
+            {['전체', '입사', '퇴사', '전적', '휴직자', '휴직복귀자', '인턴'].map(t => (
               <button key={t} onClick={() => setTypeF(t)}
                 className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-colors ${typeF === t ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
                 {t}
@@ -2159,7 +2179,8 @@ export default function HRDashboard() {
                     renderItem={(hire: Employee) => (
                       <OnboardingCard hire={hire} stageDone={stageDone} mailSent={mailSent}
                         onboardSentAt={onboardSentAt}
-                        onToggleDone={toggleDone} onSendMail={sendMail} />
+                        onToggleDone={toggleDone} onSendMail={sendMail}
+                        onExclude={() => handleExcludeOnboarding(hire.id, hire.name)} />
                     )} />
                 )}
               </div>

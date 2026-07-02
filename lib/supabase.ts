@@ -19,7 +19,8 @@ export type Employee = {
   team?: string         // 팀
   position?: string     // 직책/직급
   leader?: string
-  join_reason?: string  // 입사 | 전적
+  join_reason?: string  // 입사 | 전적 | 휴직 | 휴직복귀 | 인턴
   phone?: string        // 휴대폰번호
   status: 'active' | 'resigned'
+  is_onboarding_excluded?: boolean  // 관리자가 온보딩 목록에서 수동 제외 처리했는지 여부
 }
