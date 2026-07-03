@@ -92,8 +92,14 @@ function isOnboardingExcluded(emp: { join_reason?: string; is_onboarding_exclude
 type PointGroupFilter = '전체' | '입사/휴직복귀자' | '퇴사/휴직자'
 
 /** 카드 정렬 기준일: hire=입사일/복귀일(join_date), leave=퇴사일/휴직시작일(exit_date) */
+function hireOrLeaveDate(emp: Employee, type: 'hire' | 'leave'): string | null {
+  return type === 'hire' ? emp.join_date ?? null : emp.exit_date ?? null
+}
 function pointEntryDate(entry: { emp: Employee; empType: 'hire' | 'leave' }): string | null {
-  return entry.empType === 'hire' ? entry.emp.join_date ?? null : entry.emp.exit_date ?? null
+  return hireOrLeaveDate(entry.emp, entry.empType)
+}
+function notifyEntryDate(entry: { emp: Employee; type: 'hire' | 'leave' }): string | null {
+  return hireOrLeaveDate(entry.emp, entry.type)
 }
 /** 기준일 오름차순 정렬 (빠른 날짜 → 위, 늦은 날짜 → 아래, 날짜 없음은 맨 아래) */
 function sortByDateAsc<T>(items: T[], getDate: (item: T) => string | null): T[] {
@@ -103,6 +109,16 @@ function sortByDateAsc<T>(items: T[], getDate: (item: T) => string | null): T[] 
     if (!da) return 1
     if (!db) return -1
     return da < db ? -1 : da > db ? 1 : 0
+  })
+}
+/** 기준일 내림차순(최신순) 정렬 (늦은/최근 날짜 → 위, 빠른 날짜 → 아래, 날짜 없음은 맨 아래) */
+function sortByDateDesc<T>(items: T[], getDate: (item: T) => string | null): T[] {
+  return [...items].sort((a, b) => {
+    const da = getDate(a), db = getDate(b)
+    if (!da && !db) return 0
+    if (!da) return 1
+    if (!db) return -1
+    return da > db ? -1 : da < db ? 1 : 0
   })
 }
 /** Set 안의 id를 있으면 빼고 없으면 넣은 새 Set 반환 (접기/펼치기 토글용) */
@@ -1646,11 +1662,11 @@ export default function HRDashboard() {
 
   // 카페/웰니스 탭: 입사/휴직복귀자 / 퇴사/휴직자 그룹별로 나눠 표시 (입사/퇴사 관리 탭과 동일한 Accordion 구조).
   // 절대 한 영역에 섞어서 렌더링하지 않도록, 카드 목록은 항상 그룹별 섹션으로만 렌더링한다.
-  // 각 그룹 내부는 기준일(입사일/복귀일/퇴사일/휴직시작일) 오름차순 정렬: 빠른 사람 → 위, 늦은 사람 → 아래
-  const cafeHireGroup      = sortByDateAsc(filteredCafe.filter(e => e.empType === 'hire'), pointEntryDate)
-  const cafeLeaveGroup     = sortByDateAsc(filteredCafe.filter(e => e.empType === 'leave'), pointEntryDate)
-  const wellnessHireGroup  = sortByDateAsc(filteredWellness.filter(e => e.empType === 'hire'), pointEntryDate)
-  const wellnessLeaveGroup = sortByDateAsc(filteredWellness.filter(e => e.empType === 'leave'), pointEntryDate)
+  // 각 그룹 내부는 기준일(입사일/복귀일/퇴사일/휴직시작일) 내림차순(최신순) 정렬: 최근 사람 → 위, 오래된 사람 → 아래
+  const cafeHireGroup      = sortByDateDesc(filteredCafe.filter(e => e.empType === 'hire'), pointEntryDate)
+  const cafeLeaveGroup     = sortByDateDesc(filteredCafe.filter(e => e.empType === 'leave'), pointEntryDate)
+  const wellnessHireGroup  = sortByDateDesc(filteredWellness.filter(e => e.empType === 'hire'), pointEntryDate)
+  const wellnessLeaveGroup = sortByDateDesc(filteredWellness.filter(e => e.empType === 'leave'), pointEntryDate)
 
   const cafeGroupCounts: Record<PointGroupFilter, number> = {
     전체: filteredCafe.length,
@@ -2140,11 +2156,12 @@ export default function HRDashboard() {
               </div>
             ) : activeTab === 'notify' ? (() => {
               // 하위 필터별 직원 목록
-              const notifyHire     = filteredNotify.filter(e => e.type === 'hire'  && !['전적', '휴직복귀'].includes(e.emp.join_reason ?? ''))
-              const notifyTransfer = filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '전적')
-              const notifyReturn   = filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '휴직복귀')
-              const notifyLeave    = filteredNotify.filter(e => e.type === 'leave' && e.emp.status === 'resigned')
-              const notifyOnLeave  = filteredNotify.filter(e => e.type === 'leave' && e.emp.join_reason === '휴직')
+              // 기준일(입사일/복귀일/퇴사일/휴직시작일) 내림차순(최신순): 가장 최근인 사람이 항상 맨 위
+              const notifyHire     = sortByDateDesc(filteredNotify.filter(e => e.type === 'hire'  && !['전적', '휴직복귀'].includes(e.emp.join_reason ?? '')), notifyEntryDate)
+              const notifyTransfer = sortByDateDesc(filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '전적'), notifyEntryDate)
+              const notifyReturn   = sortByDateDesc(filteredNotify.filter(e => e.type === 'hire'  && e.emp.join_reason === '휴직복귀'), notifyEntryDate)
+              const notifyLeave    = sortByDateDesc(filteredNotify.filter(e => e.type === 'leave' && e.emp.status === 'resigned'), notifyEntryDate)
+              const notifyOnLeave  = sortByDateDesc(filteredNotify.filter(e => e.type === 'leave' && e.emp.join_reason === '휴직'), notifyEntryDate)
 
               const NOTIFY_SUB_TABS = [
                 { id: 'hire'     as const, label: '입사',       count: notifyHire.length     },
