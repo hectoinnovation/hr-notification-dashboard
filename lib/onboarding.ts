@@ -1,5 +1,15 @@
 import type { Employee } from './supabase'
 
+/**
+ * 온보딩 대상 제외 판별 (단일 기준) — 휴직복귀자 / 인턴 / 관리자가 온보딩 목록에서
+ * 수동 제외 처리(is_onboarding_excluded)한 경우. 온보딩 자동 메일 생성·발송 경로
+ * (handleSubmit, /api/cron/onboarding-mails, /api/cron/sync-scheduled-mails)가
+ * 모두 이 함수를 공유해서 조건이 서로 어긋나지 않도록 한다.
+ */
+export function isOnboardingExcluded(emp: { join_reason?: string | null; is_onboarding_excluded?: boolean | null }): boolean {
+  return emp.join_reason === '휴직복귀' || emp.join_reason === '인턴' || emp.is_onboarding_excluded === true
+}
+
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
 const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
 const TD = 'border:1px solid #e5e7eb;padding:8px 12px;white-space:nowrap'

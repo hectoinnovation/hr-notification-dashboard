@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, type Employee } from '@/lib/supabase'
-import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
+import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml, isOnboardingExcluded } from '@/lib/onboarding'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
@@ -82,11 +82,7 @@ function empLabel(emp: { status: string; join_reason?: string }): string {
   return '입사'
 }
 
-/** 온보딩 목록 제외 대상 판별: 휴직복귀자 / 인턴 / 관리자가 제외 처리한 경우 */
-function isOnboardingExcluded(emp: { join_reason?: string; is_onboarding_excluded?: boolean }): boolean {
-  return emp.join_reason === '휴직복귀' || emp.join_reason === '인턴' || emp.is_onboarding_excluded === true
-}
-
+// isOnboardingExcluded는 @/lib/onboarding에서 가져와 사용 (자동 메일 발송 경로와 조건 공유)
 
 /** 카페/웰니스 탭 상단 필터: 전체 / 입사/휴직복귀자(hire) / 퇴사/휴직자(leave) */
 type PointGroupFilter = '전체' | '입사/휴직복귀자' | '퇴사/휴직자'
@@ -1787,8 +1783,11 @@ export default function HRDashboard() {
     }
 
     // ── 온보딩 예약메일 생성 (입사자만, D-7 / D-1 / D-Day) ──────────────────
+    // 인턴/휴직복귀자는 join_reason 조건에서 이미 제외되고, 관리자가 온보딩 목록에서
+    // 제외 처리(is_onboarding_excluded)한 직원은 정보만 수정해도 예약메일이 재생성되면 안 됨
     const isNewHire = form.status === 'active' && form.join_date &&
-                      (form.join_reason === '입사' || !form.join_reason)
+                      (form.join_reason === '입사' || !form.join_reason) &&
+                      !isOnboardingExcluded({ join_reason: form.join_reason, is_onboarding_excluded: editTarget?.is_onboarding_excluded })
     if (savedId && isNewHire) {
       const name     = form.name.trim()
       const joinDate = form.join_date
@@ -1846,9 +1845,17 @@ export default function HRDashboard() {
   }
 
   async function handleExcludeOnboarding(id: number, name: string) {
-    if (!confirm(`"${name}"님을 온보딩 목록에서 제외하시겠습니까?\n직원 정보와 메일 발송 이력은 삭제되지 않으며, 온보딩 목록에서만 보이지 않게 됩니다.`)) return
+    if (!confirm(`"${name}"님을 온보딩 목록에서 제외하시겠습니까?\n직원 정보와 메일 발송 이력은 삭제되지 않으며, 온보딩 목록에서만 보이지 않게 됩니다.\n(예정된 온보딩 예약메일은 함께 취소됩니다)`)) return
     const { error } = await supabase.from('employees').update({ is_onboarding_excluded: true }).eq('id', id)
-    if (error) setError(error.message); else fetchAllData()
+    if (error) { setError(error.message); return }
+    // 아직 발송되지 않은 온보딩 예약메일(D-7/D-1/D-Day) 취소 — 제외 후에도 자동 발송되는 것 방지
+    const { error: cancelErr } = await supabase
+      .from('scheduled_mails')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('status', 'pending')
+      .ilike('subject', `[온보딩 알림] ${name}님%`)
+    if (cancelErr) console.error('[handleExcludeOnboarding] 예약메일 취소 실패:', cancelErr.message)
+    fetchAllData()
   }
 
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }

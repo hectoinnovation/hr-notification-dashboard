@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { STAGES, AUTO_MAIL_STAGE_IDS, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
+import { STAGES, AUTO_MAIL_STAGE_IDS, calcDday, makeOnboardingMailHtml, isOnboardingExcluded } from '@/lib/onboarding'
 import { sendMail } from '@/lib/mail'
 import type { Employee } from '@/lib/supabase'
 
@@ -71,6 +71,7 @@ function logMail({
 //   ?force=true          → mail_sent 체크 무시하고 재발송
 //   ?date=2026-06-01     → 특정 날짜 기준 강제 실행
 //   ?date=2026-06-01&force=true  → 날짜 + 강제 재발송 조합
+//   ?dry=1                → 실제 발송 없이 오늘 발송 대상 후보만 JSON으로 확인
 // ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
@@ -78,6 +79,7 @@ export async function GET(req: NextRequest) {
   // ── 날짜 오버라이드 (수동 테스트용) ──────────────────────────────────────
   const dateParam  = url.searchParams.get('date')
   const forceParam = url.searchParams.get('force') === 'true'
+  const dryParam   = url.searchParams.get('dry') === '1'
   const today      = dateParam ?? getTodayKST()
 
   // ── CRON_SECRET 인증 ──────────────────────────────────────────────────────
@@ -112,7 +114,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: empErr.message }, { status: 500 })
   }
 
-  const empList    = (employees ?? []) as Employee[]
+  // 인턴 / 휴직복귀자 / 관리자가 온보딩 목록에서 제외 처리한 직원은 자동 메일 대상에서 제외
+  const empList    = ((employees ?? []) as Employee[]).filter(e => !isOnboardingExcluded(e))
   const autoStages = STAGES.filter(s => (AUTO_MAIL_STAGE_IDS as readonly string[]).includes(s.id))
   const recipient  = process.env.MAIL_RECIPIENT ?? 'inno_hm@hecto.co.kr'
 
@@ -143,6 +146,19 @@ export async function GET(req: NextRequest) {
   if (candidates.length === 0) {
     console.log(`[메일자동발송] ${today} 발송 대상 없음 — 종료`)
     return NextResponse.json({ ok: true, today, sent: 0, skipped: 0, failed: 0, total: 0 })
+  }
+
+  // dry=1: 실제 발송 없이 대상 후보만 반환 (인턴/제외 처리 필터링이 정확히 적용됐는지 안전하게 확인용)
+  if (dryParam) {
+    return NextResponse.json({
+      ok: true, dry: true, today,
+      employeeCount: empList.length,
+      total: candidates.length,
+      candidates: candidates.map(c => ({
+        name: c.emp.name, join_reason: c.emp.join_reason ?? null,
+        stage: c.stage.label, timing: c.stage.timing, scheduledDate: c.scheduledDate,
+      })),
+    })
   }
 
   let sent = 0, skipped = 0, failed = 0
