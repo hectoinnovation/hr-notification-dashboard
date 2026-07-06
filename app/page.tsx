@@ -1788,48 +1788,52 @@ export default function HRDashboard() {
     const isNewHire = form.status === 'active' && form.join_date &&
                       (form.join_reason === '입사' || !form.join_reason) &&
                       !isOnboardingExcluded({ join_reason: form.join_reason, is_onboarding_excluded: editTarget?.is_onboarding_excluded })
-    if (savedId && isNewHire) {
-      const name     = form.name.trim()
-      const joinDate = form.join_date
-      const nowIso   = new Date().toISOString()
-      const recipient = FR.onboard[0].email  // inno_hm@hecto.co.kr
-      const empObj: Employee = {
-        id: savedId, name,
-        join_date:  form.join_date  || undefined,
-        department: form.department || undefined,
-        division:   form.division   || undefined,
-        team:       form.team       || undefined,
-        position:   form.position   || undefined,
-        leader:     form.leader     || undefined,
-        join_reason: form.join_reason || '입사',
-        phone:      form.phone || undefined,
-        status:     form.status as Employee['status'],
-      }
+    if (savedId) {
+      const name   = form.name.trim()
+      const nowIso = new Date().toISOString()
 
-      // 기존 pending 메일 취소 (입사일 변경 시 중복 방지)
+      // 저장할 때마다 기존 pending 온보딩 메일은 항상 취소 (구분을 인턴/휴직복귀로 바꾸거나
+      // 온보딩 제외 처리된 경우에도 잔여 예약메일이 남아 발송되는 것을 방지 — isNewHire와 무관하게 실행)
       await supabase
         .from('scheduled_mails')
         .update({ status: 'cancelled', updated_at: nowIso })
         .eq('status', 'pending')
         .ilike('subject', `[온보딩 알림] ${name}님%`)
 
-      // D-7(s5), D-1(s6), D-Day(s7) 예약메일 생성
-      const onboardStages = STAGES.filter(s => ['s5', 's6', 's7'].includes(s.id))
-      const mailRows = onboardStages.flatMap(stage => {
-        const targetDate = calcDday(joinDate, stage.timing)
-        if (!targetDate) return []
-        return [{
-          to_email:     recipient,
-          subject:      `[온보딩 알림] ${name}님 ${stage.label} 진행 요청`,
-          html:         makeOnboardingMailHtml(empObj, stage.label, stage.timing, targetDate),
-          scheduled_at: `${targetDate}T00:00:00.000Z`,
-          status:       'pending',
-        }]
-      })
+      if (isNewHire) {
+        const joinDate = form.join_date
+        const recipient = FR.onboard[0].email  // inno_hm@hecto.co.kr
+        const empObj: Employee = {
+          id: savedId, name,
+          join_date:  form.join_date  || undefined,
+          department: form.department || undefined,
+          division:   form.division   || undefined,
+          team:       form.team       || undefined,
+          position:   form.position   || undefined,
+          leader:     form.leader     || undefined,
+          join_reason: form.join_reason || '입사',
+          phone:      form.phone || undefined,
+          status:     form.status as Employee['status'],
+        }
 
-      if (mailRows.length > 0) {
-        const { error: mailErr } = await supabase.from('scheduled_mails').insert(mailRows)
-        if (mailErr) console.error('[handleSubmit] scheduled_mails 생성 실패:', mailErr.message)
+        // D-7(s5), D-1(s6), D-Day(s7) 예약메일 생성
+        const onboardStages = STAGES.filter(s => ['s5', 's6', 's7'].includes(s.id))
+        const mailRows = onboardStages.flatMap(stage => {
+          const targetDate = calcDday(joinDate, stage.timing)
+          if (!targetDate) return []
+          return [{
+            to_email:     recipient,
+            subject:      `[온보딩 알림] ${name}님 ${stage.label} 진행 요청`,
+            html:         makeOnboardingMailHtml(empObj, stage.label, stage.timing, targetDate),
+            scheduled_at: `${targetDate}T00:00:00.000Z`,
+            status:       'pending',
+          }]
+        })
+
+        if (mailRows.length > 0) {
+          const { error: mailErr } = await supabase.from('scheduled_mails').insert(mailRows)
+          if (mailErr) console.error('[handleSubmit] scheduled_mails 생성 실패:', mailErr.message)
+        }
       }
     }
 
