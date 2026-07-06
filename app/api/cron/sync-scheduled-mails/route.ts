@@ -8,13 +8,14 @@
  *
  * 대상 조건: status='active' AND join_date IS NOT NULL
  *            AND (join_reason='입사' OR join_reason IS NULL)
+ *            AND is_onboarding_excluded IS NOT true (인턴/휴직복귀·관리자 제외 처리 제외)
  * 생성 스테이지: D-7(s5), D-1(s6), D-Day(s7)
  * 수신자: inno_hm@hecto.co.kr
  * 중복 방지: 동일 subject가 pending/sent면 스킵
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { STAGES, calcDday, makeOnboardingMailHtml } from '@/lib/onboarding'
+import { STAGES, calcDday, makeOnboardingMailHtml, isOnboardingExcluded } from '@/lib/onboarding'
 import type { Employee } from '@/lib/supabase'
 
 export const runtime = 'nodejs'
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
   // join_reason = '입사' 또는 null (join_reason이 없는 경우 입사로 간주)
   const { data: empData, error: empErr } = await supabase
     .from('employees')
-    .select('id, name, join_date, department, division, team, position, leader, join_reason, phone, status')
+    .select('id, name, join_date, department, division, team, position, leader, join_reason, phone, status, is_onboarding_excluded')
     .eq('status', 'active')
     .not('join_date', 'is', null)
 
@@ -57,9 +58,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `employees 조회 실패: ${empErr.message}` }, { status: 500 })
   }
 
-  // 전적·휴직복귀 클라이언트 필터
+  // 전적·휴직복귀·인턴 및 관리자가 온보딩 목록에서 제외 처리한 직원은 백필 대상에서 제외
   const empList = ((empData ?? []) as Employee[]).filter(
-    e => !e.join_reason || e.join_reason === '입사'
+    e => (!e.join_reason || e.join_reason === '입사') && !isOnboardingExcluded(e)
   )
 
   // ── 이미 pending/sent인 subject 목록 (중복 방지) ─────────────────────────────
