@@ -34,9 +34,12 @@ export const STAGES = [
 
 export type Stage = typeof STAGES[number]
 
-// Stages that trigger automatic daily mail
-// s3 (입사 후 7일 내 = join_date+7), s5(D-7), s6(D-1), s7(D-Day), s_d30(D+30), s8(D+50), s9(D+60), s10(D+63), s11(D+65)
-export const AUTO_MAIL_STAGE_IDS: readonly string[] = ['s3', 's5', 's6', 's7', 's_d30', 's8', 's9', 's10', 's11']
+// Stages that trigger automatic daily mail via /api/cron/onboarding-mails.
+// s5(D-7)/s6(D-1)/s7(D-Day)는 여기서 제외 — handleSubmit이 등록 시 scheduled_mails에
+// 미리 예약해두고 /api/cron/auto-mail이 발송하는 별도 경로가 이미 전담하고 있음.
+// 두 경로가 같은 3단계를 동시에 처리하면 같은 메일이 두 번 발송된다 (실측으로 확인됨).
+// s3 (입사 후 7일 내 = join_date+7), s_d30(D+30), s8(D+50), s9(D+60), s10(D+63), s11(D+65)
+export const AUTO_MAIL_STAGE_IDS: readonly string[] = ['s3', 's_d30', 's8', 's9', 's10', 's11']
 
 // Stages applicable to transfer (전적자) — pre-hire preparation only
 export const TRANSFER_STAGE_IDS: readonly string[] = ['s_whr', 's_file', 's_docs']
