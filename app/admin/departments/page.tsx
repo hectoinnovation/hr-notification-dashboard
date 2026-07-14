@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { DEPARTMENTS, aggregateByDepartment, type AiTask } from '@/lib/ai-tasks'
+import { DEPARTMENTS, aggregateByDepartment, aggregateDepartmentStats, type AiTask } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
@@ -26,12 +26,42 @@ export default function AdminDepartmentsPage() {
 
   const filtered = dept === '전체' ? tasks : tasks.filter(t => t.department === dept)
   const deptCounts = aggregateByDepartment(tasks)
+  const deptStats = aggregateDepartmentStats(tasks)
 
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-gray-900">부서별 현황</h1>
 
       {!loading && tasks.length > 0 && <DepartmentChart data={deptCounts} />}
+
+      {!loading && tasks.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 text-left text-xs text-gray-400">
+                <th className="px-4 py-2.5 font-medium">부서</th>
+                <th className="px-4 py-2.5 font-medium">등록 건수</th>
+                <th className="px-4 py-2.5 font-medium">진행중</th>
+                <th className="px-4 py-2.5 font-medium">완료</th>
+                <th className="px-4 py-2.5 font-medium">도움 필요</th>
+                <th className="px-4 py-2.5 font-medium">자체 해결</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deptStats.map(s => (
+                <tr key={s.department} className="border-b border-gray-50 last:border-0">
+                  <td className="px-4 py-2.5 font-semibold text-gray-800">{s.department}</td>
+                  <td className="px-4 py-2.5 text-gray-600">{s.total}</td>
+                  <td className="px-4 py-2.5 text-blue-600">{s.inProgress}</td>
+                  <td className="px-4 py-2.5 text-emerald-600">{s.done}</td>
+                  <td className="px-4 py-2.5 text-amber-600">{s.help}</td>
+                  <td className="px-4 py-2.5 text-purple-600">{s.self}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {!loading && tasks.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">

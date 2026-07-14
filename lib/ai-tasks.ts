@@ -6,7 +6,7 @@ import { supabase } from './supabase'
 
 export type TaskStatus = 'in_progress' | 'done'
 export type ResolutionType = 'self' | 'help'
-export type Priority = 'low' | 'medium' | 'high'
+export type Priority = 'urgent' | 'high' | 'medium' | 'low'
 export type GuideCategory = '영상' | '문서' | '블로그' | '프롬프트' | '기타'
 
 export const DEPARTMENTS = ['Wallet사업부', 'SP사업부', 'AI사업부', '경영지원', '인재협업팀', '개발실', '기타'] as const
@@ -23,9 +23,18 @@ export const RESOLUTION_LABEL: Record<ResolutionType, string> = {
 }
 
 export const PRIORITY_LABEL: Record<Priority, string> = {
-  low: '낮음',
-  medium: '보통',
-  high: '높음',
+  urgent: '🔴 긴급',
+  high: '🟠 높음',
+  medium: '🟡 보통',
+  low: '🟢 낮음',
+}
+
+// 기본 정렬 우선순위: 긴급 → 높음 → 보통 → 낮음
+export const PRIORITY_ORDER: Record<Priority, number> = {
+  urgent: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
 }
 
 export type AiTask = {
@@ -43,7 +52,6 @@ export type AiTask = {
   ai_used?: string
   completed_at?: string
   assignee?: string
-  mentor?: string
   priority?: Priority
   created_at: string
   updated_at: string
@@ -64,7 +72,6 @@ export type AiAssignment = {
   id: string
   task_id: string
   assignee?: string
-  mentor?: string
   priority?: Priority
   changed_by?: string
   changed_at: string
@@ -117,4 +124,38 @@ export function aggregateByResolutionType(tasks: AiTask[]): { label: string; val
 
 export function aggregateByDepartment(tasks: AiTask[]): { department: Department; count: number }[] {
   return DEPARTMENTS.map(dep => ({ department: dep, count: tasks.filter(t => t.department === dep).length }))
+}
+
+export type DepartmentStats = {
+  department: Department
+  total: number
+  inProgress: number
+  done: number
+  help: number
+  self: number
+}
+
+// 부서별 등록 건수 / 진행중 / 완료 / 도움 필요 / 자체 해결 통계
+export function aggregateDepartmentStats(tasks: AiTask[]): DepartmentStats[] {
+  return DEPARTMENTS.map(dep => {
+    const deptTasks = tasks.filter(t => t.department === dep)
+    return {
+      department: dep,
+      total: deptTasks.length,
+      inProgress: deptTasks.filter(t => t.status === 'in_progress').length,
+      done: deptTasks.filter(t => t.status === 'done').length,
+      help: deptTasks.filter(t => t.resolution_type === 'help').length,
+      self: deptTasks.filter(t => t.resolution_type === 'self').length,
+    }
+  })
+}
+
+// 기본 정렬: 우선순위(긴급→낮음) 우선, 동일 우선순위 내에서는 최신 등록순
+export function sortTasksByPriority(tasks: AiTask[]): AiTask[] {
+  return [...tasks].sort((a, b) => {
+    const pa = PRIORITY_ORDER[a.priority ?? 'medium']
+    const pb = PRIORITY_ORDER[b.priority ?? 'medium']
+    if (pa !== pb) return pa - pb
+    return b.created_at.localeCompare(a.created_at)
+  })
 }

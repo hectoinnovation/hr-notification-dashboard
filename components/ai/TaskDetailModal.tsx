@@ -53,12 +53,21 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
     setForm(prev => ({ ...prev, [key]: value }))
   }
 
+  // 진행 상태 변경 시 완료일 자동 저장/제거: 완료로 바뀌면 오늘 날짜를 채우고, 진행중으로 되돌리면 완료일을 비운다.
+  function setStatus(next: TaskStatus) {
+    setForm(prev => ({
+      ...prev,
+      status: next,
+      completed_at: next === 'done' ? (prev.completed_at || new Date().toISOString().slice(0, 10)) : undefined,
+    }))
+  }
+
   async function handleSave() {
     setSaving(true)
     setError(null)
     const nowIso = new Date().toISOString()
 
-    const assignmentChanged = form.assignee !== task.assignee || form.mentor !== task.mentor || form.priority !== task.priority
+    const assignmentChanged = form.assignee !== task.assignee || form.priority !== task.priority
 
     const { error: updErr } = await supabase.from('ai_tasks').update({
       title: form.title, department: form.department, author: form.author,
@@ -67,7 +76,7 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
       resolution_type: form.resolution_type, status: form.status,
       result_content: form.result_content || null, ai_used: form.ai_used || null,
       completed_at: form.completed_at || null,
-      assignee: form.assignee || null, mentor: form.mentor || null, priority: form.priority || null,
+      assignee: form.assignee || null, priority: form.priority || 'medium',
       updated_at: nowIso,
     }).eq('id', task.id)
 
@@ -75,8 +84,8 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
 
     if (assignmentChanged) {
       await supabase.from('ai_assignments').insert({
-        task_id: task.id, assignee: form.assignee || null, mentor: form.mentor || null,
-        priority: form.priority || null, changed_by: '관리자',
+        task_id: task.id, assignee: form.assignee || null,
+        priority: form.priority || 'medium', changed_by: '관리자',
       })
     }
 
@@ -99,7 +108,7 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">진행 상태</label>
-            <select value={form.status} onChange={e => set('status', e.target.value as TaskStatus)}
+            <select value={form.status} onChange={e => setStatus(e.target.value as TaskStatus)}
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
               {(['in_progress', 'done'] as TaskStatus[]).map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
             </select>
@@ -150,16 +159,14 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
         </div>
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
-          <p className="text-xs font-bold text-gray-700">담당자 / 멘토 / 우선순위 (도움 필요 과제 운영)</p>
-          <div className="grid grid-cols-3 gap-3">
+          <p className="text-xs font-bold text-gray-700">담당자 / 우선순위 (도움 필요 과제 운영)</p>
+          <div className="grid grid-cols-2 gap-3">
             <Field label="담당자" value={form.assignee ?? ''} onChange={v => set('assignee', v)} />
-            <Field label="멘토" value={form.mentor ?? ''} onChange={v => set('mentor', v)} />
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1.5">우선순위</label>
-              <select value={form.priority ?? ''} onChange={e => set('priority', (e.target.value || undefined) as Priority | undefined)}
+              <select value={form.priority ?? 'medium'} onChange={e => set('priority', e.target.value as Priority)}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
-                <option value="">-</option>
-                {(['low', 'medium', 'high'] as Priority[]).map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                {(['urgent', 'high', 'medium', 'low'] as Priority[]).map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
               </select>
             </div>
           </div>

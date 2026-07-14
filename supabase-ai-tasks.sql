@@ -7,7 +7,7 @@ create extension if not exists pgcrypto;
 
 -- ── ai_tasks ────────────────────────────────────────────────────────────────
 -- AI 활용 과제의 현재 상태를 담는 메인 테이블.
--- 담당자/멘토/우선순위를 컬럼으로 직접 보유해 목록 화면에서 조인 없이 렌더링한다.
+-- 담당자/우선순위를 컬럼으로 직접 보유해 목록 화면에서 조인 없이 렌더링한다.
 -- 변경 이력은 ai_assignments에 별도로 남긴다 (이 테이블 값이 항상 최신 source of truth).
 --
 -- 두 축을 혼동하지 말 것:
@@ -34,8 +34,7 @@ create table if not exists public.ai_tasks (
 
   -- 관리자 전용 관리 필드 (도움 필요 과제 운영) — 항상 최신값. 변경 이력은 ai_assignments 참고.
   assignee             text,        -- 담당자
-  mentor               text,        -- 멘토
-  priority             text check (priority in ('low','medium','high')),
+  priority             text not null default 'medium' check (priority in ('urgent','high','medium','low')),  -- 긴급 | 높음 | 보통 | 낮음
 
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
@@ -46,6 +45,7 @@ create index if not exists idx_ai_tasks_resolution_type  on public.ai_tasks (res
 create index if not exists idx_ai_tasks_department       on public.ai_tasks (department);
 create index if not exists idx_ai_tasks_created_at       on public.ai_tasks (created_at desc);
 create index if not exists idx_ai_tasks_completed_at     on public.ai_tasks (completed_at desc);
+create index if not exists idx_ai_tasks_priority         on public.ai_tasks (priority);
 
 comment on table public.ai_tasks is 'AI 활용 과제. status=진행 상태(진행중/완료), resolution_type=해결 방식(자체해결/도움필요) — 서로 다른 축이니 혼동 금지';
 
@@ -68,14 +68,13 @@ create index if not exists idx_ai_guides_sort_order  on public.ai_guides (sort_o
 comment on table public.ai_guides is 'AI 활용 방법 페이지에 노출되는 관리자 큐레이션 가이드 카드';
 
 -- ── ai_assignments ──────────────────────────────────────────────────────────
--- 담당자/멘토/우선순위 변경 이력 (append-only 감사 로그).
+-- 담당자/우선순위 변경 이력 (append-only 감사 로그).
 -- ai_tasks의 현재값이 source of truth이고, 이 테이블은 "누가 언제 무엇을 바꿨는지"만 기록.
 create table if not exists public.ai_assignments (
   id            uuid primary key default gen_random_uuid(),
   task_id       uuid not null references public.ai_tasks(id) on delete cascade,
   assignee      text,
-  mentor        text,
-  priority      text check (priority in ('low','medium','high')),
+  priority      text check (priority in ('urgent','high','medium','low')),
   changed_by    text,                              -- 변경한 관리자 (자유 텍스트)
   changed_at    timestamptz not null default now()
 );
@@ -83,7 +82,7 @@ create table if not exists public.ai_assignments (
 create index if not exists idx_ai_assignments_task_id     on public.ai_assignments (task_id);
 create index if not exists idx_ai_assignments_changed_at  on public.ai_assignments (changed_at desc);
 
-comment on table public.ai_assignments is '과제 담당자/멘토/우선순위 변경 이력 (append-only 감사 로그, 현재값은 ai_tasks에 있음)';
+comment on table public.ai_assignments is '과제 담당자/우선순위 변경 이력 (append-only 감사 로그, 현재값은 ai_tasks에 있음)';
 
 -- ── ai_comments ─────────────────────────────────────────────────────────────
 -- 관리자 운영 메모 스레드.

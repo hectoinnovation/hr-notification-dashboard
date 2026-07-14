@@ -32,7 +32,7 @@ export function DashboardContent() {
         label="등록된 AI 과제가 없습니다."
         description="AI 과제를 등록하면 이곳에 표시됩니다."
         actionLabel="AI 과제 등록하기"
-        actionHref="/ai/register"
+        actionHref="/ai"
       />
     )
   }
@@ -41,6 +41,9 @@ export function DashboardContent() {
   const done = tasks.filter(t => t.status === 'done').length
   const self = tasks.filter(t => t.resolution_type === 'self').length
   const help = tasks.filter(t => t.resolution_type === 'help').length
+  const urgent = tasks.filter(t => (t.priority ?? 'medium') === 'urgent').length
+  const highPriority = tasks.filter(t => (t.priority ?? 'medium') === 'high').length
+  const needsAttention = urgent + highPriority
 
   const recentRegistered = [...tasks].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5)
   const recentCompleted = tasks
@@ -50,12 +53,15 @@ export function DashboardContent() {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <KpiCard icon="📋" value={tasks.length} label="전체 과제" />
         <KpiCard icon="⏳" value={inProgress} label="진행중" color="text-blue-600" />
         <KpiCard icon="✅" value={done} label="완료" color="text-emerald-600" />
-        <KpiCard icon="🙋" value={self} label="자체 해결" color="text-purple-600" />
         <KpiCard icon="🆘" value={help} label="도움 필요" color="text-amber-600" />
+        <KpiCard icon="🙋" value={self} label="자체 해결" color="text-purple-600" />
+        <KpiCard icon="🚨" value={needsAttention} label="우선 처리 필요 과제" color="text-red-600" />
+        <KpiCard icon="🔴" value={urgent} label="긴급 과제" color="text-red-600" />
+        <KpiCard icon="🟠" value={highPriority} label="높음 우선순위 과제" color="text-orange-600" />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

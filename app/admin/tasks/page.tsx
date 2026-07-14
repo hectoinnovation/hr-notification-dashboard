@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { DEPARTMENTS, STATUS_LABEL, RESOLUTION_LABEL, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
+import { DEPARTMENTS, STATUS_LABEL, RESOLUTION_LABEL, sortTasksByPriority, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { PriorityBadge } from '@/components/ai/PriorityBadge'
@@ -30,7 +30,7 @@ function AdminTasksContent() {
     setLoading(true)
     const { data, error } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
     if (error) console.error('[전체 과제] ai_tasks 조회 실패:', error.message)
-    setTasks((data ?? []) as AiTask[])
+    setTasks(sortTasksByPriority((data ?? []) as AiTask[]))
     setLoading(false)
   }, [])
   useEffect(() => { (async () => { await load() })() }, [load])
