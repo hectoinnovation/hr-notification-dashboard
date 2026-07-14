@@ -19,7 +19,7 @@ export function AiNav() {
           <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center font-bold text-xs">AI</div>
           <span className="font-bold text-sm text-gray-900 hidden sm:inline">AI 과제 관리</span>
         </div>
-        <nav className="flex items-center gap-1 overflow-x-auto">
+        <nav className="flex items-center gap-1 overflow-x-auto flex-1">
           {LINKS.map(l => {
             const active = pathname === l.href
             return (
@@ -32,6 +32,10 @@ export function AiNav() {
             )
           })}
         </nav>
+        <Link href="/login?next=%2Fadmin"
+          className="flex-shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-gray-400 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-2.5 py-1.5 rounded-lg transition-colors">
+          관리자 로그인
+        </Link>
       </div>
     </header>
   )

@@ -1,9 +1,11 @@
 'use client'
-import { useState, FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState, FormEvent } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function OtpPage() {
+function OtpForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const next = searchParams.get('next') ?? '/'
   const [token, setToken] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -20,7 +22,7 @@ export default function OtpPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error); return }
-      router.push('/')
+      router.push(next)
     } catch {
       setError('인증 중 오류가 발생했습니다.')
     } finally {
@@ -70,12 +72,20 @@ export default function OtpPage() {
         </form>
 
         <button
-          onClick={() => router.push('/login')}
+          onClick={() => router.push(`/login?next=${encodeURIComponent(next)}`)}
           className="w-full text-xs text-gray-400 hover:text-gray-600 transition-colors text-center"
         >
           ← 로그인으로 돌아가기
         </button>
       </div>
     </div>
+  )
+}
+
+export default function OtpPage() {
+  return (
+    <Suspense fallback={null}>
+      <OtpForm />
+    </Suspense>
   )
 }
