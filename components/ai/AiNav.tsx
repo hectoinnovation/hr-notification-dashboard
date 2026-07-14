@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const LINKS = [
-  { href: '/ai', label: 'Dashboard' },
+  { href: '/ai', label: '대시보드' },
   { href: '/ai/guides', label: 'AI 활용 방법' },
   { href: '/ai/register', label: 'AI 과제 등록' },
   { href: '/ai/self', label: '자체 해결' },

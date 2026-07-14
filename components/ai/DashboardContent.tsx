@@ -9,23 +9,33 @@ import { DepartmentChart } from './DepartmentChart'
 import { StatusBadge } from './StatusBadge'
 import { ResolutionBadge } from './ResolutionBadge'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 
 export function DashboardContent() {
   const [tasks, setTasks] = useState<AiTask[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     (async () => {
-      const { data, error: err } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
-      if (err) setError(err.message)
+      const { data, error } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
+      if (error) console.error('[AI Dashboard] ai_tasks 조회 실패:', error.message)
       setTasks((data ?? []) as AiTask[])
       setLoading(false)
     })()
   }, [])
 
-  if (loading) return <p className="text-sm text-gray-400">불러오는 중...</p>
-  if (error) return <p className="text-sm text-red-500">불러오기 실패: {error}</p>
+  if (loading) return <LoadingState />
+
+  if (tasks.length === 0) {
+    return (
+      <EmptyState
+        label="등록된 AI 과제가 없습니다."
+        description="AI 과제를 등록하면 이곳에 표시됩니다."
+        actionLabel="AI 과제 등록하기"
+        actionHref="/ai/register"
+      />
+    )
+  }
 
   const inProgress = tasks.filter(t => t.status === 'in_progress').length
   const done = tasks.filter(t => t.status === 'done').length

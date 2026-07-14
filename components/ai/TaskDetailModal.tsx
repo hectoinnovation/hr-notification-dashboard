@@ -37,10 +37,12 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
   const [error, setError] = useState<string | null>(null)
 
   async function loadExtras() {
-    const [{ data: fileRows }, { data: commentRows }] = await Promise.all([
+    const [{ data: fileRows, error: fileErr }, { data: commentRows, error: commentErr }] = await Promise.all([
       supabase.from('ai_files').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
       supabase.from('ai_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: false }),
     ])
+    if (fileErr) console.error('[과제 관리] ai_files 조회 실패:', fileErr.message)
+    if (commentErr) console.error('[과제 관리] ai_comments 조회 실패:', commentErr.message)
     setFiles((fileRows ?? []) as AiFile[])
     setComments((commentRows ?? []) as AiComment[])
   }

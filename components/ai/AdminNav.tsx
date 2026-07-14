@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const LINKS = [
-  { href: '/admin', label: 'Dashboard' },
+  { href: '/admin', label: '대시보드' },
   { href: '/admin/tasks', label: '전체 과제' },
   { href: '/admin/departments', label: '부서별 현황' },
   { href: '/admin/guides', label: 'AI 활용 방법 관리' },

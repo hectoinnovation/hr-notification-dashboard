@@ -9,6 +9,7 @@ import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { PriorityBadge } from '@/components/ai/PriorityBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { TaskDetailModal } from '@/components/ai/TaskDetailModal'
 
 function AdminTasksContent() {
@@ -27,7 +28,8 @@ function AdminTasksContent() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
+    const { data, error } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
+    if (error) console.error('[전체 과제] ai_tasks 조회 실패:', error.message)
     setTasks((data ?? []) as AiTask[])
     setLoading(false)
   }, [])
@@ -92,8 +94,12 @@ function AdminTasksContent() {
 
       <p className="text-xs text-gray-400">{filtered.length}건</p>
 
-      {loading ? <p className="text-sm text-gray-400">불러오는 중...</p>
-        : filtered.length === 0 ? <EmptyState label="조건에 맞는 과제가 없습니다" />
+      {loading ? <LoadingState />
+        : filtered.length === 0 ? (
+          tasks.length === 0
+            ? <EmptyState label="등록된 AI 과제가 없습니다." description="AI 과제를 등록하면 이곳에 표시됩니다." />
+            : <EmptyState label="조건에 맞는 과제가 없습니다." description="검색어나 필터를 조정해보세요." />
+        )
         : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
             <table className="w-full text-sm">
@@ -143,7 +149,7 @@ function AdminTasksContent() {
 
 export default function AdminTasksPage() {
   return (
-    <Suspense fallback={<p className="text-sm text-gray-400">불러오는 중...</p>}>
+    <Suspense fallback={<LoadingState />}>
       <AdminTasksContent />
     </Suspense>
   )

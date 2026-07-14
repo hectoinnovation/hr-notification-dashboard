@@ -7,6 +7,7 @@ import { STATUS_LABEL } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { Modal } from '@/components/ui/Modal'
 import { CompleteTaskForm, EMPTY_COMPLETE_FORM, type CompleteFormData } from '@/components/ai/CompleteTaskForm'
 
@@ -21,7 +22,8 @@ export default function AiSelfResolvePage() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('ai_tasks').select('*').eq('resolution_type', 'self').order('created_at', { ascending: false })
+    const { data, error } = await supabase.from('ai_tasks').select('*').eq('resolution_type', 'self').order('created_at', { ascending: false })
+    if (error) console.error('[자체 해결] ai_tasks 조회 실패:', error.message)
     setTasks((data ?? []) as AiTask[])
     setLoading(false)
   }
@@ -75,8 +77,15 @@ export default function AiSelfResolvePage() {
           count={tasks.filter(t => t.status === 'done').length} />
       </div>
 
-      {loading ? <p className="text-sm text-gray-400">불러오는 중...</p>
-        : filtered.length === 0 ? <EmptyState label="등록된 과제가 없습니다" />
+      {loading ? <LoadingState />
+        : filtered.length === 0 ? (
+          <EmptyState
+            label="등록된 AI 과제가 없습니다."
+            description="AI 과제를 등록하면 이곳에 표시됩니다."
+            actionLabel="AI 과제 등록하기"
+            actionHref="/ai/register"
+          />
+        )
         : (
           <div className="space-y-2">
             {filtered.map(t => (

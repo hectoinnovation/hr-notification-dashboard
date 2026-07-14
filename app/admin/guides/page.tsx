@@ -7,6 +7,7 @@ import { GuideCard } from '@/components/ai/GuideCard'
 import { GuideForm, EMPTY_GUIDE_FORM, type GuideFormData } from '@/components/ai/GuideForm'
 import { Modal } from '@/components/ui/Modal'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 
 export default function AdminGuidesPage() {
   const [guides, setGuides] = useState<AiGuide[]>([])
@@ -19,7 +20,8 @@ export default function AdminGuidesPage() {
 
   async function load() {
     setLoading(true)
-    const { data } = await supabase.from('ai_guides').select('*').order('sort_order', { ascending: true })
+    const { data, error: err } = await supabase.from('ai_guides').select('*').order('sort_order', { ascending: true })
+    if (err) console.error('[AI 활용 방법 관리] ai_guides 조회 실패:', err.message)
     setGuides((data ?? []) as AiGuide[])
     setLoading(false)
   }
@@ -71,8 +73,10 @@ export default function AdminGuidesPage() {
 
       {error && !showForm && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
 
-      {loading ? <p className="text-sm text-gray-400">불러오는 중...</p>
-        : guides.length === 0 ? <EmptyState label="등록된 자료가 없습니다" />
+      {loading ? <LoadingState />
+        : guides.length === 0 ? (
+          <EmptyState label="등록된 자료가 없습니다." description="위의 '+ 자료 등록' 버튼으로 첫 자료를 등록해보세요." />
+        )
         : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {guides.map(g => (

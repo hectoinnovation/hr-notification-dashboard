@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import type { AiTask, AiFile } from '@/lib/ai-tasks'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { Modal } from '@/components/ui/Modal'
 
 export default function AiCompletedPage() {
@@ -15,7 +16,8 @@ export default function AiCompletedPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('ai_tasks').select('*').eq('status', 'done').order('completed_at', { ascending: false })
+      const { data, error } = await supabase.from('ai_tasks').select('*').eq('status', 'done').order('completed_at', { ascending: false })
+      if (error) console.error('[완료 과제] ai_tasks 조회 실패:', error.message)
       setTasks((data ?? []) as AiTask[])
       setLoading(false)
     })()
@@ -23,7 +25,8 @@ export default function AiCompletedPage() {
 
   async function openDetail(task: AiTask) {
     setSelected(task)
-    const { data } = await supabase.from('ai_files').select('*').eq('task_id', task.id).order('created_at', { ascending: true })
+    const { data, error } = await supabase.from('ai_files').select('*').eq('task_id', task.id).order('created_at', { ascending: true })
+    if (error) console.error('[완료 과제] ai_files 조회 실패:', error.message)
     setFiles((data ?? []) as AiFile[])
   }
 
@@ -31,8 +34,10 @@ export default function AiCompletedPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-gray-900">완료 과제</h1>
 
-      {loading ? <p className="text-sm text-gray-400">불러오는 중...</p>
-        : tasks.length === 0 ? <EmptyState label="완료된 과제가 없습니다" />
+      {loading ? <LoadingState />
+        : tasks.length === 0 ? (
+          <EmptyState label="완료된 과제가 없습니다." description="AI 과제를 완료 처리하면 이곳에 표시됩니다." />
+        )
         : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden overflow-x-auto">
             <table className="w-full text-sm">

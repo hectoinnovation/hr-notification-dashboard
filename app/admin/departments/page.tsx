@@ -7,6 +7,7 @@ import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { LoadingState } from '@/components/ui/LoadingState'
 import { DepartmentChart } from '@/components/ai/DepartmentChart'
 
 export default function AdminDepartmentsPage() {
@@ -16,7 +17,8 @@ export default function AdminDepartmentsPage() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
+      const { data, error } = await supabase.from('ai_tasks').select('*').order('created_at', { ascending: false })
+      if (error) console.error('[부서별 현황] ai_tasks 조회 실패:', error.message)
       setTasks((data ?? []) as AiTask[])
       setLoading(false)
     })()
@@ -29,18 +31,22 @@ export default function AdminDepartmentsPage() {
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-gray-900">부서별 현황</h1>
 
-      {!loading && <DepartmentChart data={deptCounts} />}
+      {!loading && tasks.length > 0 && <DepartmentChart data={deptCounts} />}
 
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <FilterChip label="전체" active={dept === '전체'} onClick={() => setDept('전체')} count={tasks.length} />
-        {DEPARTMENTS.map(d => (
-          <FilterChip key={d} label={d} active={dept === d} onClick={() => setDept(d)}
-            count={deptCounts.find(c => c.department === d)?.count ?? 0} />
-        ))}
-      </div>
+      {!loading && tasks.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <FilterChip label="전체" active={dept === '전체'} onClick={() => setDept('전체')} count={tasks.length} />
+          {DEPARTMENTS.map(d => (
+            <FilterChip key={d} label={d} active={dept === d} onClick={() => setDept(d)}
+              count={deptCounts.find(c => c.department === d)?.count ?? 0} />
+          ))}
+        </div>
+      )}
 
-      {loading ? <p className="text-sm text-gray-400">불러오는 중...</p>
-        : filtered.length === 0 ? <EmptyState label="등록된 과제가 없습니다" />
+      {loading ? <LoadingState />
+        : filtered.length === 0 ? (
+          <EmptyState label="등록된 AI 과제가 없습니다." description="AI 과제를 등록하면 이곳에 표시됩니다." />
+        )
         : (
           <div className="space-y-2">
             {filtered.map(t => (
