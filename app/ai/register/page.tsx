@@ -31,7 +31,7 @@ export default function AiRegisterPage() {
     })
     setSubmitting(false)
     if (err) { setError(err.message); return }
-    router.push(resolutionType === 'self' ? '/ai/self' : '/ai/help')
+    router.push(`/ai/my?author=${encodeURIComponent(form.author.trim())}`)
   }
 
   return (

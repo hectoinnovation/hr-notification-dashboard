@@ -7,9 +7,7 @@ const LINKS = [
   { href: '/ai', label: '대시보드' },
   { href: '/ai/guides', label: 'AI 활용 방법' },
   { href: '/ai/register', label: 'AI 과제 등록' },
-  { href: '/ai/self', label: '자체 해결' },
-  { href: '/ai/help', label: '도움 필요' },
-  { href: '/ai/completed', label: '완료 과제' },
+  { href: '/ai/my', label: '내 과제' },
 ]
 
 export function AiNav() {
