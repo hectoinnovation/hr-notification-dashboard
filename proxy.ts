@@ -10,7 +10,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET ?? 'hectoinno-dashboard-sessio
 
 // Paths that do NOT require authentication
 // /api/cron/ 은 Vercel Cron이 세션 없이 호출하므로 반드시 PUBLIC에 포함
-const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/']
+// /ai 는 AI 과제 관리 기능의 사용자 페이지 — 로그인 없이 사내망/IP 화이트리스트만으로 접근
+// (trailing slash를 붙이면 '/ai' 루트 자체는 startsWith 매칭에서 빠지므로 반드시 슬래시 없이 등록)
+const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/', '/ai']
 
 export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl
