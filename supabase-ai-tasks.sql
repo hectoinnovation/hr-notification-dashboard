@@ -16,7 +16,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.ai_tasks (
   id                  uuid primary key default gen_random_uuid(),
   title               text not null,
-  department          text not null check (department in ('Wallet사업부','SP사업부','AI사업부','경영지원','인재협업팀','개발실','기타')),
+  team                text not null,                          -- 팀 (자유 텍스트, 고정 목록 없음)
   author              text not null,                          -- 등록자 (자유 텍스트, 로그인 계정 없음)
   resolution_type     text not null check (resolution_type in ('self','help')),        -- 해결 방식: 자체 해결 | 도움 필요
   status              text not null default 'in_progress' check (status in ('in_progress','done')),  -- 진행 상태: 진행중 | 완료
@@ -42,7 +42,7 @@ create table if not exists public.ai_tasks (
 
 create index if not exists idx_ai_tasks_status          on public.ai_tasks (status);
 create index if not exists idx_ai_tasks_resolution_type  on public.ai_tasks (resolution_type);
-create index if not exists idx_ai_tasks_department       on public.ai_tasks (department);
+create index if not exists idx_ai_tasks_team             on public.ai_tasks (team);
 create index if not exists idx_ai_tasks_created_at       on public.ai_tasks (created_at desc);
 create index if not exists idx_ai_tasks_completed_at     on public.ai_tasks (completed_at desc);
 create index if not exists idx_ai_tasks_priority         on public.ai_tasks (priority);

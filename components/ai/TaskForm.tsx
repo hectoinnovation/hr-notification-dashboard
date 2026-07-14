@@ -1,10 +1,8 @@
 'use client'
 
-import { DEPARTMENTS } from '@/lib/ai-tasks'
-
 export type TaskFormData = {
   title: string
-  department: string
+  team: string
   author: string
   current_work: string
   problem_definition: string
@@ -13,7 +11,7 @@ export type TaskFormData = {
 }
 
 export const EMPTY_TASK_FORM: TaskFormData = {
-  title: '', department: DEPARTMENTS[0], author: '',
+  title: '', team: '', author: '',
   current_work: '', problem_definition: '', expected_effect: '', ai_plan: '',
 }
 
@@ -44,13 +42,7 @@ export function TaskForm({ form, onChange }: {
   return (
     <div className="space-y-3">
       <Field label="제목" value={form.title} onChange={v => set('title', v)} required />
-      <div>
-        <label className="text-xs font-semibold text-gray-500 block mb-1.5">부서<span className="text-red-400 ml-0.5">*</span></label>
-        <select value={form.department} onChange={e => set('department', e.target.value)}
-          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
-          {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
-      </div>
+      <Field label="팀" value={form.team} onChange={v => set('team', v)} required />
       <Field label="작성자" value={form.author} onChange={v => set('author', v)} required />
       <Field label="현재 업무" value={form.current_work} onChange={v => set('current_work', v)} textarea />
       <Field label="문제 정의" value={form.problem_definition} onChange={v => set('problem_definition', v)} textarea />

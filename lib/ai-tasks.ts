@@ -9,9 +9,6 @@ export type ResolutionType = 'self' | 'help'
 export type Priority = 'urgent' | 'high' | 'medium' | 'low'
 export type GuideCategory = '영상' | '문서' | '블로그' | '프롬프트' | '기타'
 
-export const DEPARTMENTS = ['Wallet사업부', 'SP사업부', 'AI사업부', '경영지원', '인재협업팀', '개발실', '기타'] as const
-export type Department = typeof DEPARTMENTS[number]
-
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: '진행중',
   done: '완료',
@@ -40,7 +37,7 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
 export type AiTask = {
   id: string
   title: string
-  department: Department
+  team: string
   author: string
   resolution_type: ResolutionType
   status: TaskStatus
@@ -122,12 +119,18 @@ export function aggregateByResolutionType(tasks: AiTask[]): { label: string; val
   ]
 }
 
-export function aggregateByDepartment(tasks: AiTask[]): { department: Department; count: number }[] {
-  return DEPARTMENTS.map(dep => ({ department: dep, count: tasks.filter(t => t.department === dep).length }))
+// 팀은 자유 텍스트라 고정 목록이 없다 — 실제 등록된 데이터에서 팀 이름을 뽑아 정렬한다.
+export function getDistinctTeams(tasks: AiTask[]): string[] {
+  const set = new Set(tasks.map(t => t.team).filter(Boolean))
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'))
 }
 
-export type DepartmentStats = {
-  department: Department
+export function aggregateByTeam(tasks: AiTask[]): { team: string; count: number }[] {
+  return getDistinctTeams(tasks).map(team => ({ team, count: tasks.filter(t => t.team === team).length }))
+}
+
+export type TeamStats = {
+  team: string
   total: number
   inProgress: number
   done: number
@@ -135,17 +138,17 @@ export type DepartmentStats = {
   self: number
 }
 
-// 부서별 등록 건수 / 진행중 / 완료 / 도움 필요 / 자체 해결 통계
-export function aggregateDepartmentStats(tasks: AiTask[]): DepartmentStats[] {
-  return DEPARTMENTS.map(dep => {
-    const deptTasks = tasks.filter(t => t.department === dep)
+// 팀별 등록 건수 / 진행중 / 완료 / 도움 필요 / 자체 해결 통계
+export function aggregateTeamStats(tasks: AiTask[]): TeamStats[] {
+  return getDistinctTeams(tasks).map(team => {
+    const teamTasks = tasks.filter(t => t.team === team)
     return {
-      department: dep,
-      total: deptTasks.length,
-      inProgress: deptTasks.filter(t => t.status === 'in_progress').length,
-      done: deptTasks.filter(t => t.status === 'done').length,
-      help: deptTasks.filter(t => t.resolution_type === 'help').length,
-      self: deptTasks.filter(t => t.resolution_type === 'self').length,
+      team,
+      total: teamTasks.length,
+      inProgress: teamTasks.filter(t => t.status === 'in_progress').length,
+      done: teamTasks.filter(t => t.status === 'done').length,
+      help: teamTasks.filter(t => t.resolution_type === 'help').length,
+      self: teamTasks.filter(t => t.resolution_type === 'self').length,
     }
   })
 }

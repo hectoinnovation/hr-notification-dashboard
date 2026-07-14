@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { aggregateByStatus, aggregateByResolutionType, aggregateByDepartment, type AiTask } from '@/lib/ai-tasks'
+import { aggregateByStatus, aggregateByResolutionType, aggregateByTeam, type AiTask } from '@/lib/ai-tasks'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { StatusChart } from './StatusChart'
-import { DepartmentChart } from './DepartmentChart'
+import { TeamChart } from './TeamChart'
 import { StatusBadge } from './StatusBadge'
 import { ResolutionBadge } from './ResolutionBadge'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -69,7 +69,7 @@ export function DashboardContent() {
         <StatusChart title="해결 방식별 현황 (자체 해결 / 도움 필요)" data={aggregateByResolutionType(tasks)} />
       </div>
 
-      <DepartmentChart data={aggregateByDepartment(tasks)} />
+      <TeamChart data={aggregateByTeam(tasks)} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
@@ -80,7 +80,7 @@ export function DashboardContent() {
                 <div key={t.id} className="flex items-center justify-between gap-2 border-b border-gray-50 last:border-0 pb-2 last:pb-0">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-gray-800 truncate">{t.title}</p>
-                    <p className="text-xs text-gray-400">{t.department} · {t.author}</p>
+                    <p className="text-xs text-gray-400">{t.team} · {t.author}</p>
                   </div>
                   <div className="flex gap-1 flex-shrink-0"><StatusBadge status={t.status} /><ResolutionBadge type={t.resolution_type} /></div>
                 </div>
@@ -96,7 +96,7 @@ export function DashboardContent() {
                 <div key={t.id} className="flex items-center justify-between gap-2 border-b border-gray-50 last:border-0 pb-2 last:pb-0">
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-gray-800 truncate">{t.title}</p>
-                    <p className="text-xs text-gray-400">{t.department} · {t.author} · {t.completed_at}</p>
+                    <p className="text-xs text-gray-400">{t.team} · {t.author} · {t.completed_at}</p>
                   </div>
                   <ResolutionBadge type={t.resolution_type} />
                 </div>

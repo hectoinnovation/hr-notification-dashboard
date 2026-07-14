@@ -12,7 +12,7 @@ export default function AiRegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const [registered, setRegistered] = useState(false)
 
-  const canSubmit = resolutionType !== null && form.title.trim() && form.author.trim()
+  const canSubmit = resolutionType !== null && form.title.trim() && form.team.trim() && form.author.trim()
 
   async function handleSubmit() {
     if (!canSubmit || !resolutionType) return
@@ -20,7 +20,7 @@ export default function AiRegisterPage() {
     setError(null)
     const { error: err } = await supabase.from('ai_tasks').insert({
       title: form.title.trim(),
-      department: form.department,
+      team: form.team.trim(),
       author: form.author.trim(),
       resolution_type: resolutionType,
       current_work: form.current_work || null,

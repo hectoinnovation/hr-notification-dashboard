@@ -50,8 +50,7 @@ function LoginForm() {
           {isAdminLogin && (
             <div className="mt-3 text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-left space-y-0.5">
               <p>관리자 전용 페이지입니다.</p>
-              <p>AI 과제 관리 시스템 전용 계정으로 로그인해주세요.</p>
-              <p className="pt-0.5">※ 입퇴사자 대시보드 계정과는 별도의 관리자 계정을 사용합니다.</p>
+              <p>관리자 계정으로 로그인해주세요.</p>
             </div>
           )}
         </div>
