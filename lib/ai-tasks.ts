@@ -45,6 +45,7 @@ export type AiTask = {
   current_work?: string
   ai_usage?: string
   result_content?: string
+  reflection?: string
   completed_at?: string
   password_hash: string
   assignee?: string

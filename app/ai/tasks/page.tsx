@@ -101,8 +101,7 @@ function AiTasksContent() {
         : sorted.length === 0 ? (
           tasks.length === 0 ? (
             <EmptyState icon="📂" label="등록된 AI 과제가 없습니다."
-              description="첫 번째 AI 과제를 등록해보세요."
-              actionLabel="AI 과제 등록하기" actionHref="/ai" />
+              description="AI 과제 등록 메뉴에서 첫 번째 과제를 등록해보세요." />
           ) : (
             <EmptyState icon="🔍" label="조건에 맞는 과제가 없습니다." description="검색어나 필터를 조정해보세요." />
           )

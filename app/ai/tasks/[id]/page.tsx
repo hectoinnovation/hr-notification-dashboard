@@ -9,6 +9,7 @@ import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { FileUploadField } from '@/components/ai/FileUploadField'
 import { CommentSection } from '@/components/ai/CommentSection'
 import { PasswordPrompt } from '@/components/ai/PasswordPrompt'
+import { CompleteTaskModal, type CompleteTaskData } from '@/components/ai/CompleteTaskModal'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 
@@ -22,12 +23,14 @@ type EditForm = {
   current_work: string
   ai_usage: string
   result_content: string
+  reflection: string
 }
 
 function toEditForm(t: AiTask): EditForm {
   return {
     title: t.title, team: t.team, author: t.author, resolution_type: t.resolution_type,
     current_work: t.current_work ?? '', ai_usage: t.ai_usage ?? '', result_content: t.result_content ?? '',
+    reflection: t.reflection ?? '',
   }
 }
 
@@ -42,6 +45,7 @@ export default function AiTaskDetailPage() {
   const [notFound, setNotFound] = useState(false)
 
   const [pending, setPending] = useState<PendingAction | null>(null)
+  const [completing, setCompleting] = useState(false)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<EditForm | null>(null)
   const [saving, setSaving] = useState(false)
@@ -81,14 +85,26 @@ export default function AiTaskDetailPage() {
       if (delErr) { setError(delErr.message); setPending(null); return true }
       router.push('/ai/tasks')
     } else if (pending === 'complete') {
-      const nowIso = new Date().toISOString()
-      await supabase.from('ai_tasks').update({
-        status: 'done', completed_at: nowIso.slice(0, 10), updated_at: nowIso,
-      }).eq('id', task.id)
-      await load()
+      setCompleting(true)
     }
     setPending(null)
     return true
+  }
+
+  async function submitComplete(data: CompleteTaskData) {
+    if (!task) return
+    const nowIso = new Date().toISOString()
+    const { error: updErr } = await supabase.from('ai_tasks').update({
+      status: 'done',
+      completed_at: nowIso.slice(0, 10),
+      ai_usage: data.ai_usage,
+      result_content: data.result_content,
+      reflection: data.reflection || null,
+      updated_at: nowIso,
+    }).eq('id', task.id)
+    if (updErr) throw new Error(updErr.message)
+    setCompleting(false)
+    await load()
   }
 
   async function saveEdit() {
@@ -101,6 +117,7 @@ export default function AiTaskDetailPage() {
       current_work: form.current_work.trim() || null,
       ai_usage: form.ai_usage.trim() || null,
       result_content: form.result_content.trim() || null,
+      reflection: form.reflection.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', task.id)
     setSaving(false)
@@ -148,13 +165,18 @@ export default function AiTaskDetailPage() {
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">AI 활용 내용</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">{task.status === 'done' ? 'AI 활용 내용' : 'AI 활용 계획'}</label>
               <textarea value={form.ai_usage} onChange={e => setForm({ ...form, ai_usage: e.target.value })} rows={3}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1">해결 결과</label>
               <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={2}
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">느낀 점</label>
+              <textarea value={form.reflection} onChange={e => setForm({ ...form, reflection: e.target.value })} rows={2}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
             <FileUploadField taskId={task.id} files={files} onFilesChange={async next => {
@@ -192,7 +214,7 @@ export default function AiTaskDetailPage() {
             )}
             {task.ai_usage && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">AI 활용 내용</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1">{task.status === 'done' ? 'AI 활용 내용' : 'AI 활용 계획'}</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.ai_usage}</p>
               </div>
             )}
@@ -200,6 +222,12 @@ export default function AiTaskDetailPage() {
               <div>
                 <p className="text-xs font-semibold text-gray-500 mb-1">해결 결과</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.result_content}</p>
+              </div>
+            )}
+            {task.reflection && (
+              <div>
+                <p className="text-xs font-semibold text-gray-500 mb-1">느낀 점</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.reflection}</p>
               </div>
             )}
 
@@ -221,7 +249,7 @@ export default function AiTaskDetailPage() {
               {task.status === 'in_progress' && (
                 <button onClick={() => setPending('complete')}
                   className="text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg transition-colors">
-                  완료 처리
+                  완료하기
                 </button>
               )}
               <button onClick={() => setPending('edit')}
@@ -243,9 +271,17 @@ export default function AiTaskDetailPage() {
 
       {pending && (
         <PasswordPrompt
-          title={pending === 'delete' ? '과제 삭제' : pending === 'complete' ? '완료 처리' : '과제 수정'}
+          title={pending === 'delete' ? '과제 삭제' : pending === 'complete' ? '완료하기' : '과제 수정'}
           onVerify={handleVerified}
           onClose={() => setPending(null)}
+        />
+      )}
+
+      {completing && (
+        <CompleteTaskModal
+          initialAiUsage={task.ai_usage}
+          onClose={() => setCompleting(false)}
+          onSubmit={submitComplete}
         />
       )}
     </div>

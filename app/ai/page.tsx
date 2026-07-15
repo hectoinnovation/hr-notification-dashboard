@@ -1,15 +1,13 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { hashPassword, type ResolutionType, type AiFile } from '@/lib/ai-tasks'
+import { hashPassword, type ResolutionType, type AiTask } from '@/lib/ai-tasks'
 import { FormSection } from '@/components/ai/FormSection'
-import { FileUploadField } from '@/components/ai/FileUploadField'
 
 export default function AiRegisterPage() {
   const router = useRouter()
-  const taskId = useMemo(() => crypto.randomUUID(), [])
 
   const [resolutionType, setResolutionType] = useState<ResolutionType | null>(null)
   const [title, setTitle] = useState('')
@@ -17,8 +15,6 @@ export default function AiRegisterPage() {
   const [author, setAuthor] = useState('')
   const [currentWork, setCurrentWork] = useState('')
   const [aiUsage, setAiUsage] = useState('')
-  const [resultContent, setResultContent] = useState('')
-  const [files, setFiles] = useState<Pick<AiFile, 'file_name' | 'file_url'>[]>([])
   const [password, setPassword] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
@@ -32,24 +28,18 @@ export default function AiRegisterPage() {
     setError(null)
     try {
       const password_hash = await hashPassword(password.trim())
-      const { error: err } = await supabase.from('ai_tasks').insert({
-        id: taskId,
+      const { data, error: err } = await supabase.from('ai_tasks').insert({
         title: title.trim(),
         team: team.trim(),
         author: author.trim(),
         resolution_type: resolutionType,
         current_work: currentWork.trim() || null,
         ai_usage: aiUsage.trim() || null,
-        result_content: resultContent.trim() || null,
         password_hash,
-      })
-      if (err) { setError(err.message); return }
+      }).select().single()
+      if (err || !data) { setError(err?.message ?? '등록에 실패했습니다.'); return }
 
-      for (const f of files) {
-        await supabase.from('ai_files').insert({ task_id: taskId, file_name: f.file_name, file_url: f.file_url, uploaded_by: author.trim() })
-      }
-
-      router.push(`/ai/tasks/${taskId}`)
+      router.push(`/ai/tasks/${(data as AiTask).id}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -61,7 +51,7 @@ export default function AiRegisterPage() {
     <div className="max-w-2xl mx-auto space-y-4">
       <div>
         <h1 className="text-xl font-bold text-gray-900">AI 과제 등록</h1>
-        <p className="text-sm text-gray-400 mt-0.5">AI를 활용해 해결했거나, 도움이 필요한 업무를 공유해주세요.</p>
+        <p className="text-sm text-gray-400 mt-0.5">앞으로 AI를 활용해 해결하려는 업무를 등록해주세요. 완료되면 결과를 공유할 수 있어요.</p>
       </div>
 
       <FormSection step={1} title="해결 방식">
@@ -72,7 +62,7 @@ export default function AiRegisterPage() {
             }`}>
             {resolutionType === 'self' && <span className="absolute top-3 right-3 text-orange-500">✓</span>}
             <p className="text-sm font-bold text-gray-900">🤖 자체 해결</p>
-            <p className="text-xs text-gray-500 mt-1">AI를 활용하여 해결했습니다.</p>
+            <p className="text-xs text-gray-500 mt-1">AI를 활용하여 스스로 해결할 계획입니다.</p>
           </button>
           <button type="button" onClick={() => setResolutionType('help')}
             className={`relative text-left px-4 py-4 rounded-xl border-2 transition-colors ${
@@ -112,29 +102,19 @@ export default function AiRegisterPage() {
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">현재 업무</label>
             <textarea value={currentWork} onChange={e => setCurrentWork(e.target.value)} rows={2}
-              placeholder="예) 매주 채용공고 작성"
+              placeholder="예) 매주 채용공고를 작성하고 있습니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 내용</label>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 계획</label>
             <textarea value={aiUsage} onChange={e => setAiUsage(e.target.value)} rows={3}
-              placeholder="예) ChatGPT를 활용하여 채용공고 초안을 자동으로 생성했습니다."
-              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 block mb-1.5">해결 결과</label>
-            <textarea value={resultContent} onChange={e => setResultContent(e.target.value)} rows={2}
-              placeholder="예) 공고 작성 시간을 30분에서 5분으로 단축했습니다. (아직 진행 중이면 비워두셔도 됩니다)"
+              placeholder="예) ChatGPT를 활용하여 채용공고를 자동 생성해볼 예정입니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
           </div>
         </div>
       </FormSection>
 
-      <FormSection step={4} title="첨부파일">
-        <FileUploadField taskId={taskId} files={files} onFilesChange={setFiles} />
-      </FormSection>
-
-      <FormSection step={5} title="수정 비밀번호">
+      <FormSection step={4} title="수정 비밀번호">
         <div>
           <input type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder="4자 이상 입력 (수정·삭제·완료 처리 시 필요합니다)"

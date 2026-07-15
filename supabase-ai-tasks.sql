@@ -21,10 +21,11 @@ create table if not exists public.ai_tasks (
   resolution_type     text not null check (resolution_type in ('self','help')),        -- 해결 방식: 자체 해결 | 도움 필요
   status              text not null default 'in_progress' check (status in ('in_progress','done')),  -- 진행 상태: 진행중 | 완료
 
-  -- 등록 시 입력 항목
+  -- 등록 시 입력 항목 — 등록은 "앞으로 AI로 해결하려는 업무" 기준. 완료 전까지는 계획 텍스트.
   current_work        text,        -- 현재 업무
-  ai_usage             text,        -- AI 활용 내용
-  result_content       text,        -- 해결 결과 (등록 시 또는 완료 처리 시 채울 수 있음)
+  ai_usage             text,        -- 등록 시=AI 활용 계획 / 완료 처리 시 실제 활용 내용으로 덮어씀
+  result_content       text,        -- 해결 결과 (완료 처리 시 입력)
+  reflection           text,        -- 느낀 점 (완료 처리 시 선택 입력)
   completed_at         date,
 
   -- 수정/삭제/완료 처리 권한 확인용 (bcrypt 해시로 저장, 평문 저장 금지)
@@ -143,6 +144,49 @@ create policy "allow_all_ai_guides"      on public.ai_guides      for all using 
 create policy "allow_all_ai_assignments" on public.ai_assignments for all using (true) with check (true);
 create policy "allow_all_ai_comments"    on public.ai_comments    for all using (true) with check (true);
 create policy "allow_all_ai_files"       on public.ai_files       for all using (true) with check (true);
+
+-- ============================================================
+-- 예시 데이터 (화면 확인용 — 진행중 1건 + 완료 1건 + 댓글 3개)
+-- 이미 실행했다면 ON CONFLICT DO NOTHING으로 안전하게 건너뜀.
+-- 데모 비밀번호는 공통으로 "demo1234" (pgcrypto crypt()로 bcrypt 해시 생성).
+-- ============================================================
+insert into public.ai_tasks (
+  id, title, team, author, resolution_type, status,
+  current_work, ai_usage, result_content, completed_at,
+  password_hash, priority, created_at, updated_at
+) values (
+  '11111111-1111-4111-a111-111111111111',
+  '채용공고 자동 생성', '인사팀', '안소정', 'self', 'in_progress',
+  '매주 채용공고를 작성하고 있습니다.',
+  'ChatGPT를 활용하여
+채용공고 초안을 자동 생성해볼 예정입니다.',
+  null, null,
+  crypt('demo1234', gen_salt('bf')), 'high',
+  now() - interval '3 days', now() - interval '3 days'
+) on conflict (id) do nothing;
+
+insert into public.ai_tasks (
+  id, title, team, author, resolution_type, status,
+  current_work, ai_usage, result_content, completed_at,
+  password_hash, priority, created_at, updated_at
+) values (
+  '22222222-2222-4222-a222-222222222222',
+  '신규입사자 안내 메일 자동 작성', '인사팀', '이수현', 'self', 'done',
+  '신규입사자에게 안내 메일을 매번 수작업으로 작성하고 있습니다.',
+  'Claude를 활용하여
+메일 초안을 자동 작성했습니다.',
+  '메일 작성 시간이
+20분에서 3분으로 단축되었습니다.',
+  (now() - interval '1 day')::date,
+  crypt('demo1234', gen_salt('bf')), 'urgent',
+  now() - interval '7 days', now() - interval '1 day'
+) on conflict (id) do nothing;
+
+insert into public.ai_comments (id, task_id, author, content, password_hash, is_accepted, created_at) values
+  ('33333333-3333-4333-a333-333333333333', '22222222-2222-4222-a222-222222222222', '박서준', '좋은 아이디어네요.',           crypt('demo1234', gen_salt('bf')), true,  now() - interval '20 hours'),
+  ('44444444-4444-4444-a444-444444444444', '22222222-2222-4222-a222-222222222222', '최유진', '저희 팀도 적용해보겠습니다.', crypt('demo1234', gen_salt('bf')), false, now() - interval '15 hours'),
+  ('55555555-5555-4555-a555-555555555555', '22222222-2222-4222-a222-222222222222', '정하은', '프롬프트 공유 가능할까요?',   crypt('demo1234', gen_salt('bf')), false, now() - interval '10 hours')
+on conflict (id) do nothing;
 
 -- ============================================================
 -- Storage Bucket (SQL Editor에서 생성 불가 — 수동 생성 필요)
