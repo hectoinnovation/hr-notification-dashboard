@@ -1,0 +1,133 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import { hashPassword, type ResolutionType, type AiTask } from '@/lib/ai-tasks'
+import { FormSection } from '@/components/ai/FormSection'
+
+export default function AiRegisterPage() {
+  const router = useRouter()
+
+  const [resolutionType, setResolutionType] = useState<ResolutionType | null>(null)
+  const [title, setTitle] = useState('')
+  const [team, setTeam] = useState('')
+  const [author, setAuthor] = useState('')
+  const [currentWork, setCurrentWork] = useState('')
+  const [aiUsage, setAiUsage] = useState('')
+  const [password, setPassword] = useState('')
+
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const canSubmit = resolutionType !== null && title.trim() && team.trim() && author.trim() && password.trim().length >= 4
+
+  async function handleSubmit() {
+    if (!canSubmit || !resolutionType) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const password_hash = await hashPassword(password.trim())
+      const { data, error: err } = await supabase.from('ai_tasks').insert({
+        title: title.trim(),
+        team: team.trim(),
+        author: author.trim(),
+        resolution_type: resolutionType,
+        current_work: currentWork.trim() || null,
+        ai_usage: aiUsage.trim() || null,
+        password_hash,
+      }).select().single()
+      if (err || !data) { setError(err?.message ?? '등록에 실패했습니다.'); return }
+
+      router.push(`/ai/tasks/${(data as AiTask).id}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-4">
+      <div>
+        <h1 className="text-xl font-bold text-gray-900">AI 과제 등록</h1>
+        <p className="text-sm text-gray-400 mt-0.5">앞으로 AI를 활용해 해결하려는 업무를 등록해주세요. 완료되면 결과를 공유할 수 있어요.</p>
+      </div>
+
+      <FormSection step={1} title="해결 방식">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button type="button" onClick={() => setResolutionType('self')}
+            className={`relative text-left px-4 py-4 rounded-xl border-2 transition-colors ${
+              resolutionType === 'self' ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-white hover:border-orange-200'
+            }`}>
+            {resolutionType === 'self' && <span className="absolute top-3 right-3 text-orange-500">✓</span>}
+            <p className="text-sm font-bold text-gray-900">🤖 자체 해결</p>
+            <p className="text-xs text-gray-500 mt-1">AI를 활용하여 스스로 해결할 계획입니다.</p>
+          </button>
+          <button type="button" onClick={() => setResolutionType('help')}
+            className={`relative text-left px-4 py-4 rounded-xl border-2 transition-colors ${
+              resolutionType === 'help' ? 'border-orange-400 bg-orange-50' : 'border-gray-200 bg-white hover:border-orange-200'
+            }`}>
+            {resolutionType === 'help' && <span className="absolute top-3 right-3 text-orange-500">✓</span>}
+            <p className="text-sm font-bold text-gray-900">🙋 도움 필요</p>
+            <p className="text-xs text-gray-500 mt-1">다른 직원의 도움이 필요합니다.</p>
+          </button>
+        </div>
+      </FormSection>
+
+      <FormSection step={2} title="기본 정보">
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">제목<span className="text-red-400 ml-0.5">*</span></label>
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="예) 채용공고 자동 생성"
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">팀<span className="text-red-400 ml-0.5">*</span></label>
+              <input value={team} onChange={e => setTeam(e.target.value)} placeholder="예) 인사팀"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1.5">작성자<span className="text-red-400 ml-0.5">*</span></label>
+              <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="예) 안소정"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+            </div>
+          </div>
+        </div>
+      </FormSection>
+
+      <FormSection step={3} title="업무 내용">
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">현재 업무</label>
+            <textarea value={currentWork} onChange={e => setCurrentWork(e.target.value)} rows={2}
+              placeholder="예) 매주 채용공고를 작성하고 있습니다."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 계획</label>
+            <textarea value={aiUsage} onChange={e => setAiUsage(e.target.value)} rows={3}
+              placeholder="예) ChatGPT를 활용하여 채용공고를 자동 생성해볼 예정입니다."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
+          </div>
+        </div>
+      </FormSection>
+
+      <FormSection step={4} title="수정 비밀번호">
+        <div>
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+            placeholder="4자 이상 입력 (수정·삭제·완료 처리 시 필요합니다)"
+            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+        </div>
+      </FormSection>
+
+      {error && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">등록 실패: {error}</p>}
+
+      <button onClick={handleSubmit} disabled={!canSubmit || submitting}
+        className="w-full text-sm font-bold py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors disabled:opacity-40">
+        {submitting ? '등록 중...' : '🤖 AI 과제 등록하기'}
+      </button>
+    </div>
+  )
+}
