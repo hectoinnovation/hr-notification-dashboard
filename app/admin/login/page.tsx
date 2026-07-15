@@ -4,7 +4,7 @@ import { useState, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 
 // AI 과제 관리 관리자 전용 로그인. 기존 입퇴사자 대시보드 로그인(/login, /otp)과는
-// 완전히 별개의 화면/엔드포인트/세션이며, OTP 단계 없이 바로 /admin으로 이동한다.
+// 완전히 별개의 화면/엔드포인트/세션이며, OTP 단계 없이 바로 /admin/tasks(전체 과제)로 이동한다.
 export default function AdminLoginPage() {
   const router = useRouter()
   const [id, setId] = useState('')
@@ -24,7 +24,7 @@ export default function AdminLoginPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error); return }
-      router.push('/admin')
+      router.push('/admin/tasks')
     } catch {
       setError('로그인 중 오류가 발생했습니다.')
     } finally {

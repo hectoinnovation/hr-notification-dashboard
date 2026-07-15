@@ -102,55 +102,10 @@ export function sortComments(comments: AiComment[]): AiComment[] {
   })
 }
 
-// ─── 대시보드 집계 헬퍼 (클라이언트에서 한 번의 fetch 결과로 계산) ─────────────
-// 진행 상태 집계 (진행중/완료) — resolution_type과 혼동하지 않도록 별도 함수로 분리
-export function aggregateByStatus(tasks: AiTask[]): { label: string; value: number }[] {
-  return [
-    { label: STATUS_LABEL.in_progress, value: tasks.filter(t => t.status === 'in_progress').length },
-    { label: STATUS_LABEL.done,        value: tasks.filter(t => t.status === 'done').length },
-  ]
-}
-
-// 해결 방식 집계 (자체 해결/도움 필요) — status와 혼동하지 않도록 별도 함수로 분리
-export function aggregateByResolutionType(tasks: AiTask[]): { label: string; value: number }[] {
-  return [
-    { label: RESOLUTION_LABEL.self, value: tasks.filter(t => t.resolution_type === 'self').length },
-    { label: RESOLUTION_LABEL.help, value: tasks.filter(t => t.resolution_type === 'help').length },
-  ]
-}
-
 // 팀은 자유 텍스트라 고정 목록이 없다 — 실제 등록된 데이터에서 팀 이름을 뽑아 정렬한다.
 export function getDistinctTeams(tasks: AiTask[]): string[] {
   const set = new Set(tasks.map(t => t.team).filter(Boolean))
   return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'))
-}
-
-export function aggregateByTeam(tasks: AiTask[]): { team: string; count: number }[] {
-  return getDistinctTeams(tasks).map(team => ({ team, count: tasks.filter(t => t.team === team).length }))
-}
-
-export type TeamStats = {
-  team: string
-  total: number
-  inProgress: number
-  done: number
-  help: number
-  self: number
-}
-
-// 팀별 등록 건수 / 진행중 / 완료 / 도움 필요 / 자체 해결 통계
-export function aggregateTeamStats(tasks: AiTask[]): TeamStats[] {
-  return getDistinctTeams(tasks).map(team => {
-    const teamTasks = tasks.filter(t => t.team === team)
-    return {
-      team,
-      total: teamTasks.length,
-      inProgress: teamTasks.filter(t => t.status === 'in_progress').length,
-      done: teamTasks.filter(t => t.status === 'done').length,
-      help: teamTasks.filter(t => t.resolution_type === 'help').length,
-      self: teamTasks.filter(t => t.resolution_type === 'self').length,
-    }
-  })
 }
 
 // 기본 정렬: 우선순위(긴급→낮음) 우선, 동일 우선순위 내에서는 최신 등록순
