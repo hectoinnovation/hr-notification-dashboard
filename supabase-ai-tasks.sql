@@ -23,16 +23,14 @@ create table if not exists public.ai_tasks (
 
   -- 등록 시 입력 항목
   current_work        text,        -- 현재 업무
-  problem_definition   text,        -- 문제 정의
-  expected_effect      text,        -- 기대 효과
-  ai_plan              text,        -- AI 활용 계획
-
-  -- 완료 처리 시 입력 항목
-  result_content       text,        -- 개발 결과
-  ai_used              text,        -- 사용한 AI (ChatGPT/Claude/Cursor 등, 자유 텍스트)
+  ai_usage             text,        -- AI 활용 내용
+  result_content       text,        -- 해결 결과 (등록 시 또는 완료 처리 시 채울 수 있음)
   completed_at         date,
 
-  -- 관리자 전용 관리 필드 (도움 필요 과제 운영) — 항상 최신값. 변경 이력은 ai_assignments 참고.
+  -- 수정/삭제/완료 처리 권한 확인용 (bcrypt 해시로 저장, 평문 저장 금지)
+  password_hash        text not null,
+
+  -- 관리자 전용 관리 필드 — 항상 최신값. 변경 이력은 ai_assignments 참고.
   assignee             text,        -- 담당자
   priority             text not null default 'medium' check (priority in ('urgent','high','medium','low')),  -- 긴급 | 높음 | 보통 | 낮음
 
@@ -85,22 +83,27 @@ create index if not exists idx_ai_assignments_changed_at  on public.ai_assignmen
 comment on table public.ai_assignments is '과제 담당자/우선순위 변경 이력 (append-only 감사 로그, 현재값은 ai_tasks에 있음)';
 
 -- ── ai_comments ─────────────────────────────────────────────────────────────
--- 관리자 운영 메모 스레드.
--- ⚠ 이 테이블은 RLS가 allow_all(익명 anon key로 전체 CRUD 가능)이라 비공개를 보장할 수 없다.
---   민감정보(개인정보, 인사평가성 코멘트 등)는 절대 적지 말 것 — "공개 운영 메모"로만 사용.
---   UI에서도 이 사실을 명시적으로 안내한다.
+-- 과제별 공개 댓글(질문/답변) 스레드. 직원 누구나 작성 가능, 수정/삭제는 댓글
+-- 등록 시 입력한 비밀번호(bcrypt 해시) 확인 후 가능 — 관리자는 비밀번호 없이 가능.
+-- 과제 작성자는 댓글 중 하나를 "채택"할 수 있다(is_accepted, 과제당 최대 1개).
 create table if not exists public.ai_comments (
   id            uuid primary key default gen_random_uuid(),
   task_id       uuid not null references public.ai_tasks(id) on delete cascade,
-  author        text not null,       -- 작성자 (관리자, 자유 텍스트)
+  author        text not null,       -- 작성자 (자유 텍스트)
   content       text not null,
+  password_hash text not null,       -- 수정/삭제 확인용 bcrypt 해시
+  is_accepted   boolean not null default false,
   created_at    timestamptz not null default now()
 );
 
 create index if not exists idx_ai_comments_task_id     on public.ai_comments (task_id);
-create index if not exists idx_ai_comments_created_at  on public.ai_comments (created_at desc);
+create index if not exists idx_ai_comments_created_at  on public.ai_comments (created_at asc);
 
-comment on table public.ai_comments is '과제별 공개 운영 메모 스레드 — RLS가 allow_all이라 비공개 보장 불가, 민감정보 입력 금지';
+-- 과제당 채택 댓글은 하나만 허용 (부분 유니크 인덱스로 DB 단에서도 보장)
+create unique index if not exists idx_ai_comments_one_accepted
+  on public.ai_comments (task_id) where is_accepted = true;
+
+comment on table public.ai_comments is '과제별 공개 댓글 스레드 — 비밀번호(해시) 확인 후 본인 댓글 수정/삭제, 관리자는 무조건 가능';
 
 -- ── ai_files ────────────────────────────────────────────────────────────────
 -- 첨부파일 메타데이터. 실제 바이너리는 Supabase Storage 'ai-task-files' 버킷에 저장.

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
-export function EmptyState({ label, description, actionLabel, actionHref }: {
+export function EmptyState({ icon, label, description, actionLabel, actionHref }: {
+  icon?: string
   label: string
   description?: string
   actionLabel?: string
@@ -8,6 +9,7 @@ export function EmptyState({ label, description, actionLabel, actionHref }: {
 }) {
   return (
     <div className="bg-white rounded-xl border border-dashed border-gray-200 py-12 px-4 flex flex-col items-center justify-center gap-1.5 text-center">
+      {icon && <span className="text-3xl mb-1">{icon}</span>}
       <p className="text-sm text-gray-400">{label}</p>
       {description && <p className="text-xs text-gray-300">{description}</p>}
       {actionLabel && actionHref && (

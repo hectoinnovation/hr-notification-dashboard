@@ -71,10 +71,9 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
 
     const { error: updErr } = await supabase.from('ai_tasks').update({
       title: form.title, team: form.team, author: form.author,
-      current_work: form.current_work || null, problem_definition: form.problem_definition || null,
-      expected_effect: form.expected_effect || null, ai_plan: form.ai_plan || null,
+      current_work: form.current_work || null, ai_usage: form.ai_usage || null,
       resolution_type: form.resolution_type, status: form.status,
-      result_content: form.result_content || null, ai_used: form.ai_used || null,
+      result_content: form.result_content || null,
       completed_at: form.completed_at || null,
       assignee: form.assignee || null, priority: form.priority || 'medium',
       updated_at: nowIso,
@@ -128,20 +127,15 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
           <Field label="작성자" value={form.author} onChange={v => set('author', v)} />
         </div>
         <Field label="현재 업무" value={form.current_work ?? ''} onChange={v => set('current_work', v)} textarea />
-        <Field label="문제 정의" value={form.problem_definition ?? ''} onChange={v => set('problem_definition', v)} textarea />
-        <Field label="기대 효과" value={form.expected_effect ?? ''} onChange={v => set('expected_effect', v)} textarea />
-        <Field label="AI 활용 계획" value={form.ai_plan ?? ''} onChange={v => set('ai_plan', v)} textarea />
+        <Field label="AI 활용 내용" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
           <p className="text-xs font-bold text-gray-700">완료 처리 정보</p>
-          <Field label="개발 결과" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="사용한 AI" value={form.ai_used ?? ''} onChange={v => set('ai_used', v)} />
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1.5">완료일</label>
-              <input type="date" value={form.completed_at ?? ''} onChange={e => set('completed_at', e.target.value)}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400" />
-            </div>
+          <Field label="해결 결과" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">완료일</label>
+            <input type="date" value={form.completed_at ?? ''} onChange={e => set('completed_at', e.target.value)}
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400" />
           </div>
           <FileUploadField taskId={task.id} files={files} onFilesChange={async next => {
             setFiles(next)
@@ -167,8 +161,8 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
         </div>
 
         <div className="border-t border-gray-100 pt-4">
-          <p className="text-xs font-bold text-gray-700 mb-3">관리자 메모</p>
-          <CommentThread taskId={task.id} comments={comments} onAdded={loadExtras} />
+          <p className="text-xs font-bold text-gray-700 mb-3">댓글 (관리자는 비밀번호 없이 삭제 가능)</p>
+          <CommentThread comments={comments} onDeleted={loadExtras} />
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">

@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import bcrypt from 'bcryptjs'
 
 // ─── 두 축을 혼동하지 말 것 ────────────────────────────────────────────────────
 // status          = 진행 상태  (진행중 / 완료)
@@ -42,12 +43,10 @@ export type AiTask = {
   resolution_type: ResolutionType
   status: TaskStatus
   current_work?: string
-  problem_definition?: string
-  expected_effect?: string
-  ai_plan?: string
+  ai_usage?: string
   result_content?: string
-  ai_used?: string
   completed_at?: string
+  password_hash: string
   assignee?: string
   priority?: Priority
   created_at: string
@@ -74,12 +73,14 @@ export type AiAssignment = {
   changed_at: string
 }
 
-/** 공개 운영 메모 — RLS가 allow_all(anon key 전체 CRUD)이라 비공개를 보장할 수 없다. 민감정보 입력 금지. */
+/** 과제별 공개 댓글. 수정/삭제는 password_hash 확인(또는 관리자) 후에만 가능. */
 export type AiComment = {
   id: string
   task_id: string
   author: string
   content: string
+  password_hash: string
+  is_accepted: boolean
   created_at: string
 }
 
@@ -100,6 +101,25 @@ export async function uploadTaskFile(taskId: string, file: File): Promise<{ file
   if (error) throw error
   const { data } = supabase.storage.from('ai-task-files').getPublicUrl(path)
   return { file_url: data.publicUrl, file_size: file.size }
+}
+
+// ─── 비밀번호 해시 (서버 API 없이 브라우저에서 직접 해시/검증 — bcryptjs는 순수 JS 구현) ───
+// 주의: RLS가 allow_all이라 password_hash 컬럼 자체는 anon key로 조회 가능하다.
+// 평문 노출은 막지만, 오프라인 무차별 대입까지 막는 것은 아니다 — 사내망 IP 화이트리스트로 보완.
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 10)
+}
+
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
+  return bcrypt.compare(password, hash)
+}
+
+// 댓글 정렬: 채택된 댓글을 맨 위로, 그 외에는 등록순(오래된 순)
+export function sortComments(comments: AiComment[]): AiComment[] {
+  return [...comments].sort((a, b) => {
+    if (a.is_accepted !== b.is_accepted) return a.is_accepted ? -1 : 1
+    return a.created_at.localeCompare(b.created_at)
+  })
 }
 
 // ─── 대시보드 집계 헬퍼 (클라이언트에서 한 번의 fetch 결과로 계산) ─────────────
@@ -161,4 +181,11 @@ export function sortTasksByPriority(tasks: AiTask[]): AiTask[] {
     if (pa !== pb) return pa - pb
     return b.created_at.localeCompare(a.created_at)
   })
+}
+
+// task_id별 댓글 수 집계 (카드에 💬 N 표시용)
+export function countCommentsByTask(comments: Pick<AiComment, 'task_id'>[]): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const c of comments) counts[c.task_id] = (counts[c.task_id] ?? 0) + 1
+  return counts
 }

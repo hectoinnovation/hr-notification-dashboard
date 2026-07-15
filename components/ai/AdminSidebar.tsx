@@ -15,8 +15,8 @@ export function AdminSidebar() {
   return (
     <aside className="w-56 flex-shrink-0 bg-white border-r border-gray-200 min-h-screen sticky top-0 flex flex-col">
       <div className="h-14 flex items-center gap-2 px-4 border-b border-gray-100 flex-shrink-0">
-        <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center font-bold text-xs">AI</div>
-        <span className="font-bold text-sm text-gray-900">AI 과제 관리자</span>
+        <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center text-sm">🤖</div>
+        <span className="font-bold text-sm text-gray-900">AI 해커톤 관리자</span>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
         {LINKS.map(l => {
