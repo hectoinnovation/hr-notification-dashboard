@@ -97,9 +97,7 @@ export default function AiTaskDetailPage() {
     const { error: updErr } = await supabase.from('ai_tasks').update({
       status: 'done',
       completed_at: nowIso.slice(0, 10),
-      ai_usage: data.ai_usage,
       result_content: data.result_content,
-      reflection: data.reflection || null,
       updated_at: nowIso,
     }).eq('id', task.id)
     if (updErr) throw new Error(updErr.message)
@@ -246,11 +244,15 @@ export default function AiTaskDetailPage() {
             </div>
 
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-              {task.status === 'in_progress' && (
+              {task.status === 'in_progress' ? (
                 <button onClick={() => setPending('complete')}
                   className="text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg transition-colors">
-                  완료하기
+                  🟢 완료하기
                 </button>
+              ) : (
+                <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                  ✅ 완료
+                </span>
               )}
               <button onClick={() => setPending('edit')}
                 className="text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors">
@@ -279,7 +281,6 @@ export default function AiTaskDetailPage() {
 
       {completing && (
         <CompleteTaskModal
-          initialAiUsage={task.ai_usage}
           onClose={() => setCompleting(false)}
           onSubmit={submitComplete}
         />

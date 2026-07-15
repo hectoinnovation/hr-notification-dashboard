@@ -15,7 +15,15 @@ export function AiNav() {
 
   // Preview/로컬에서만 예시 데이터를 생성한다 (라우트 안에서 Production은 항상 차단).
   useEffect(() => {
-    fetch('/api/ai-tasks/seed', { method: 'POST' }).catch(err => console.error('[AI 해커톤] 예시 데이터 생성 실패:', err))
+    (async () => {
+      try {
+        const res = await fetch('/api/ai-tasks/seed', { method: 'POST' })
+        const data = await res.json()
+        if (!res.ok || data.error) console.error('[AI 해커톤] 예시 데이터 생성 실패:', data.error ?? res.status)
+      } catch (err) {
+        console.error('[AI 해커톤] 예시 데이터 생성 요청 실패:', err)
+      }
+    })()
   }, [])
 
   return (

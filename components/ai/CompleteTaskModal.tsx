@@ -3,27 +3,24 @@
 import { useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 
-export type CompleteTaskData = { ai_usage: string; result_content: string; reflection: string }
+export type CompleteTaskData = { result_content: string }
 
-export function CompleteTaskModal({ onClose, onSubmit, initialAiUsage }: {
+export function CompleteTaskModal({ onClose, onSubmit }: {
   onClose: () => void
   onSubmit: (data: CompleteTaskData) => Promise<void>
-  initialAiUsage?: string
 }) {
-  const [aiUsage, setAiUsage] = useState(initialAiUsage ?? '')
   const [resultContent, setResultContent] = useState('')
-  const [reflection, setReflection] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const canSubmit = aiUsage.trim() && resultContent.trim()
+  const canSubmit = resultContent.trim().length > 0
 
   async function submit() {
     if (!canSubmit) return
     setSaving(true)
     setError(null)
     try {
-      await onSubmit({ ai_usage: aiUsage.trim(), result_content: resultContent.trim(), reflection: reflection.trim() })
+      await onSubmit({ result_content: resultContent.trim() })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSaving(false)
@@ -34,21 +31,10 @@ export function CompleteTaskModal({ onClose, onSubmit, initialAiUsage }: {
     <Modal title="🎉 과제 완료하기" onClose={onClose}>
       <div className="space-y-3">
         <div>
-          <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 내용<span className="text-red-400 ml-0.5">*</span></label>
-          <textarea value={aiUsage} onChange={e => setAiUsage(e.target.value)} rows={3}
-            placeholder="예) ChatGPT로 채용공고를 생성했습니다."
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
-        </div>
-        <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">해결 결과<span className="text-red-400 ml-0.5">*</span></label>
-          <textarea value={resultContent} onChange={e => setResultContent(e.target.value)} rows={2}
-            placeholder="예) 기존 30분 걸리던 업무를 5분으로 단축했습니다."
+          <textarea value={resultContent} onChange={e => setResultContent(e.target.value)} rows={4} autoFocus
+            placeholder={'예) ChatGPT를 활용하여 채용공고 초안을 자동 생성하였고,\n기존 30분 걸리던 업무를 5분으로 단축했습니다.'}
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
-        </div>
-        <div>
-          <label className="text-xs font-semibold text-gray-500 block mb-1.5">느낀 점 <span className="text-gray-300">(선택)</span></label>
-          <textarea value={reflection} onChange={e => setReflection(e.target.value)} rows={2}
-            className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
         </div>
         {error && <p className="text-xs text-red-500">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
