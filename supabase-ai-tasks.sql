@@ -146,48 +146,11 @@ create policy "allow_all_ai_comments"    on public.ai_comments    for all using 
 create policy "allow_all_ai_files"       on public.ai_files       for all using (true) with check (true);
 
 -- ============================================================
--- 예시 데이터 (화면 확인용 — 진행중 1건 + 완료 1건 + 댓글 3개)
--- 이미 실행했다면 ON CONFLICT DO NOTHING으로 안전하게 건너뜀.
--- 데모 비밀번호는 공통으로 "demo1234" (pgcrypto crypt()로 bcrypt 해시 생성).
--- ============================================================
-insert into public.ai_tasks (
-  id, title, team, author, resolution_type, status,
-  current_work, ai_usage, result_content, completed_at,
-  password_hash, priority, created_at, updated_at
-) values (
-  '11111111-1111-4111-a111-111111111111',
-  '채용공고 자동 생성', '인사팀', '안소정', 'self', 'in_progress',
-  '매주 채용공고를 작성하고 있습니다.',
-  'ChatGPT를 활용하여
-채용공고 초안을 자동 생성해볼 예정입니다.',
-  null, null,
-  crypt('demo1234', gen_salt('bf')), 'high',
-  now() - interval '3 days', now() - interval '3 days'
-) on conflict (id) do nothing;
-
-insert into public.ai_tasks (
-  id, title, team, author, resolution_type, status,
-  current_work, ai_usage, result_content, completed_at,
-  password_hash, priority, created_at, updated_at
-) values (
-  '22222222-2222-4222-a222-222222222222',
-  '신규입사자 안내 메일 자동 작성', '인사팀', '이수현', 'self', 'done',
-  '신규입사자에게 안내 메일을 매번 수작업으로 작성하고 있습니다.',
-  'Claude를 활용하여
-메일 초안을 자동 작성했습니다.',
-  '메일 작성 시간이
-20분에서 3분으로 단축되었습니다.',
-  (now() - interval '1 day')::date,
-  crypt('demo1234', gen_salt('bf')), 'urgent',
-  now() - interval '7 days', now() - interval '1 day'
-) on conflict (id) do nothing;
-
-insert into public.ai_comments (id, task_id, author, content, password_hash, is_accepted, created_at) values
-  ('33333333-3333-4333-a333-333333333333', '22222222-2222-4222-a222-222222222222', '박서준', '좋은 아이디어네요.',           crypt('demo1234', gen_salt('bf')), true,  now() - interval '20 hours'),
-  ('44444444-4444-4444-a444-444444444444', '22222222-2222-4222-a222-222222222222', '최유진', '저희 팀도 적용해보겠습니다.', crypt('demo1234', gen_salt('bf')), false, now() - interval '15 hours'),
-  ('55555555-5555-4555-a555-555555555555', '22222222-2222-4222-a222-222222222222', '정하은', '프롬프트 공유 가능할까요?',   crypt('demo1234', gen_salt('bf')), false, now() - interval '10 hours')
-on conflict (id) do nothing;
-
+-- 예시(데모) 데이터 안내
+-- 이 SQL에는 예시 데이터를 넣지 않는다 — SQL은 사용자가 Production DB에도 그대로
+-- 실행할 수 있는 파일이라, 여기에 넣으면 Production에도 예시 데이터가 생겨버린다.
+-- 대신 app/api/ai-tasks/seed/route.ts 가 앱 실행 시점에 process.env.VERCEL_ENV로
+-- Preview/로컬인지 확인한 뒤에만(=== 'production'이면 항상 차단) 예시 데이터를 생성한다.
 -- ============================================================
 -- Storage Bucket (SQL Editor에서 생성 불가 — 수동 생성 필요)
 -- Supabase Dashboard > Storage > New Bucket:

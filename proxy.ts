@@ -14,7 +14,9 @@ const SESSION_SECRET = process.env.SESSION_SECRET ?? 'hectoinno-dashboard-sessio
 // /ai 는 AI 과제 관리 기능의 사용자 페이지 — 로그인 없이 사내망/IP 화이트리스트만으로 접근
 // (trailing slash를 붙이면 '/ai' 루트 자체는 startsWith 매칭에서 빠지므로 반드시 슬래시 없이 등록)
 // /admin/login, /api/admin-auth/ 는 AI 관리자 전용 로그인 — 기존 HR 로그인(/login, /otp)과 별개
-const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/', '/ai', '/admin/login', '/api/admin-auth/']
+// /api/ai-tasks/ 는 /ai 페이지가 로드되며 호출하는 데모 시딩 API — /ai와 동일하게 공개 처리
+// (라우트 자체 안에서 Production이면 항상 차단하므로 여기서 막을 필요는 없음)
+const PUBLIC_PATHS = ['/login', '/otp', '/blocked', '/api/auth/', '/api/cron/', '/ai', '/admin/login', '/api/admin-auth/', '/api/ai-tasks/']
 
 export default async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl

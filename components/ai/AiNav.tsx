@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect } from 'react'
 
 const LINKS = [
   { href: '/ai/guides', label: 'AI 활용 방법' },
@@ -11,6 +12,12 @@ const LINKS = [
 
 export function AiNav() {
   const pathname = usePathname()
+
+  // Preview/로컬에서만 예시 데이터를 생성한다 (라우트 안에서 Production은 항상 차단).
+  useEffect(() => {
+    fetch('/api/ai-tasks/seed', { method: 'POST' }).catch(err => console.error('[AI 해커톤] 예시 데이터 생성 실패:', err))
+  }, [])
+
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-100">
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
