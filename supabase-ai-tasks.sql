@@ -21,11 +21,10 @@ create table if not exists public.ai_tasks (
   resolution_type     text not null check (resolution_type in ('self','help')),        -- 해결 방식: 자체 해결 | 도움 필요
   status              text not null default 'in_progress' check (status in ('in_progress','done')),  -- 진행 상태: 진행중 | 완료
 
-  -- 등록 시 입력 항목 — 등록은 "앞으로 AI로 해결하려는 업무" 기준. 완료 전까지는 계획 텍스트.
-  current_work        text,        -- 현재 업무
-  ai_usage             text,        -- 등록 시=AI 활용 계획 / 완료 처리 시 실제 활용 내용으로 덮어씀
+  -- 등록 시 입력 항목 — 등록은 "앞으로 AI로 해결하려는 업무" 기준.
+  current_work        text,        -- 현재 업무 (등록 시)
+  ai_usage             text,        -- AI 활용 계획 (등록 시 입력, 완료 후에도 그대로 유지)
   result_content       text,        -- 해결 결과 (완료 처리 시 입력)
-  reflection           text,        -- 느낀 점 (완료 처리 시 선택 입력)
   completed_at         date,
 
   -- 수정/삭제/완료 처리 권한 확인용 (bcrypt 해시로 저장, 평문 저장 금지)
@@ -106,22 +105,6 @@ create unique index if not exists idx_ai_comments_one_accepted
 
 comment on table public.ai_comments is '과제별 공개 댓글 스레드 — 비밀번호(해시) 확인 후 본인 댓글 수정/삭제, 관리자는 무조건 가능';
 
--- ── ai_files ────────────────────────────────────────────────────────────────
--- 첨부파일 메타데이터. 실제 바이너리는 Supabase Storage 'ai-task-files' 버킷에 저장.
-create table if not exists public.ai_files (
-  id            uuid primary key default gen_random_uuid(),
-  task_id       uuid not null references public.ai_tasks(id) on delete cascade,
-  file_name     text not null,
-  file_url      text not null,       -- Storage public URL
-  file_size     bigint,              -- bytes
-  uploaded_by   text,                -- 자유 텍스트 (등록자 이름)
-  created_at    timestamptz not null default now()
-);
-
-create index if not exists idx_ai_files_task_id  on public.ai_files (task_id);
-
-comment on table public.ai_files is '과제 첨부파일 메타데이터 (실제 파일은 Storage ai-task-files 버킷)';
-
 -- ── updated_at 유지 안내 ──────────────────────────────────────────────────────
 -- 이 프로젝트는 트리거를 쓰지 않는 기존 관례를 따른다. 앱 코드가 update 호출 시
 -- updated_at: new Date().toISOString() 을 매번 명시적으로 같이 보낸다.
@@ -131,19 +114,16 @@ alter table public.ai_tasks       enable row level security;
 alter table public.ai_guides      enable row level security;
 alter table public.ai_assignments enable row level security;
 alter table public.ai_comments    enable row level security;
-alter table public.ai_files       enable row level security;
 
 drop policy if exists "allow_all_ai_tasks"       on public.ai_tasks;
 drop policy if exists "allow_all_ai_guides"      on public.ai_guides;
 drop policy if exists "allow_all_ai_assignments" on public.ai_assignments;
 drop policy if exists "allow_all_ai_comments"    on public.ai_comments;
-drop policy if exists "allow_all_ai_files"       on public.ai_files;
 
 create policy "allow_all_ai_tasks"       on public.ai_tasks       for all using (true) with check (true);
 create policy "allow_all_ai_guides"      on public.ai_guides      for all using (true) with check (true);
 create policy "allow_all_ai_assignments" on public.ai_assignments for all using (true) with check (true);
 create policy "allow_all_ai_comments"    on public.ai_comments    for all using (true) with check (true);
-create policy "allow_all_ai_files"       on public.ai_files       for all using (true) with check (true);
 
 -- ============================================================
 -- 예시(데모) 데이터 안내
@@ -151,9 +131,4 @@ create policy "allow_all_ai_files"       on public.ai_files       for all using 
 -- 실행할 수 있는 파일이라, 여기에 넣으면 Production에도 예시 데이터가 생겨버린다.
 -- 대신 app/api/ai-tasks/seed/route.ts 가 앱 실행 시점에 process.env.VERCEL_ENV로
 -- Preview/로컬인지 확인한 뒤에만(=== 'production'이면 항상 차단) 예시 데이터를 생성한다.
--- ============================================================
--- Storage Bucket (SQL Editor에서 생성 불가 — 수동 생성 필요)
--- Supabase Dashboard > Storage > New Bucket:
---   이름: ai-task-files   /   Public bucket: 체크 (Public: true)
--- Public 버킷은 별도 storage.objects 정책 없이도 anon key로 upload/getPublicUrl이 동작한다.
 -- ============================================================

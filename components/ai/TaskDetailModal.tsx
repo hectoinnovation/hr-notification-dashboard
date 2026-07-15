@@ -4,10 +4,9 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
   STATUS_LABEL, RESOLUTION_LABEL, PRIORITY_LABEL,
-  type AiTask, type AiComment, type AiFile, type TaskStatus, type ResolutionType, type Priority,
+  type AiTask, type AiComment, type TaskStatus, type ResolutionType, type Priority,
 } from '@/lib/ai-tasks'
 import { Modal } from '@/components/ui/Modal'
-import { FileUploadField } from './FileUploadField'
 import { CommentThread } from './CommentThread'
 
 function Field({ label, value, onChange, textarea }: {
@@ -31,19 +30,14 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
   task: AiTask; onClose: () => void; onSaved: () => void; onDeleted: () => void
 }) {
   const [form, setForm] = useState<AiTask>(task)
-  const [files, setFiles] = useState<Pick<AiFile, 'file_name' | 'file_url'>[]>([])
   const [comments, setComments] = useState<AiComment[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function loadExtras() {
-    const [{ data: fileRows, error: fileErr }, { data: commentRows, error: commentErr }] = await Promise.all([
-      supabase.from('ai_files').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
-      supabase.from('ai_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: false }),
-    ])
-    if (fileErr) console.error('[과제 관리] ai_files 조회 실패:', fileErr.message)
+    const { data: commentRows, error: commentErr } = await supabase
+      .from('ai_comments').select('*').eq('task_id', task.id).order('created_at', { ascending: false })
     if (commentErr) console.error('[과제 관리] ai_comments 조회 실패:', commentErr.message)
-    setFiles((fileRows ?? []) as AiFile[])
     setComments((commentRows ?? []) as AiComment[])
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,7 +121,7 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
           <Field label="작성자" value={form.author} onChange={v => set('author', v)} />
         </div>
         <Field label="현재 업무" value={form.current_work ?? ''} onChange={v => set('current_work', v)} textarea />
-        <Field label="AI 활용 내용" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
+        <Field label="AI 활용 계획" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
           <p className="text-xs font-bold text-gray-700">완료 처리 정보</p>
@@ -137,13 +131,6 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
             <input type="date" value={form.completed_at ?? ''} onChange={e => set('completed_at', e.target.value)}
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400" />
           </div>
-          <FileUploadField taskId={task.id} files={files} onFilesChange={async next => {
-            setFiles(next)
-            const added = next.slice(files.length)
-            for (const f of added) {
-              await supabase.from('ai_files').insert({ task_id: task.id, file_name: f.file_name, file_url: f.file_url })
-            }
-          }} />
         </div>
 
         <div className="border-t border-gray-100 pt-4 space-y-3">

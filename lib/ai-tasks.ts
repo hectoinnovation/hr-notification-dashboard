@@ -1,4 +1,3 @@
-import { supabase } from './supabase'
 import bcrypt from 'bcryptjs'
 
 // ─── 두 축을 혼동하지 말 것 ────────────────────────────────────────────────────
@@ -45,7 +44,6 @@ export type AiTask = {
   current_work?: string
   ai_usage?: string
   result_content?: string
-  reflection?: string
   completed_at?: string
   password_hash: string
   assignee?: string
@@ -83,25 +81,6 @@ export type AiComment = {
   password_hash: string
   is_accepted: boolean
   created_at: string
-}
-
-export type AiFile = {
-  id: string
-  task_id: string
-  file_name: string
-  file_url: string
-  file_size?: number
-  uploaded_by?: string
-  created_at: string
-}
-
-// ─── 파일 업로드 (서버 API 라우트 없음 — 브라우저에서 Storage 직접 호출) ───────
-export async function uploadTaskFile(taskId: string, file: File): Promise<{ file_url: string; file_size: number }> {
-  const path = `${taskId}/${Date.now()}_${file.name}`
-  const { error } = await supabase.storage.from('ai-task-files').upload(path, file)
-  if (error) throw error
-  const { data } = supabase.storage.from('ai-task-files').getPublicUrl(path)
-  return { file_url: data.publicUrl, file_size: file.size }
 }
 
 // ─── 비밀번호 해시 (서버 API 없이 브라우저에서 직접 해시/검증 — bcryptjs는 순수 JS 구현) ───

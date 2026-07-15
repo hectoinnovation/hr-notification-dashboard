@@ -3,10 +3,9 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, type AiTask, type AiFile, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import { verifyPassword, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
-import { FileUploadField } from '@/components/ai/FileUploadField'
 import { CommentSection } from '@/components/ai/CommentSection'
 import { PasswordPrompt } from '@/components/ai/PasswordPrompt'
 import { CompleteTaskModal, type CompleteTaskData } from '@/components/ai/CompleteTaskModal'
@@ -22,15 +21,12 @@ type EditForm = {
   resolution_type: ResolutionType
   current_work: string
   ai_usage: string
-  result_content: string
-  reflection: string
 }
 
 function toEditForm(t: AiTask): EditForm {
   return {
     title: t.title, team: t.team, author: t.author, resolution_type: t.resolution_type,
-    current_work: t.current_work ?? '', ai_usage: t.ai_usage ?? '', result_content: t.result_content ?? '',
-    reflection: t.reflection ?? '',
+    current_work: t.current_work ?? '', ai_usage: t.ai_usage ?? '',
   }
 }
 
@@ -39,7 +35,6 @@ export default function AiTaskDetailPage() {
   const router = useRouter()
 
   const [task, setTask] = useState<AiTask | null>(null)
-  const [files, setFiles] = useState<AiFile[]>([])
   const [comments, setComments] = useState<AiComment[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -53,15 +48,13 @@ export default function AiTaskDetailPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: taskRow, error: taskErr }, { data: fileRows }, { data: commentRows }] = await Promise.all([
+    const [{ data: taskRow, error: taskErr }, { data: commentRows }] = await Promise.all([
       supabase.from('ai_tasks').select('*').eq('id', id).maybeSingle(),
-      supabase.from('ai_files').select('*').eq('task_id', id).order('created_at', { ascending: true }),
       supabase.from('ai_comments').select('*').eq('task_id', id),
     ])
     if (taskErr) console.error('[과제 상세] ai_tasks 조회 실패:', taskErr.message)
     if (!taskRow) { setNotFound(true); setLoading(false); return }
     setTask(taskRow as AiTask)
-    setFiles((fileRows ?? []) as AiFile[])
     setComments((commentRows ?? []) as AiComment[])
     setLoading(false)
   }, [id])
@@ -114,8 +107,6 @@ export default function AiTaskDetailPage() {
       resolution_type: form.resolution_type,
       current_work: form.current_work.trim() || null,
       ai_usage: form.ai_usage.trim() || null,
-      result_content: form.result_content.trim() || null,
-      reflection: form.reflection.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', task.id)
     setSaving(false)
@@ -163,27 +154,10 @@ export default function AiTaskDetailPage() {
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">{task.status === 'done' ? 'AI 활용 내용' : 'AI 활용 계획'}</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">AI 활용 계획</label>
               <textarea value={form.ai_usage} onChange={e => setForm({ ...form, ai_usage: e.target.value })} rows={3}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">해결 결과</label>
-              <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={2}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">느낀 점</label>
-              <textarea value={form.reflection} onChange={e => setForm({ ...form, reflection: e.target.value })} rows={2}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
-            </div>
-            <FileUploadField taskId={task.id} files={files} onFilesChange={async next => {
-              setFiles(next as AiFile[])
-              const added = next.slice(files.length)
-              for (const f of added) {
-                await supabase.from('ai_files').insert({ task_id: task.id, file_name: f.file_name, file_url: f.file_url })
-              }
-            }} />
             {error && <p className="text-xs text-red-500">{error}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
               <button onClick={() => setEditing(false)} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
@@ -212,7 +186,7 @@ export default function AiTaskDetailPage() {
             )}
             {task.ai_usage && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">{task.status === 'done' ? 'AI 활용 내용' : 'AI 활용 계획'}</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1">AI 활용 계획</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.ai_usage}</p>
               </div>
             )}
@@ -222,26 +196,6 @@ export default function AiTaskDetailPage() {
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.result_content}</p>
               </div>
             )}
-            {task.reflection && (
-              <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">느낀 점</p>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.reflection}</p>
-              </div>
-            )}
-
-            <div>
-              <p className="text-xs font-semibold text-gray-500 mb-1.5">첨부파일</p>
-              {files.length === 0 ? <p className="text-xs text-gray-400">첨부파일이 없습니다</p> : (
-                <div className="space-y-1.5">
-                  {files.map(f => (
-                    <a key={f.id} href={f.file_url} target="_blank" rel="noreferrer"
-                      className="block text-xs text-orange-600 hover:underline bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
-                      {f.file_name}
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
 
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
               {task.status === 'in_progress' ? (
