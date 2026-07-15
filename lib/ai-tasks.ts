@@ -102,12 +102,6 @@ export function sortComments(comments: AiComment[]): AiComment[] {
   })
 }
 
-// 팀은 자유 텍스트라 고정 목록이 없다 — 실제 등록된 데이터에서 팀 이름을 뽑아 정렬한다.
-export function getDistinctTeams(tasks: AiTask[]): string[] {
-  const set = new Set(tasks.map(t => t.team).filter(Boolean))
-  return Array.from(set).sort((a, b) => a.localeCompare(b, 'ko'))
-}
-
 // 기본 정렬: 우선순위(긴급→낮음) 우선, 동일 우선순위 내에서는 최신 등록순
 export function sortTasksByPriority(tasks: AiTask[]): AiTask[] {
   return [...tasks].sort((a, b) => {

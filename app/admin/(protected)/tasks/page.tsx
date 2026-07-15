@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { STATUS_LABEL, RESOLUTION_LABEL, sortTasksByPriority, getDistinctTeams, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
+import { STATUS_LABEL, RESOLUTION_LABEL, sortTasksByPriority, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { PriorityBadge } from '@/components/ai/PriorityBadge'
@@ -18,7 +18,6 @@ function AdminTasksContent() {
 
   const statusF     = (searchParams.get('status') ?? '전체') as '전체' | TaskStatus
   const resolutionF = (searchParams.get('resolution') ?? '전체') as '전체' | ResolutionType
-  const teamF = searchParams.get('team') ?? '전체'
   const q           = searchParams.get('q') ?? ''
   const selectedId  = searchParams.get('id')
 
@@ -47,7 +46,6 @@ function AdminTasksContent() {
   const filtered = tasks.filter(t => {
     if (statusF !== '전체' && t.status !== statusF) return false
     if (resolutionF !== '전체' && t.resolution_type !== resolutionF) return false
-    if (teamF !== '전체' && t.team !== teamF) return false
     const term = search.trim().toLowerCase()
     if (term) {
       const text = [t.title, t.author, t.team].filter(Boolean).join(' ').toLowerCase()
@@ -57,39 +55,30 @@ function AdminTasksContent() {
   })
 
   const selectedTask = tasks.find(t => t.id === selectedId) ?? null
-  const teams = getDistinctTeams(tasks)
 
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-bold text-gray-900">전체 과제</h1>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-2.5">
         <input value={search} onChange={e => setSearch(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') updateParam('q', search) }}
           onBlur={() => updateParam('q', search)}
           placeholder="제목, 작성자, 팀 검색..."
           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
 
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-gray-400 mr-1">진행 상태</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-400">진행 상태</span>
           <FilterChip label="전체" active={statusF === '전체'} onClick={() => updateParam('status', '전체')} />
           <FilterChip label={STATUS_LABEL.in_progress} active={statusF === 'in_progress'} onClick={() => updateParam('status', 'in_progress')} />
           <FilterChip label={STATUS_LABEL.done} active={statusF === 'done'} onClick={() => updateParam('status', 'done')} />
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-gray-400 mr-1">해결 방식</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-400">해결 방식</span>
           <FilterChip label="전체" active={resolutionF === '전체'} onClick={() => updateParam('resolution', '전체')} />
           <FilterChip label={RESOLUTION_LABEL.self} active={resolutionF === 'self'} onClick={() => updateParam('resolution', 'self')} />
           <FilterChip label={RESOLUTION_LABEL.help} active={resolutionF === 'help'} onClick={() => updateParam('resolution', 'help')} />
-        </div>
-
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-xs text-gray-400 mr-1">팀</span>
-          <FilterChip label="전체" active={teamF === '전체'} onClick={() => updateParam('team', '전체')} />
-          {teams.map(t => (
-            <FilterChip key={t} label={t} active={teamF === t} onClick={() => updateParam('team', t)} />
-          ))}
         </div>
       </div>
 

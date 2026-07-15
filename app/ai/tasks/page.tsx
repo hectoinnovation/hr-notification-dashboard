@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { STATUS_LABEL, RESOLUTION_LABEL, countCommentsByTask, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
+import { RESOLUTION_LABEL, countCommentsByTask, type AiTask, type ResolutionType } from '@/lib/ai-tasks'
 import { TaskCard } from '@/components/ai/TaskCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -15,7 +15,6 @@ function AiTasksContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  const statusF     = (searchParams.get('status') ?? '전체') as '전체' | TaskStatus
   const resolutionF = (searchParams.get('resolution') ?? '전체') as '전체' | ResolutionType
   const sort        = (searchParams.get('sort') ?? 'latest') as SortOption
   const q           = searchParams.get('q') ?? ''
@@ -46,7 +45,6 @@ function AiTasksContent() {
   }
 
   const filtered = tasks.filter(t => {
-    if (statusF !== '전체' && t.status !== statusF) return false
     if (resolutionF !== '전체' && t.resolution_type !== resolutionF) return false
     const term = search.trim().toLowerCase()
     if (term) {
@@ -80,10 +78,7 @@ function AiTasksContent() {
 
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <FilterChip label="전체" active={statusF === '전체' && resolutionF === '전체'}
-              onClick={() => { updateParam('status', '전체'); updateParam('resolution', '전체') }} />
-            <FilterChip label={STATUS_LABEL.in_progress} active={statusF === 'in_progress'} onClick={() => updateParam('status', 'in_progress')} />
-            <FilterChip label={STATUS_LABEL.done} active={statusF === 'done'} onClick={() => updateParam('status', 'done')} />
+            <FilterChip label="전체" active={resolutionF === '전체'} onClick={() => updateParam('resolution', '전체')} />
             <FilterChip label={RESOLUTION_LABEL.self} active={resolutionF === 'self'} onClick={() => updateParam('resolution', 'self')} />
             <FilterChip label={RESOLUTION_LABEL.help} active={resolutionF === 'help'} onClick={() => updateParam('resolution', 'help')} />
           </div>
