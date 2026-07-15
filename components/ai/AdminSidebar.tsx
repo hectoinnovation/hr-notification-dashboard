@@ -33,7 +33,7 @@ export function AdminSidebar() {
       </nav>
       <div className="px-3 py-4 border-t border-gray-100 flex-shrink-0">
         <button
-          onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); window.location.href = '/login' }}
+          onClick={async () => { await fetch('/api/admin-auth/logout', { method: 'POST' }); window.location.href = '/admin/login' }}
           className="w-full inline-flex items-center justify-center gap-1 text-xs text-gray-400 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-2.5 py-2 rounded-lg transition-colors">
           로그아웃
         </button>

@@ -30,7 +30,7 @@ export function AiNav() {
             )
           })}
         </nav>
-        <Link href="/login?next=%2Fadmin"
+        <Link href="/admin/login"
           className="flex-shrink-0 inline-flex items-center gap-1 text-xs font-semibold text-gray-400 hover:text-gray-700 border border-gray-200 hover:border-gray-300 px-2.5 py-1.5 rounded-lg transition-colors">
           관리자 로그인
         </Link>

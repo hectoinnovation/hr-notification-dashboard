@@ -1,11 +1,12 @@
 'use client'
-import { Suspense, useState, FormEvent } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
 
-function LoginForm() {
+import { useState, FormEvent } from 'react'
+import { useRouter } from 'next/navigation'
+
+// AI 과제 관리 관리자 전용 로그인. 기존 입퇴사자 대시보드 로그인(/login, /otp)과는
+// 완전히 별개의 화면/엔드포인트/세션이며, OTP 단계 없이 바로 /admin으로 이동한다.
+export default function AdminLoginPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const next = searchParams.get('next') ?? '/'
   const [id, setId] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -16,14 +17,14 @@ function LoginForm() {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch('/api/admin-auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, password }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error); return }
-      router.push(`/otp?next=${encodeURIComponent(next)}`)
+      router.push('/admin')
     } catch {
       setError('로그인 중 오류가 발생했습니다.')
     } finally {
@@ -37,11 +38,15 @@ function LoginForm() {
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-12 h-12 bg-orange-100 rounded-2xl mb-4">
             <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-5-3.87M9 20H4v-2a4 4 0 015-3.87m6 5.87a4 4 0 10-8 0m4-8a4 4 0 100-8 4 4 0 000 8z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
             </svg>
           </div>
-          <h1 className="text-lg font-bold text-gray-900">헥토이노베이션</h1>
-          <p className="text-sm text-gray-500 mt-1">인사 대시보드</p>
+          <h1 className="text-lg font-bold text-gray-900">AI 과제 관리</h1>
+          <p className="text-sm text-gray-500 mt-1">관리자 로그인</p>
+          <div className="mt-3 text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-left space-y-0.5">
+            <p>관리자 전용 페이지입니다.</p>
+            <p>관리자 계정으로 로그인해주세요.</p>
+          </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -73,13 +78,5 @@ function LoginForm() {
         </form>
       </div>
     </div>
-  )
-}
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
   )
 }
