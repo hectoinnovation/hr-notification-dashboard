@@ -1858,7 +1858,10 @@ export default function HRDashboard() {
       .update({ status: 'cancelled', updated_at: new Date().toISOString() })
       .eq('status', 'pending')
       .ilike('subject', `[온보딩 알림] ${name}님%`)
-    if (cancelErr) console.error('[handleExcludeOnboarding] 예약메일 취소 실패:', cancelErr.message)
+    if (cancelErr) {
+      console.error('[handleExcludeOnboarding] 예약메일 취소 실패:', cancelErr.message)
+      setError(`"${name}"님은 제외 처리되었으나, 예정된 온보딩 예약메일 취소에 실패했습니다: ${cancelErr.message}\n(자동 발송 cron이 실행 시점에 한 번 더 제외 여부를 확인하지만, 확인을 위해 Supabase에서 scheduled_mails를 직접 점검해주세요.)`)
+    }
     fetchAllData()
   }
 
