@@ -73,7 +73,62 @@ export async function GET(req: NextRequest) {
   const supabase = createClient(supabaseUrl, supabaseKey)
   const nowIso   = new Date().toISOString()
 
-  // ── 발송 대상 조회 ───────────────────────────────────────────────────────────
+  // ── 온보딩 제외 대상의 잔여 예약 메일 선제 취소 ─────────────────────────────
+  // scheduled_at이 아직 도래하지 않은 pending 행도 포함해서 검사한다 — 제외 처리
+  // 시점에 취소가 누락되면(예: 취소 쿼리 실패, DB 직접 수정 등) 발송일이 될 때까지
+  // 방치되지 않고, 이 cron이 매번 실행될 때마다 즉시 정리된다.
+  const { data: onboardingPending, error: onboardingFetchErr } = await supabase
+    .from('scheduled_mails')
+    .select('id, subject')
+    .eq('status', 'pending')
+    .like('subject', '[온보딩 알림]%')
+
+  if (onboardingFetchErr) {
+    console.error('[auto-mail] 온보딩 예약메일 조회 실패:', onboardingFetchErr.message)
+  }
+
+  let excludedCancelled = 0
+  const excludedNames = new Set<string>()
+  if (onboardingPending && onboardingPending.length > 0) {
+    const names = [
+      ...new Set(
+        onboardingPending
+          .map(m => (m.subject as string).match(/^\[온보딩 알림\] (.+)님/)?.[1])
+          .filter((n): n is string => !!n)
+      ),
+    ]
+    const { data: empCheck } = await supabase
+      .from('employees')
+      .select('name, is_onboarding_excluded, join_reason')
+      .in('name', names)
+
+    for (const e of (empCheck ?? [])) {
+      if (e.is_onboarding_excluded === true || e.join_reason === '휴직복귀' || e.join_reason === '인턴') {
+        excludedNames.add(e.name as string)
+      }
+    }
+
+    const toCancel = onboardingPending.filter(m => {
+      const name = (m.subject as string).match(/^\[온보딩 알림\] (.+)님/)?.[1]
+      return name && excludedNames.has(name)
+    })
+
+    if (toCancel.length > 0) {
+      const { error: cancelErr } = await supabase
+        .from('scheduled_mails')
+        .update({ status: 'cancelled', updated_at: nowIso })
+        .in('id', toCancel.map(m => m.id))
+      if (cancelErr) {
+        console.error('[auto-mail] 제외 대상 예약메일 취소 실패:', cancelErr.message)
+      } else {
+        excludedCancelled = toCancel.length
+        console.log(`[auto-mail] ⏭ 온보딩 제외 대상 예약메일 ${excludedCancelled}건 선제 취소 (대상: ${[...excludedNames].join(', ')})`)
+      }
+    }
+  }
+  if (debug) diagnostics.excludedNames = [...excludedNames]
+
+  // ── 발송 대상 조회 (위에서 제외 대상을 먼저 취소한 뒤 재조회) ─────────────────
   const { data: pending, error: fetchErr } = await supabase
     .from('scheduled_mails')
     .select('id, to_email, cc_email, subject, html, body_text, scheduled_at')
@@ -143,7 +198,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  console.log(`[auto-mail] 완료 — 전체 ${results.length}건 (성공 ${sent}, 실패 ${errors})`)
+  console.log(`[auto-mail] 완료 — 전체 ${results.length}건 (성공 ${sent}, 실패 ${errors}, 제외취소 ${excludedCancelled})`)
 
   return NextResponse.json({
     ok:          true,
@@ -151,6 +206,7 @@ export async function GET(req: NextRequest) {
     total:       results.length,
     sent,
     errors,
+    excludedCancelled,
     results,
     ...(debug ? { diagnostics } : {}),
   })
