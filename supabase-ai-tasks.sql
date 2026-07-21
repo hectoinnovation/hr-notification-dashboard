@@ -48,22 +48,41 @@ create index if not exists idx_ai_tasks_priority         on public.ai_tasks (pri
 comment on table public.ai_tasks is 'AI 활용 과제. status=진행 상태(진행중/완료), resolution_type=해결 방식(자체해결/도움필요) — 서로 다른 축이니 혼동 금지';
 
 -- ── ai_guides ───────────────────────────────────────────────────────────────
--- "AI 활용 방법" 페이지에 노출되는 관리자 큐레이션 콘텐츠 카드.
+-- "AI 활용 방법" 페이지에 노출되는 사내 AI 활용 자료. 단순 링크 모음이 아니라
+-- 제목/설명(Markdown)/대표 이미지/카테고리/작성자를 갖춘 자료 카드다.
+-- url은 선택 항목 — 있으면 카드에 "자료 보기" 버튼으로 새 탭에 연다.
 create table if not exists public.ai_guides (
   id            uuid primary key default gen_random_uuid(),
   title         text not null,
-  category      text not null check (category in ('영상','문서','블로그','프롬프트','기타')),
-  description   text,
-  url           text not null,
-  sort_order    integer not null default 0,     -- 노출 순서 조정용
+  description   text not null,   -- Markdown 지원 (렌더링은 클라이언트에서 react-markdown으로)
+  category      text not null check (category in ('AI 뉴스','프롬프트','활용 사례','바이브코딩','추천 툴','교육자료','기타')),
+  url           text,            -- 선택 — 있으면 "자료 보기" 버튼 노출
+  image_url     text,            -- 대표 이미지 (직접 업로드 또는 OG 자동 수집, 선택)
+  author        text not null,
+  is_pinned     boolean not null default false,   -- 상단 고정 — 항상 최신순보다 우선 노출
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
 
-create index if not exists idx_ai_guides_category   on public.ai_guides (category);
-create index if not exists idx_ai_guides_sort_order  on public.ai_guides (sort_order);
+-- 기존(이전 버전) 스키마로 이미 생성된 프로젝트를 위한 마이그레이션 — 새로 생성된
+-- 테이블에는 전부 no-op이다. 이 테이블은 현재 데이터가 없는 것을 확인하고 작성함.
+alter table public.ai_guides add column if not exists image_url text;
+alter table public.ai_guides add column if not exists author text;
+alter table public.ai_guides add column if not exists is_pinned boolean not null default false;
+alter table public.ai_guides alter column url drop not null;
+alter table public.ai_guides alter column description set not null;
+alter table public.ai_guides alter column author set not null;
+alter table public.ai_guides drop column if exists sort_order;
+alter table public.ai_guides drop constraint if exists ai_guides_category_check;
+alter table public.ai_guides add constraint ai_guides_category_check
+  check (category in ('AI 뉴스','프롬프트','활용 사례','바이브코딩','추천 툴','교육자료','기타'));
 
-comment on table public.ai_guides is 'AI 활용 방법 페이지에 노출되는 관리자 큐레이션 가이드 카드';
+create index if not exists idx_ai_guides_category    on public.ai_guides (category);
+create index if not exists idx_ai_guides_is_pinned    on public.ai_guides (is_pinned);
+create index if not exists idx_ai_guides_created_at   on public.ai_guides (created_at desc);
+drop index if exists idx_ai_guides_sort_order;
+
+comment on table public.ai_guides is 'AI 활용 방법 페이지에 노출되는 사내 AI 활용 자료 카드 (고정 우선 → 최신 등록순)';
 
 -- ── ai_assignments ──────────────────────────────────────────────────────────
 -- 담당자/우선순위 변경 이력 (append-only 감사 로그).
@@ -131,4 +150,12 @@ create policy "allow_all_ai_comments"    on public.ai_comments    for all using 
 -- 실행할 수 있는 파일이라, 여기에 넣으면 Production에도 예시 데이터가 생겨버린다.
 -- 대신 app/api/ai-tasks/seed/route.ts 가 앱 실행 시점에 process.env.VERCEL_ENV로
 -- Preview/로컬인지 확인한 뒤에만(=== 'production'이면 항상 차단) 예시 데이터를 생성한다.
+-- ============================================================
+
+-- ============================================================
+-- Storage Bucket (SQL Editor에서 생성 불가 — 수동 생성 필요)
+-- Supabase Dashboard > Storage > New Bucket:
+--   이름: ai-guide-images   /   Public bucket: 체크 (Public: true)
+-- AI 활용 방법 자료의 대표 이미지 직접 업로드용. Public 버킷은 별도
+-- storage.objects 정책 없이도 anon key로 upload/getPublicUrl이 동작한다.
 -- ============================================================
