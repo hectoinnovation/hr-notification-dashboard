@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { supabase } from './supabase'
 
 // ─── 두 축을 혼동하지 말 것 ────────────────────────────────────────────────────
 // status          = 진행 상태  (진행중 / 완료)
@@ -7,7 +8,7 @@ import bcrypt from 'bcryptjs'
 export type TaskStatus = 'in_progress' | 'done'
 export type ResolutionType = 'self' | 'help'
 export type Priority = 'urgent' | 'high' | 'medium' | 'low'
-export type GuideCategory = '영상' | '문서' | '블로그' | '프롬프트' | '기타'
+export type GuideCategory = 'AI 뉴스' | '프롬프트' | '활용 사례' | '바이브코딩' | '추천 툴' | '교육자료' | '기타'
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: '진행중',
@@ -55,10 +56,12 @@ export type AiTask = {
 export type AiGuide = {
   id: string
   title: string
+  description: string
   category: GuideCategory
-  description?: string
-  url: string
-  sort_order: number
+  url?: string
+  image_url?: string
+  author: string
+  is_pinned: boolean
   created_at: string
   updated_at: string
 }
@@ -117,4 +120,21 @@ export function countCommentsByTask(comments: Pick<AiComment, 'task_id'>[]): Rec
   const counts: Record<string, number> = {}
   for (const c of comments) counts[c.task_id] = (counts[c.task_id] ?? 0) + 1
   return counts
+}
+
+// 자료 정렬: 고정(Pin) 자료 우선, 그 외에는 최신 등록순
+export function sortGuides(guides: AiGuide[]): AiGuide[] {
+  return [...guides].sort((a, b) => {
+    if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
+    return b.created_at.localeCompare(a.created_at)
+  })
+}
+
+// ─── 대표 이미지 업로드 (서버 API 라우트 없음 — 브라우저에서 Storage 직접 호출) ───
+export async function uploadGuideImage(file: File): Promise<string> {
+  const path = `${Date.now()}_${file.name}`
+  const { error } = await supabase.storage.from('ai-guide-images').upload(path, file)
+  if (error) throw error
+  const { data } = supabase.storage.from('ai-guide-images').getPublicUrl(path)
+  return data.publicUrl
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import type { AiGuide } from '@/lib/ai-tasks'
+import { sortGuides, type AiGuide } from '@/lib/ai-tasks'
 import { GuideCard } from '@/components/ai/GuideCard'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -13,9 +13,9 @@ export default function AiGuidesPage() {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.from('ai_guides').select('*').order('sort_order', { ascending: true })
+      const { data, error } = await supabase.from('ai_guides').select('*')
       if (error) console.error('[AI 활용 방법] ai_guides 조회 실패:', error.message)
-      setGuides((data ?? []) as AiGuide[])
+      setGuides(sortGuides((data ?? []) as AiGuide[]))
       setLoading(false)
     })()
   }, [])

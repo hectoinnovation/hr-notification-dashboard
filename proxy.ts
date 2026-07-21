@@ -43,7 +43,11 @@ export default async function proxy(req: NextRequest) {
   }
 
   // ── IP Whitelist ──────────────────────────────────────────────────────────
-  if (!pathname.startsWith('/blocked')) {
+  // Preview 배포(VERCEL_ENV==='preview')는 QA 목적상 화이트리스트를 적용하지 않는다.
+  // VERCEL_ENV는 Vercel 플랫폼이 배포 유형에 따라 직접 설정하는 값이라 사람이 잘못 설정할 수 없고,
+  // Production(VERCEL_ENV==='production')과 로컬(undefined)에는 이 조건이 전혀 영향을 주지 않는다.
+  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview'
+  if (!pathname.startsWith('/blocked') && !isPreviewDeployment) {
     const allowedIPs = (process.env.ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (allowedIPs.length > 0 && !isLocalhost && !allowedIPs.includes(ip)) {
       const url = req.nextUrl.clone()
@@ -55,7 +59,9 @@ export default async function proxy(req: NextRequest) {
   // ── AI 관리자(/admin) 전용 세션 체크 — 기존 HR 세션과 완전히 분리 ─────────────
   // /admin/login은 위 PUBLIC_PATHS에서 이미 걸러졌으므로 여기 도달하는 /admin* 요청은
   // 전부 보호 대상이다. 기존 HR 세션 체크(아래)는 이 분기와 전혀 관계없이 그대로 동작한다.
-  if (pathname.startsWith('/admin')) {
+  // /api/ai-guides/ 는 임의 URL을 서버가 대신 fetch하는 메타데이터 수집 API라
+  // 인증되지 않은 호출로 인한 오남용(SSRF)을 막기 위해 같은 관리자 세션으로 보호한다.
+  if (pathname.startsWith('/admin') || pathname.startsWith('/api/ai-guides/')) {
     const adminSealed = req.cookies.get(ADMIN_COOKIE_NAME)?.value
     const adminSecret = process.env.SESSION_SECRET
     if (adminSealed && adminSecret) {
@@ -63,8 +69,12 @@ export default async function proxy(req: NextRequest) {
         const data = await unsealData<{ authenticated?: boolean }>(adminSealed, { password: adminSecret })
         if (data.authenticated === true) return NextResponse.next()
       } catch {
-        // Tampered or expired cookie — fall through to redirect
+        // Tampered or expired cookie — fall through
       }
+    }
+    // API 호출은 리다이렉트가 아니라 401 JSON으로 응답 (fetch()가 처리할 수 있도록)
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: '관리자 인증이 필요합니다.' }, { status: 401 })
     }
     const url = req.nextUrl.clone()
     url.pathname = '/admin/login'
