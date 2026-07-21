@@ -156,6 +156,14 @@ create policy "allow_all_ai_comments"    on public.ai_comments    for all using 
 -- Storage Bucket (SQL Editor에서 생성 불가 — 수동 생성 필요)
 -- Supabase Dashboard > Storage > New Bucket:
 --   이름: ai-guide-images   /   Public bucket: 체크 (Public: true)
--- AI 활용 방법 자료의 대표 이미지 직접 업로드용. Public 버킷은 별도
--- storage.objects 정책 없이도 anon key로 upload/getPublicUrl이 동작한다.
+-- AI 활용 방법 자료의 대표 이미지 직접 업로드용.
+--
+-- 주의: 버킷을 Public으로 만들어도 그건 "읽기(SELECT)"만 익명 허용할 뿐,
+-- anon key로 업로드(INSERT)하려면 storage.objects에 별도 RLS 정책이 필요하다.
+-- 이 프로젝트는 service_role key 없이 anon key만 쓰는 기존 관례이므로,
+-- 이 버킷에 한해서만 anon key로 업로드/수정/삭제가 가능하도록 정책을 추가한다
+-- (다른 버킷에는 영향 없음 — bucket_id로 범위를 한정).
+drop policy if exists "allow_all_ai_guide_images" on storage.objects;
+create policy "allow_all_ai_guide_images" on storage.objects
+  for all using (bucket_id = 'ai-guide-images') with check (bucket_id = 'ai-guide-images');
 -- ============================================================
