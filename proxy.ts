@@ -43,7 +43,11 @@ export default async function proxy(req: NextRequest) {
   }
 
   // ── IP Whitelist ──────────────────────────────────────────────────────────
-  if (!pathname.startsWith('/blocked')) {
+  // Preview 배포(VERCEL_ENV==='preview')는 QA 목적상 화이트리스트를 적용하지 않는다.
+  // VERCEL_ENV는 Vercel 플랫폼이 배포 유형에 따라 직접 설정하는 값이라 사람이 잘못 설정할 수 없고,
+  // Production(VERCEL_ENV==='production')과 로컬(undefined)에는 이 조건이 전혀 영향을 주지 않는다.
+  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview'
+  if (!pathname.startsWith('/blocked') && !isPreviewDeployment) {
     const allowedIPs = (process.env.ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (allowedIPs.length > 0 && !isLocalhost && !allowedIPs.includes(ip)) {
       const url = req.nextUrl.clone()
