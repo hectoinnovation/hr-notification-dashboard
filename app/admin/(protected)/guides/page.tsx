@@ -30,7 +30,7 @@ export default function AdminGuidesPage() {
   function openAdd() { setEditTarget(null); setForm(EMPTY_GUIDE_FORM); setShowForm(true); setError(null) }
   function openEdit(g: AiGuide) {
     setEditTarget(g)
-    setForm({ title: g.title, category: g.category, description: g.description, url: g.url ?? '', image_url: g.image_url ?? '', author: g.author })
+    setForm({ title: g.title, category: g.category, description: g.description, url: g.url ?? '', image_url: g.image_url ?? '', author: g.author, is_required: g.is_required })
     setShowForm(true)
     setError(null)
   }
@@ -47,6 +47,7 @@ export default function AdminGuidesPage() {
       url: form.url.trim() || null,
       image_url: form.image_url.trim() || null,
       author: form.author.trim(),
+      is_required: form.is_required,
       updated_at: nowIso,
     }
     const { error: err } = editTarget
@@ -71,6 +72,12 @@ export default function AdminGuidesPage() {
     load()
   }
 
+  async function toggleRequired(g: AiGuide) {
+    const { error: err } = await supabase.from('ai_guides').update({ is_required: !g.is_required, updated_at: new Date().toISOString() }).eq('id', g.id)
+    if (err) { setError(err.message); return }
+    load()
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -91,13 +98,22 @@ export default function AdminGuidesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {guides.map(g => (
               <div key={g.id} className="relative group">
-                {g.is_pinned && (
-                  <span className="absolute top-3 left-3 z-10 text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded">
-                    📌 고정
-                  </span>
-                )}
+                <div className="absolute top-3 left-3 z-10 flex flex-col items-start gap-1">
+                  {g.is_required && (
+                    <span className="text-xs font-semibold bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 rounded">
+                      ❗ 필독
+                    </span>
+                  )}
+                  {g.is_pinned && (
+                    <span className="text-xs font-semibold bg-amber-100 text-amber-700 border border-amber-200 px-2 py-0.5 rounded">
+                      📌 고정
+                    </span>
+                  )}
+                </div>
                 <GuideCard guide={g} />
                 <div className="absolute top-3 right-3 z-10 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => toggleRequired(g)} title={g.is_required ? '필독 해제' : '필독으로 설정'}
+                    className="w-6 h-6 flex items-center justify-center rounded bg-white border border-gray-200 text-gray-500 hover:text-red-600 text-xs">❗</button>
                   <button onClick={() => togglePin(g)} title={g.is_pinned ? '고정 해제' : '상단 고정'}
                     className="w-6 h-6 flex items-center justify-center rounded bg-white border border-gray-200 text-gray-500 hover:text-amber-600 text-xs">📌</button>
                   <button onClick={() => openEdit(g)} title="수정"

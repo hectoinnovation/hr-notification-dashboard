@@ -62,6 +62,7 @@ export type AiGuide = {
   image_url?: string
   author: string
   is_pinned: boolean
+  is_required: boolean
   created_at: string
   updated_at: string
 }
@@ -122,9 +123,10 @@ export function countCommentsByTask(comments: Pick<AiComment, 'task_id'>[]): Rec
   return counts
 }
 
-// 자료 정렬: 고정(Pin) 자료 우선, 그 외에는 최신 등록순
+// 자료 정렬: 필독 최우선 → 고정(Pin) → 최신 등록순
 export function sortGuides(guides: AiGuide[]): AiGuide[] {
   return [...guides].sort((a, b) => {
+    if (a.is_required !== b.is_required) return a.is_required ? -1 : 1
     if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
     return b.created_at.localeCompare(a.created_at)
   })

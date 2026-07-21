@@ -59,7 +59,8 @@ create table if not exists public.ai_guides (
   url           text,            -- 선택 — 있으면 "자료 보기" 버튼 노출
   image_url     text,            -- 대표 이미지 (직접 업로드 또는 OG 자동 수집, 선택)
   author        text not null,
-  is_pinned     boolean not null default false,   -- 상단 고정 — 항상 최신순보다 우선 노출
+  is_pinned     boolean not null default false,   -- 상단 고정 — Pin, 필독 다음 우선순위
+  is_required   boolean not null default false,   -- 필독 — 정렬 1순위 (Pin보다 우선)
   created_at    timestamptz not null default now(),
   updated_at    timestamptz not null default now()
 );
@@ -69,6 +70,7 @@ create table if not exists public.ai_guides (
 alter table public.ai_guides add column if not exists image_url text;
 alter table public.ai_guides add column if not exists author text;
 alter table public.ai_guides add column if not exists is_pinned boolean not null default false;
+alter table public.ai_guides add column if not exists is_required boolean not null default false;
 alter table public.ai_guides alter column url drop not null;
 alter table public.ai_guides alter column description set not null;
 alter table public.ai_guides alter column author set not null;
@@ -79,10 +81,11 @@ alter table public.ai_guides add constraint ai_guides_category_check
 
 create index if not exists idx_ai_guides_category    on public.ai_guides (category);
 create index if not exists idx_ai_guides_is_pinned    on public.ai_guides (is_pinned);
+create index if not exists idx_ai_guides_is_required  on public.ai_guides (is_required);
 create index if not exists idx_ai_guides_created_at   on public.ai_guides (created_at desc);
 drop index if exists idx_ai_guides_sort_order;
 
-comment on table public.ai_guides is 'AI 활용 방법 페이지에 노출되는 사내 AI 활용 자료 카드 (고정 우선 → 최신 등록순)';
+comment on table public.ai_guides is 'AI 활용 방법 페이지에 노출되는 사내 AI 활용 자료 카드 (필독 우선 → Pin 우선 → 최신 등록순)';
 
 -- ── ai_assignments ──────────────────────────────────────────────────────────
 -- 담당자/우선순위 변경 이력 (append-only 감사 로그).

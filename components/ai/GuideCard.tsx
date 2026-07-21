@@ -48,6 +48,14 @@ function CategoryBadge({ category }: { category: string }) {
   )
 }
 
+function RequiredBadge() {
+  return (
+    <span className="text-xs font-bold text-white bg-red-500 px-1.5 py-0.5 rounded flex-shrink-0">
+      필독
+    </span>
+  )
+}
+
 export function GuideCard({ guide }: { guide: AiGuide }) {
   const [showDetail, setShowDetail] = useState(false)
   const dateLabel = guide.created_at.slice(0, 10).replace(/-/g, '.')
@@ -66,7 +74,9 @@ export function GuideCard({ guide }: { guide: AiGuide }) {
           </div>
           <div className="p-4 space-y-2 flex-1">
             <CategoryBadge category={guide.category} />
-            <h3 className="text-sm font-bold text-gray-900 line-clamp-2">{guide.title}</h3>
+            <h3 className="text-sm font-bold text-gray-900 line-clamp-2">
+              {guide.is_required && <RequiredBadge />} <span>{guide.title}</span>
+            </h3>
             <p className="text-xs text-gray-500 line-clamp-3">{stripMarkdown(guide.description)}</p>
             <p className="text-xs text-gray-400 pt-1">{guide.author} · {dateLabel}</p>
           </div>
@@ -89,6 +99,7 @@ export function GuideCard({ guide }: { guide: AiGuide }) {
               <img src={guide.image_url} alt="" className="w-full rounded-lg object-cover max-h-64" />
             )}
             <div className="flex items-center gap-2 flex-wrap">
+              {guide.is_required && <RequiredBadge />}
               <CategoryBadge category={guide.category} />
               <span className="text-xs text-gray-400">{guide.author} · {dateLabel}</span>
             </div>
