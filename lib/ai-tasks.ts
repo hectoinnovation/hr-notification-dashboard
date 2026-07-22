@@ -67,6 +67,15 @@ export type AiGuide = {
   updated_at: string
 }
 
+export type AiTeam = {
+  id: string
+  name: string
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export type AiAssignment = {
   id: string
   task_id: string
@@ -129,6 +138,16 @@ export function sortGuides(guides: AiGuide[]): AiGuide[] {
     if (a.is_required !== b.is_required) return a.is_required ? -1 : 1
     if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1
     return b.created_at.localeCompare(a.created_at)
+  })
+}
+
+// 팀 정렬: sort_order ASC, 동률이면 name ASC — 등록 Dropdown/팀 참여 현황도 동일 순서 사용
+export function sortTeams(teams: AiTeam[]): AiTeam[] {
+  return [...teams].sort((a, b) => {
+    if (a.sort_order !== b.sort_order) {
+      return a.sort_order - b.sort_order
+    }
+    return a.name.localeCompare(b.name, 'ko')
   })
 }
 
