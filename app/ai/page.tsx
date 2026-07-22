@@ -134,13 +134,13 @@ export default function AiRegisterPage() {
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">현재 업무</label>
             <textarea value={currentWork} onChange={e => setCurrentWork(e.target.value)} rows={2}
-              placeholder="예) 매주 채용공고를 작성하고 있습니다."
+              placeholder="예) 반복적으로 데이터를 취합하고 진행 현황을 수작업으로 관리하고 있습니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
           </div>
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 계획</label>
             <textarea value={aiUsage} onChange={e => setAiUsage(e.target.value)} rows={3}
-              placeholder="예) ChatGPT를 활용하여 채용공고를 자동 생성해볼 예정입니다."
+              placeholder="예) Claude를 활용한 바이브코딩으로 반복 업무를 자동화하고, 결과를 조회·관리할 수 있는 웹페이지를 개발할 예정입니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
           </div>
         </div>
