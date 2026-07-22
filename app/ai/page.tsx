@@ -39,6 +39,11 @@ export default function AiRegisterPage() {
     setSubmitting(true)
     setError(null)
     try {
+      const { count, error: countErr } = await supabase.from('ai_tasks')
+        .select('id', { count: 'exact', head: true }).eq('team', team.trim())
+      if (countErr) { setError(countErr.message); return }
+      if ((count ?? 0) > 0) { setError('이미 등록된 팀입니다. 팀당 AI 과제는 1건만 등록할 수 있습니다.'); return }
+
       const password_hash = await hashPassword(password.trim())
       const { data, error: err } = await supabase.from('ai_tasks').insert({
         title: title.trim(),
