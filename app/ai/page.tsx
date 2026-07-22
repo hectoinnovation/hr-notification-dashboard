@@ -40,11 +40,6 @@ export default function AiRegisterPage() {
     setSubmitting(true)
     setError(null)
     try {
-      const { count, error: countErr } = await supabase.from('ai_tasks')
-        .select('id', { count: 'exact', head: true }).eq('team', team.trim())
-      if (countErr) { setError(countErr.message); return }
-      if ((count ?? 0) > 0) { setError('이미 등록된 팀입니다. 팀당 AI 과제는 1건만 등록할 수 있습니다.'); return }
-
       const password_hash = await hashPassword(password.trim())
       const { data, error: err } = await supabase.from('ai_tasks').insert({
         title: title.trim(),
@@ -75,9 +70,10 @@ export default function AiRegisterPage() {
       <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-1.5">
         <p className="text-sm font-bold text-orange-700">📢 등록 전 꼭 확인해주세요</p>
         <ul className="text-xs text-orange-700 leading-relaxed list-disc list-inside space-y-0.5">
-          <li>반드시 본인의 실제 소속 팀을 선택해 주세요.</li>
-          <li>잘못된 팀을 선택하여 등록하면 해당 팀의 과제로 집계되어 다른 팀원이 정상적으로 등록하지 못할 수 있습니다.</li>
-          <li>등록 전 팀 선택이 올바른지 한 번 더 확인해 주세요.</li>
+          <li>AI 과제는 모든 팀이 최소 1건 이상 반드시 등록해야 합니다.</li>
+          <li>한 팀에서 여러 개의 과제를 등록해도 됩니다.</li>
+          <li>팀원 중 1명이 대표로 등록하여 함께 진행하면 됩니다.</li>
+          <li>반드시 본인의 실제 소속 팀을 선택한 후 등록해 주세요.</li>
         </ul>
       </div>
 

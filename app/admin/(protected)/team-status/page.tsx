@@ -39,7 +39,8 @@ export default function AdminTeamStatusPage() {
   }
   useEffect(() => { (async () => { await load() })() }, [])
 
-  // 팀당 한 행 — 팀당 과제 1건 제출이 원칙이므로, 여러 건 등록된 경우엔 가장 최근 과제만 표시
+  // 팀당 한 행 — 이 화면의 목적은 등록 건수 제한이 아니라 등록 여부(등록완료/미등록) 확인이므로,
+  // 여러 건 등록된 경우에도 팀당 대표로 가장 최근 과제 하나만 표시한다.
   const rows: Row[] = teams.map(t => {
     const teamTasks = tasks
       .filter(task => task.team === t.name)
