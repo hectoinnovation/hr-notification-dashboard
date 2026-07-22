@@ -24,7 +24,7 @@ create table if not exists public.ai_tasks (
   -- 등록 시 입력 항목 — 등록은 "앞으로 AI로 해결하려는 업무" 기준.
   current_work        text,        -- 현재 업무 (등록 시)
   ai_usage             text,        -- AI 활용 계획 (등록 시 입력, 완료 후에도 그대로 유지)
-  result_content       text,        -- 해결 결과 (완료 처리 시 입력)
+  result_content       text,        -- 과제 링크 / 결과물 (완료 처리 시 입력 — GitHub/Notion 등 링크 또는 결과물 설명)
   completed_at         date,
 
   -- 수정/삭제/완료 처리 권한 확인용 (bcrypt 해시로 저장, 평문 저장 금지)
@@ -37,6 +37,10 @@ create table if not exists public.ai_tasks (
   created_at           timestamptz not null default now(),
   updated_at           timestamptz not null default now()
 );
+
+-- 기존(이전 버전) 스키마로 이미 생성된 프로젝트를 위한 마이그레이션 — 새로 생성된 테이블에는 no-op.
+-- 좋아요 수 — 로그인 없는 구조이므로 인증/중복 방지 없이 단순 증가 카운트만 저장한다.
+alter table public.ai_tasks add column if not exists likes_count integer not null default 0;
 
 create index if not exists idx_ai_tasks_status          on public.ai_tasks (status);
 create index if not exists idx_ai_tasks_resolution_type  on public.ai_tasks (resolution_type);

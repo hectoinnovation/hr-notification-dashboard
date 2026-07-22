@@ -31,9 +31,9 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
     <Modal title="🎉 과제 완료하기" onClose={onClose}>
       <div className="space-y-3">
         <div>
-          <label className="text-xs font-semibold text-gray-500 block mb-1.5">해결 결과<span className="text-red-400 ml-0.5">*</span></label>
-          <textarea value={resultContent} onChange={e => setResultContent(e.target.value)} rows={4} autoFocus
-            placeholder={'예) ChatGPT를 활용하여 채용공고 초안을 자동 생성하였고,\n기존 30분 걸리던 업무를 5분으로 단축했습니다.'}
+          <label className="text-xs font-semibold text-gray-500 block mb-1.5">과제 링크 / 결과물<span className="text-red-400 ml-0.5">*</span></label>
+          <textarea value={resultContent} onChange={e => setResultContent(e.target.value)} rows={5} autoFocus
+            placeholder={'예) https://github.com/...\n\n예) https://www.notion.so/...\n\n결과물 링크 또는 제출 내용을 입력해주세요.'}
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
         </div>
         {error && <p className="text-xs text-red-500">{error}</p>}

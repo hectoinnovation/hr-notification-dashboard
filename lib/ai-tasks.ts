@@ -49,6 +49,7 @@ export type AiTask = {
   password_hash: string
   assignee?: string
   priority?: Priority
+  likes_count: number
   created_at: string
   updated_at: string
 }
@@ -130,6 +131,14 @@ export function countCommentsByTask(comments: Pick<AiComment, 'task_id'>[]): Rec
   const counts: Record<string, number> = {}
   for (const c of comments) counts[c.task_id] = (counts[c.task_id] ?? 0) + 1
   return counts
+}
+
+// 좋아요 +1 — 로그인 없는 구조라 인증/중복 방지 없이 단순 증가만 수행한다.
+export async function incrementLikes(taskId: string, currentLikes: number): Promise<number> {
+  const next = currentLikes + 1
+  const { error } = await supabase.from('ai_tasks').update({ likes_count: next }).eq('id', taskId)
+  if (error) throw new Error(error.message)
+  return next
 }
 
 // 자료 정렬: 필독 최우선 → 고정(Pin) → 최신 등록순

@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import { verifyPassword, incrementLikes, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -45,6 +45,7 @@ export default function AiTaskDetailPage() {
   const [form, setForm] = useState<EditForm | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [liking, setLiking] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,6 +97,19 @@ export default function AiTaskDetailPage() {
     if (updErr) throw new Error(updErr.message)
     setCompleting(false)
     await load()
+  }
+
+  async function handleLike() {
+    if (!task || liking) return
+    setLiking(true)
+    try {
+      const next = await incrementLikes(task.id, task.likes_count ?? 0)
+      setTask({ ...task, likes_count: next })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLiking(false)
+    }
   }
 
   async function saveEdit() {
@@ -175,6 +189,10 @@ export default function AiTaskDetailPage() {
               <div className="flex items-center gap-1.5 flex-wrap pt-1">
                 <ResolutionBadge type={task.resolution_type} />
                 <StatusBadge status={task.status} />
+                <button type="button" onClick={handleLike} disabled={liking}
+                  className="text-xs font-semibold text-gray-500 hover:text-red-500 border border-gray-200 rounded-lg px-2.5 py-0.5 transition-colors disabled:opacity-50">
+                  ❤️ {task.likes_count ?? 0}
+                </button>
               </div>
             </div>
 
@@ -192,8 +210,8 @@ export default function AiTaskDetailPage() {
             )}
             {task.result_content && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">해결 결과</p>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.result_content}</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1">과제 링크 / 결과물</p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap break-all">{task.result_content}</p>
               </div>
             )}
 
