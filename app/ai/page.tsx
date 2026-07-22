@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { hashPassword, sortTeams, type ResolutionType, type AiTask, type AiTeam } from '@/lib/ai-tasks'
 import { FormSection } from '@/components/ai/FormSection'
+import { TeamCombobox } from '@/components/ai/TeamCombobox'
 
 export default function AiRegisterPage() {
   const router = useRouter()
@@ -116,16 +117,12 @@ export default function AiRegisterPage() {
               ) : teams.length === 0 ? (
                 <div className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 text-gray-400 bg-gray-50">등록된 팀이 없습니다. 관리자에게 문의해주세요.</div>
               ) : (
-                <select value={team} onChange={e => setTeam(e.target.value)}
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
-                  <option value="" disabled>팀 선택</option>
-                  {teams.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                </select>
+                <TeamCombobox teams={teams} value={team} onChange={setTeam} />
               )}
             </div>
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1.5">작성자<span className="text-red-400 ml-0.5">*</span></label>
-              <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="예) 안소정"
+              <input value={author} onChange={e => setAuthor(e.target.value)} placeholder="예) 김헥토"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
             </div>
           </div>
