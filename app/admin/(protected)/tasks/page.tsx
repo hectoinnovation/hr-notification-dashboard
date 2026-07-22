@@ -115,7 +115,9 @@ function AdminTasksContent() {
                     <td className="px-4 py-2.5"><StatusBadge status={t.status} /></td>
                     <td className="px-4 py-2.5"><ResolutionBadge type={t.resolution_type} /></td>
                     <td className="px-4 py-2.5 text-gray-600">{t.assignee ?? '-'}</td>
-                    <td className="px-4 py-2.5"><PriorityBadge priority={t.priority} /></td>
+                    <td className="px-4 py-2.5">
+                      {t.resolution_type === 'help' ? <PriorityBadge priority={t.priority} /> : <span className="text-xs text-gray-300">-</span>}
+                    </td>
                     <td className="px-4 py-2.5 text-gray-400">{t.created_at.slice(0, 10)}</td>
                   </tr>
                 ))}
