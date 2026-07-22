@@ -11,10 +11,11 @@ export type GuideFormData = {
   url: string
   image_url: string
   author: string
+  is_required: boolean
 }
 
 export const EMPTY_GUIDE_FORM: GuideFormData = {
-  title: '', description: '', category: '기타', url: '', image_url: '', author: '',
+  title: '', description: '', category: '기타', url: '', image_url: '', author: '', is_required: false,
 }
 
 const CATEGORIES: GuideCategory[] = ['AI 뉴스', '프롬프트', '활용 사례', '바이브코딩', '추천 툴', '교육자료', '기타']
@@ -165,6 +166,12 @@ export function GuideForm({ form, onChange }: { form: GuideFormData; onChange: (
           </div>
         </div>
       </div>
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={form.is_required} onChange={e => set('is_required', e.target.checked)}
+          className="w-4 h-4 rounded border-gray-300 text-red-500 focus:ring-red-400" />
+        <span className="text-sm font-semibold text-gray-700">필독으로 설정</span>
+      </label>
     </div>
   )
 }
