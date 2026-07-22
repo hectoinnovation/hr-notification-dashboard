@@ -141,9 +141,14 @@ export function sortGuides(guides: AiGuide[]): AiGuide[] {
   })
 }
 
-// 팀 정렬: 관리자가 지정한 순서(sort_order) 그대로 — 등록 Dropdown도 동일 순서 사용
+// 팀 정렬: sort_order ASC, 동률이면 name ASC — 등록 Dropdown/팀 참여 현황도 동일 순서 사용
 export function sortTeams(teams: AiTeam[]): AiTeam[] {
-  return [...teams].sort((a, b) => a.sort_order - b.sort_order)
+  return [...teams].sort((a, b) => {
+    if (a.sort_order !== b.sort_order) {
+      return a.sort_order - b.sort_order
+    }
+    return a.name.localeCompare(b.name, 'ko')
+  })
 }
 
 // ─── 대표 이미지 업로드 (서버 API 라우트 없음 — 브라우저에서 Storage 직접 호출) ───
