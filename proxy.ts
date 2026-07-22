@@ -33,20 +33,23 @@ export default async function proxy(req: NextRequest) {
   const ip = (forwarded ? forwarded.split(',')[0] : req.headers.get('x-real-ip') ?? '127.0.0.1').trim()
   const isLocalhost = ip === '127.0.0.1' || ip === '::1'
 
-  // ── Preview 배포 차단 ─────────────────────────────────────────────────────
+  // ── Preview 배포 여부 ─────────────────────────────────────────────────────
+  // Vercel 플랫폼이 배포 유형에 따라 직접 설정하는 값이라 사람이 잘못 설정할 수 없고,
+  // Production(VERCEL_ENV==='production')과 로컬(undefined)에는 아래 두 체크 모두 영향을 주지 않는다.
+  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview'
+
+  // ── Production Host 검증 (Preview는 QA 목적상 제외) ─────────────────────────
+  // /ai, /ai/guides 등 PUBLIC_PATHS는 이 체크 전에 이미 통과되므로 영향받지 않지만,
+  // /admin/* 등 세션 보호 경로는 이 체크를 먼저 통과해야 아래 관리자 세션 체크까지 도달한다.
   const productionHost = process.env.PRODUCTION_HOST ?? ''
   const host = req.headers.get('host') ?? ''
-  if (productionHost && !isLocalhost && host !== productionHost && !pathname.startsWith('/blocked')) {
+  if (productionHost && !isLocalhost && !isPreviewDeployment && host !== productionHost && !pathname.startsWith('/blocked')) {
     const url = req.nextUrl.clone()
     url.pathname = '/blocked'
     return NextResponse.redirect(url)
   }
 
-  // ── IP Whitelist ──────────────────────────────────────────────────────────
-  // Preview 배포(VERCEL_ENV==='preview')는 QA 목적상 화이트리스트를 적용하지 않는다.
-  // VERCEL_ENV는 Vercel 플랫폼이 배포 유형에 따라 직접 설정하는 값이라 사람이 잘못 설정할 수 없고,
-  // Production(VERCEL_ENV==='production')과 로컬(undefined)에는 이 조건이 전혀 영향을 주지 않는다.
-  const isPreviewDeployment = process.env.VERCEL_ENV === 'preview'
+  // ── IP Whitelist (Preview는 QA 목적상 제외) ─────────────────────────────────
   if (!pathname.startsWith('/blocked') && !isPreviewDeployment) {
     const allowedIPs = (process.env.ALLOWED_IPS ?? '').split(',').map(s => s.trim()).filter(Boolean)
     if (allowedIPs.length > 0 && !isLocalhost && !allowedIPs.includes(ip)) {
