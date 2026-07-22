@@ -106,7 +106,7 @@ export default function AiRegisterPage() {
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">제목<span className="text-red-400 ml-0.5">*</span></label>
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="예) 채용공고 자동 생성"
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="예) 반복 업무 자동화 대시보드 개발"
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
           </div>
           <div className="grid grid-cols-2 gap-3">

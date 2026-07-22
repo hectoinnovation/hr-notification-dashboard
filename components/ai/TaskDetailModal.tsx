@@ -135,16 +135,20 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
           <p className="text-xs font-bold text-gray-700">담당자 / 우선순위 (도움 필요 과제 운영)</p>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="담당자" value={form.assignee ?? ''} onChange={v => set('assignee', v)} />
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1.5">우선순위</label>
-              <select value={form.priority ?? 'medium'} onChange={e => set('priority', e.target.value as Priority)}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
-                {(['urgent', 'high', 'medium', 'low'] as Priority[]).map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-              </select>
+          {form.resolution_type === 'help' ? (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="담당자" value={form.assignee ?? ''} onChange={v => set('assignee', v)} />
+              <div>
+                <label className="text-xs font-semibold text-gray-500 block mb-1.5">우선순위</label>
+                <select value={form.priority ?? 'medium'} onChange={e => set('priority', e.target.value as Priority)}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
+                  {(['urgent', 'high', 'medium', 'low'] as Priority[]).map(p => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                </select>
+              </div>
             </div>
-          </div>
+          ) : (
+            <Field label="담당자" value={form.assignee ?? ''} onChange={v => set('assignee', v)} />
+          )}
         </div>
 
         <div className="border-t border-gray-100 pt-4">
