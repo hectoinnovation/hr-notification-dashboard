@@ -30,7 +30,7 @@ export default function AiGuidesPage() {
         )
         : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {guides.map(g => <GuideCard key={g.id} guide={g} />)}
+            {guides.map(g => <GuideCard key={g.id} guide={g} highlightRequired />)}
           </div>
         )}
     </div>

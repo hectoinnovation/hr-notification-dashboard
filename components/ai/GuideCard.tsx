@@ -56,13 +56,17 @@ function RequiredBadge() {
   )
 }
 
-export function GuideCard({ guide }: { guide: AiGuide }) {
+// highlightRequired: 필독 자료를 시각적으로 강조할지 여부 — 공개 화면(/ai/guides)에서만
+// true로 넘겨준다. 관리자 화면은 기존 디자인을 그대로 유지하기 위해 기본값 false.
+export function GuideCard({ guide, highlightRequired = false }: { guide: AiGuide; highlightRequired?: boolean }) {
   const [showDetail, setShowDetail] = useState(false)
   const dateLabel = guide.created_at.slice(0, 10).replace(/-/g, '.')
+  const showRequiredAccent = highlightRequired && guide.is_required
 
   return (
     <>
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden hover:border-orange-200 hover:shadow-md transition-all duration-150 flex flex-col">
+      <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden hover:shadow-md transition-all duration-150 flex flex-col ${showRequiredAccent ? 'border-red-200 hover:border-red-300' : 'border-gray-200 hover:border-orange-200'}`}>
+        {showRequiredAccent && <div className="h-1 bg-red-500" />}
         <button onClick={() => setShowDetail(true)} className="text-left flex-1 flex flex-col">
           <div className="aspect-video w-full bg-gray-50 flex items-center justify-center overflow-hidden">
             {guide.image_url ? (
