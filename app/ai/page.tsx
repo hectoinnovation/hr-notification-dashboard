@@ -66,6 +66,15 @@ export default function AiRegisterPage() {
         <p className="text-sm text-gray-400 mt-0.5">앞으로 AI를 활용해 해결하려는 업무를 등록해주세요. 완료되면 결과를 공유할 수 있어요.</p>
       </div>
 
+      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-1.5">
+        <p className="text-sm font-bold text-orange-700">📢 등록 전 꼭 확인해주세요</p>
+        <ul className="text-xs text-orange-700 leading-relaxed list-disc list-inside space-y-0.5">
+          <li>반드시 본인의 실제 소속 팀을 선택해 주세요.</li>
+          <li>잘못된 팀을 선택하여 등록하면 해당 팀의 과제로 집계되어 다른 팀원이 정상적으로 등록하지 못할 수 있습니다.</li>
+          <li>등록 전 팀 선택이 올바른지 한 번 더 확인해 주세요.</li>
+        </ul>
+      </div>
+
       <FormSection step={1} title="해결 방식">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button type="button" onClick={() => setResolutionType('self')}
