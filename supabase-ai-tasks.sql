@@ -47,6 +47,25 @@ create index if not exists idx_ai_tasks_priority         on public.ai_tasks (pri
 
 comment on table public.ai_tasks is 'AI 활용 과제. status=진행 상태(진행중/완료), resolution_type=해결 방식(자체해결/도움필요) — 서로 다른 축이니 혼동 금지';
 
+-- ── ai_teams ────────────────────────────────────────────────────────────────
+-- 참여팀 관리(관리자 전용). ai_tasks.team은 여전히 자유 텍스트 컬럼이며, 이 테이블은
+-- "과제 등록 화면에 노출할 팀 목록"을 관리하는 별도 마스터 테이블이다 — 조인이나
+-- FK로 강제하지 않고, 팀명을 변경/삭제할 때 앱 코드가 ai_tasks.team을 함께 갱신한다
+-- (이 프로젝트는 트리거를 쓰지 않는 기존 관례를 따름).
+create table if not exists public.ai_teams (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null unique,
+  sort_order  integer not null default 0,     -- 관리자가 지정한 노출 순서 (작을수록 먼저)
+  is_active   boolean not null default true,  -- 비활성 팀은 과제 등록 Dropdown에서만 숨김, 기존 과제는 유지
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create index if not exists idx_ai_teams_sort_order on public.ai_teams (sort_order);
+create index if not exists idx_ai_teams_is_active   on public.ai_teams (is_active);
+
+comment on table public.ai_teams is '참여팀 관리 마스터 목록 (관리자 전용) — ai_tasks.team은 자유 텍스트로 별도 유지, 이름 변경/삭제 시 앱 코드가 동기화';
+
 -- ── ai_guides ───────────────────────────────────────────────────────────────
 -- "AI 활용 방법" 페이지에 노출되는 사내 AI 활용 자료. 단순 링크 모음이 아니라
 -- 제목/설명(Markdown)/대표 이미지/카테고리/작성자를 갖춘 자료 카드다.
@@ -136,16 +155,19 @@ alter table public.ai_tasks       enable row level security;
 alter table public.ai_guides      enable row level security;
 alter table public.ai_assignments enable row level security;
 alter table public.ai_comments    enable row level security;
+alter table public.ai_teams       enable row level security;
 
 drop policy if exists "allow_all_ai_tasks"       on public.ai_tasks;
 drop policy if exists "allow_all_ai_guides"      on public.ai_guides;
 drop policy if exists "allow_all_ai_assignments" on public.ai_assignments;
 drop policy if exists "allow_all_ai_comments"    on public.ai_comments;
+drop policy if exists "allow_all_ai_teams"       on public.ai_teams;
 
 create policy "allow_all_ai_tasks"       on public.ai_tasks       for all using (true) with check (true);
 create policy "allow_all_ai_guides"      on public.ai_guides      for all using (true) with check (true);
 create policy "allow_all_ai_assignments" on public.ai_assignments for all using (true) with check (true);
 create policy "allow_all_ai_comments"    on public.ai_comments    for all using (true) with check (true);
+create policy "allow_all_ai_teams"       on public.ai_teams       for all using (true) with check (true);
 
 -- ============================================================
 -- 예시(데모) 데이터 안내

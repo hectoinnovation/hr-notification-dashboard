@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 
 const LINKS = [
   { href: '/admin/tasks', label: '전체 과제' },
+  { href: '/admin/teams', label: '참여팀 관리' },
   { href: '/admin/guides', label: 'AI 활용 방법 관리' },
 ]
 
