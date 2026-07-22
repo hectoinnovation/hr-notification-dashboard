@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
-import { sortTeams, type AiTeam, type AiTask } from '@/lib/ai-tasks'
+import { STATUS_LABEL, sortTeams, type AiTeam, type AiTask } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -38,19 +39,20 @@ export default function AdminTeamStatusPage() {
   }
   useEffect(() => { (async () => { await load() })() }, [])
 
-  // 팀별 행 구성 — 과제를 등록한 팀은 과제마다 한 행(✅), 미등록 팀은 한 행(❌)
-  const rows: Row[] = teams.flatMap((t): Row[] => {
+  // 팀당 한 행 — 팀당 과제 1건 제출이 원칙이므로, 여러 건 등록된 경우엔 가장 최근 과제만 표시
+  const rows: Row[] = teams.map(t => {
     const teamTasks = tasks
       .filter(task => task.team === t.name)
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    if (teamTasks.length === 0) return [{ key: t.id, team: t.name, task: null }]
-    return teamTasks.map(task => ({ key: task.id, team: t.name, task }))
+    return { key: t.id, team: t.name, task: teamTasks[0] ?? null }
   })
 
   const totalTeams = teams.length
-  const registeredTeamCount = teams.filter(t => tasks.some(task => task.team === t.name)).length
+  const registeredTeamCount = rows.filter(r => r.task !== null).length
   const unregisteredTeamCount = totalTeams - registeredTeamCount
   const rate = totalTeams === 0 ? 0 : Math.round((registeredTeamCount / totalTeams) * 100)
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayRegisteredCount = rows.filter(r => r.task && r.task.created_at.slice(0, 10) === todayStr).length
 
   const filteredRows = rows.filter(r => {
     if (filter === '등록 완료') return r.task !== null
@@ -58,14 +60,35 @@ export default function AdminTeamStatusPage() {
     return true
   })
 
+  function handleDownload() {
+    const exportRows = rows.map(r => ({
+      '팀명': r.team,
+      '등록 여부': r.task ? '등록 완료' : '미등록',
+      '과제명': r.task?.title ?? '미등록',
+      '등록자': r.task?.author ?? '-',
+      '등록일': r.task ? r.task.created_at.slice(0, 10) : '-',
+      '진행상태': r.task ? STATUS_LABEL[r.task.status] : '미등록',
+    }))
+    const ws = XLSX.utils.json_to_sheet(exportRows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '팀 참여 현황')
+    XLSX.writeFile(wb, `팀_참여_현황_${todayStr}.xlsx`)
+  }
+
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-bold text-gray-900">팀 참여 현황</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-bold text-gray-900">팀 참여 현황</h1>
+        <button onClick={handleDownload} disabled={loading || teams.length === 0}
+          className="text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
+          팀 참여 현황 다운로드
+        </button>
+      </div>
 
       {loading ? <LoadingState /> : (
         <>
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div>
                 <p className="text-xs text-gray-400">전체 팀</p>
                 <p className="text-xl font-bold text-gray-900">{totalTeams}</p>
@@ -81,6 +104,10 @@ export default function AdminTeamStatusPage() {
               <div>
                 <p className="text-xs text-gray-400">등록률</p>
                 <p className="text-xl font-bold text-orange-600">{rate}%</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400">오늘 등록</p>
+                <p className="text-xl font-bold text-blue-600">{todayRegisteredCount}팀</p>
               </div>
             </div>
             <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -120,7 +147,7 @@ export default function AdminTeamStatusPage() {
                       }`}>
                       <td className="px-4 py-2.5">{r.task ? '✅' : '❌'}</td>
                       <td className="px-4 py-2.5 font-semibold text-gray-800">{r.team}</td>
-                      <td className="px-4 py-2.5 text-gray-600">{r.task?.title ?? '-'}</td>
+                      <td className="px-4 py-2.5 text-gray-600">{r.task?.title ?? '미등록'}</td>
                       <td className="px-4 py-2.5 text-gray-600">{r.task?.author ?? '-'}</td>
                       <td className="px-4 py-2.5 text-gray-400">{r.task ? r.task.created_at.slice(0, 10) : '-'}</td>
                       <td className="px-4 py-2.5">{r.task ? <StatusBadge status={r.task.status} /> : <span className="text-xs text-gray-400">미등록</span>}</td>
