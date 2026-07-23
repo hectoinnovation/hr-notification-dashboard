@@ -102,6 +102,7 @@ function AdminTasksContent() {
                   <th className="px-4 py-2.5 font-medium">해결 방식</th>
                   <th className="px-4 py-2.5 font-medium">담당자</th>
                   <th className="px-4 py-2.5 font-medium">우선순위</th>
+                  <th className="px-4 py-2.5 font-medium">좋아요</th>
                   <th className="px-4 py-2.5 font-medium">등록일</th>
                 </tr>
               </thead>
@@ -118,6 +119,7 @@ function AdminTasksContent() {
                     <td className="px-4 py-2.5">
                       {t.resolution_type === 'help' ? <PriorityBadge priority={t.priority} /> : <span className="text-xs text-gray-300">-</span>}
                     </td>
+                    <td className="px-4 py-2.5 text-gray-600">❤️ {t.likes_count ?? 0}</td>
                     <td className="px-4 py-2.5 text-gray-400">{t.created_at.slice(0, 10)}</td>
                   </tr>
                 ))}

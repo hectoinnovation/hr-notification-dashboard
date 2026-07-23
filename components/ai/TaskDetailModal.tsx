@@ -124,8 +124,11 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
         <Field label="AI 활용 계획" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
-          <p className="text-xs font-bold text-gray-700">완료 처리 정보</p>
-          <Field label="해결 결과" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold text-gray-700">완료 처리 정보</p>
+            <span className="text-xs font-semibold text-gray-500">❤️ 좋아요 {form.likes_count ?? 0}</span>
+          </div>
+          <Field label="과제 링크 / 결과물" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">완료일</label>
             <input type="date" value={form.completed_at ?? ''} onChange={e => set('completed_at', e.target.value)}
