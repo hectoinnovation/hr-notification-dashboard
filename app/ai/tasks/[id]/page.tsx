@@ -21,13 +21,32 @@ type EditForm = {
   resolution_type: ResolutionType
   current_work: string
   ai_usage: string
+  result_content: string
 }
 
 function toEditForm(t: AiTask): EditForm {
   return {
     title: t.title, team: t.team, author: t.author, resolution_type: t.resolution_type,
-    current_work: t.current_work ?? '', ai_usage: t.ai_usage ?? '',
+    current_work: t.current_work ?? '', ai_usage: t.ai_usage ?? '', result_content: t.result_content ?? '',
   }
+}
+
+// 순수 URL 한 줄인 경우에만 클릭 가능한 링크로 렌더링하고, 나머지 줄은 일반 텍스트로 표시한다.
+function ResultContentDisplay({ content }: { content: string }) {
+  return (
+    <p className="text-sm text-gray-700 break-all">
+      {content.split('\n').map((line, i, arr) => (
+        <span key={i}>
+          {/^https?:\/\/\S+$/i.test(line.trim()) ? (
+            <a href={line.trim()} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+              {line.trim()}
+            </a>
+          ) : line}
+          {i < arr.length - 1 && <br />}
+        </span>
+      ))}
+    </p>
+  )
 }
 
 export default function AiTaskDetailPage() {
@@ -124,6 +143,7 @@ export default function AiTaskDetailPage() {
       resolution_type: form.resolution_type,
       current_work: form.current_work.trim() || null,
       ai_usage: form.ai_usage.trim() || null,
+      result_content: form.result_content.trim() || null,
       updated_at: new Date().toISOString(),
     }).eq('id', task.id)
     setSaving(false)
@@ -175,6 +195,12 @@ export default function AiTaskDetailPage() {
               <textarea value={form.ai_usage} onChange={e => setForm({ ...form, ai_usage: e.target.value })} rows={3}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">🔗 과제 링크 / 결과물</label>
+              <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={3}
+                placeholder="예) GitHub, Notion, Figma, Google Drive, Apps Script URL 또는 결과물 설명"
+                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
+            </div>
             {error && <p className="text-xs text-red-500">{error}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
               <button onClick={() => setEditing(false)} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
@@ -213,12 +239,14 @@ export default function AiTaskDetailPage() {
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.ai_usage}</p>
               </div>
             )}
-            {task.result_content && (
-              <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">과제 링크 / 결과물</p>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap break-all">{task.result_content}</p>
-              </div>
-            )}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 mb-1">🔗 과제 링크 / 결과물</p>
+              {task.result_content ? (
+                <ResultContentDisplay content={task.result_content} />
+              ) : (
+                <p className="text-sm text-gray-400">아직 등록된 결과물이 없습니다.</p>
+              )}
+            </div>
 
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
               {task.status === 'in_progress' ? (
