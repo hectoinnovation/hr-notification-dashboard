@@ -74,7 +74,7 @@ function AiTasksContent() {
         <div className="space-y-1">
           <p className="text-sm font-bold text-orange-700">함께 참여해보세요</p>
           <p className="text-sm text-orange-700 leading-relaxed">
-            동료들의 AI 활용 사례를 둘러보고, 좋은 아이디어에는 👍 좋아요를, 궁금한 점이나 의견은 💬 댓글로 남겨보세요.
+            동료들의 AI 활용 사례를 둘러보고, 좋은 아이디어에는 ❤️ 하트를, 궁금한 점이나 의견은 💬 댓글로 남겨보세요.
             <br />
             여러분의 작은 피드백이 더 좋은 AI 활용 사례를 만드는 데 도움이 됩니다.
           </p>
