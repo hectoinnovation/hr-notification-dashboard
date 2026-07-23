@@ -143,20 +143,21 @@ export default function AiRegisterPage() {
         </div>
       </FormSection>
 
-      <FormSection step={4} title="수정 비밀번호">
+      <FormSection step={4} title="등록">
         <div>
+          <label className="text-xs font-semibold text-gray-500 block mb-1.5">수정 비밀번호<span className="text-red-400 ml-0.5">*</span></label>
           <input type="password" value={password} onChange={e => setPassword(e.target.value)}
             placeholder="4자 이상 입력 (수정·삭제·완료 처리 시 필요합니다)"
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
         </div>
+
+        {error && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">등록 실패: {error}</p>}
+
+        <button onClick={handleSubmit} disabled={!canSubmit || submitting}
+          className="w-full text-sm font-bold py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors disabled:opacity-40">
+          {submitting ? '등록 중...' : '🤖 AI 과제 등록하기'}
+        </button>
       </FormSection>
-
-      {error && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">등록 실패: {error}</p>}
-
-      <button onClick={handleSubmit} disabled={!canSubmit || submitting}
-        className="w-full text-sm font-bold py-3.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors disabled:opacity-40">
-        {submitting ? '등록 중...' : '🤖 AI 과제 등록하기'}
-      </button>
     </div>
   )
 }
