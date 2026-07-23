@@ -53,7 +53,7 @@ export default function AiGuidesPage() {
             {requiredGuides.length > 0 && (
               <div className="space-y-3 pt-2">
                 <h2 className="text-sm font-bold text-gray-800">🔥 필독 자료</h2>
-                <div className="space-y-4">
+                <div className="space-y-4 max-w-xl">
                   {requiredGuides.map(g => <GuideCard key={g.id} guide={g} highlightRequired />)}
                 </div>
               </div>
