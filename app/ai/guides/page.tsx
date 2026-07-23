@@ -20,9 +20,6 @@ export default function AiGuidesPage() {
     })()
   }, [])
 
-  const requiredGuides = guides.filter(g => g.is_required)
-  const otherGuides = guides.filter(g => !g.is_required)
-
   return (
     <div className="space-y-4">
       <div>
@@ -47,18 +44,13 @@ export default function AiGuidesPage() {
           <EmptyState label="등록된 자료가 없습니다." description="관리자가 자료를 등록하면 이곳에 표시됩니다." />
         )
         : (
-          <>
-            {requiredGuides.length > 0 && (
-              <div className="space-y-4">
-                {requiredGuides.map(g => <GuideCard key={g.id} guide={g} highlightRequired size="large" />)}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {guides.map(g => (
+              <div key={g.id} className={g.is_required ? 'sm:col-span-2 lg:col-span-2' : ''}>
+                <GuideCard guide={g} highlightRequired size={g.is_required ? 'large' : 'default'} />
               </div>
-            )}
-            {otherGuides.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {otherGuides.map(g => <GuideCard key={g.id} guide={g} highlightRequired />)}
-              </div>
-            )}
-          </>
+            ))}
+          </div>
         )}
     </div>
   )
