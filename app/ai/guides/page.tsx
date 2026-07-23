@@ -35,6 +35,8 @@ export default function AiGuidesPage() {
             AI 해커톤의 목적과 진행 방향을 이해하는 데 도움이 되는 자료입니다.
             <br />
             &apos;필독&apos; 자료를 먼저 확인한 후 다른 교육 자료와 활용 사례를 살펴보시기 바랍니다.
+            <br />
+            👇 아래 &apos;필독&apos; 자료부터 확인한 후 다른 교육 자료를 살펴보세요.
           </p>
         </div>
       </div>
@@ -47,7 +49,7 @@ export default function AiGuidesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {guides.map(g => (
               <div key={g.id} className={g.is_required ? 'sm:col-span-2 lg:col-span-2' : ''}>
-                <GuideCard guide={g} highlightRequired size={g.is_required ? 'large' : 'default'} />
+                <GuideCard guide={g} highlightRequired />
               </div>
             ))}
           </div>
