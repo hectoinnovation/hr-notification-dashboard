@@ -21,6 +21,19 @@ export default function AiAboutPage() {
         <p className="text-sm text-gray-600 leading-relaxed">
           반복 업무나 해결하고 싶은 업무를 AI를 활용하여 해결하고 결과를 공유하는 사내 AI 해커톤입니다.
         </p>
+        <p className="text-sm text-gray-600 leading-relaxed">
+          반복 업무를 AI로 자동화하는 것이 목표가 아닙니다.
+          업무의 본질을 고민하고, AI와 함께 더 가치 있는 일에 집중하는 경험을 만드는 것이 이번 AI 해커톤의 목적입니다.
+        </p>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-2">
+        <p className="text-sm font-bold text-gray-800">참여하면 얻을 수 있는 것</p>
+        <ul className="text-sm text-gray-600 leading-relaxed list-disc list-inside space-y-1">
+          <li>반복 업무를 줄이는 아이디어를 발견할 수 있습니다.</li>
+          <li>AI를 실제 업무에 적용하는 경험을 쌓을 수 있습니다.</li>
+          <li>다른 팀의 AI 활용 사례를 함께 공유하고 배울 수 있습니다.</li>
+        </ul>
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-1">
