@@ -69,6 +69,18 @@ function AiTasksContent() {
         <p className="text-sm text-gray-400 mt-0.5">동료들이 AI로 해결했거나 도움을 구하는 업무를 둘러보세요.</p>
       </div>
 
+      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 flex items-start gap-3">
+        <span className="text-xl flex-shrink-0 leading-none">💡</span>
+        <div className="space-y-1">
+          <p className="text-sm font-bold text-orange-700">함께 참여해보세요</p>
+          <p className="text-sm text-orange-700 leading-relaxed">
+            동료들의 AI 활용 사례를 둘러보고, 좋은 아이디어에는 👍 좋아요를, 궁금한 점이나 의견은 💬 댓글로 남겨보세요.
+            <br />
+            여러분의 작은 피드백이 더 좋은 AI 활용 사례를 만드는 데 도움이 됩니다.
+          </p>
+        </div>
+      </div>
+
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
         <input value={search} onChange={e => setSearch(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') updateParam('q', search) }}
