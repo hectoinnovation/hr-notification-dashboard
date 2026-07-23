@@ -48,7 +48,14 @@ function CategoryBadge({ category }: { category: string }) {
   )
 }
 
-function RequiredBadge() {
+function RequiredBadge({ emphasized = false }: { emphasized?: boolean }) {
+  if (emphasized) {
+    return (
+      <span className="inline-flex items-center gap-1 text-sm font-bold text-white bg-red-600 px-3 py-1 rounded-md flex-shrink-0">
+        🔥 필독
+      </span>
+    )
+  }
   return (
     <span className="text-xs font-bold text-white bg-red-500 px-1.5 py-0.5 rounded flex-shrink-0">
       필독
@@ -58,15 +65,22 @@ function RequiredBadge() {
 
 // highlightRequired: 필독 자료를 시각적으로 강조할지 여부 — 공개 화면(/ai/guides)에서만
 // true로 넘겨준다. 관리자 화면은 기존 디자인을 그대로 유지하기 위해 기본값 false.
-export function GuideCard({ guide, highlightRequired = false }: { guide: AiGuide; highlightRequired?: boolean }) {
+// 필독 카드는 크기(폰트/패딩)를 키우지 않고 테두리·그림자·배경 톤·배지로만 차별화한다 —
+// 그리드 폭(sm:col-span-2 lg:col-span-2)은 페이지 쪽에서 이미 담당한다.
+export function GuideCard({ guide, highlightRequired = false }: {
+  guide: AiGuide; highlightRequired?: boolean
+}) {
   const [showDetail, setShowDetail] = useState(false)
   const dateLabel = guide.created_at.slice(0, 10).replace(/-/g, '.')
   const showRequiredAccent = highlightRequired && guide.is_required
 
   return (
     <>
-      <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden hover:shadow-md transition-all duration-150 flex flex-col ${showRequiredAccent ? 'border-red-200 hover:border-red-300' : 'border-gray-200 hover:border-orange-200'}`}>
-        {showRequiredAccent && <div className="h-1 bg-red-500" />}
+      <div className={`rounded-2xl border overflow-hidden transition-all duration-150 flex flex-col ${
+        showRequiredAccent
+          ? 'bg-amber-50/60 border-2 border-red-300 shadow-md hover:shadow-lg hover:border-red-400 hover:-translate-y-0.5'
+          : 'bg-white border-gray-200 shadow-sm hover:shadow-md hover:border-orange-200'
+      }`}>
         <button onClick={() => setShowDetail(true)} className="text-left flex-1 flex flex-col">
           <div className="aspect-video w-full bg-gray-50 flex items-center justify-center overflow-hidden">
             {guide.image_url ? (
@@ -77,9 +91,16 @@ export function GuideCard({ guide, highlightRequired = false }: { guide: AiGuide
             )}
           </div>
           <div className="p-4 space-y-2 flex-1">
-            <CategoryBadge category={guide.category} />
+            {showRequiredAccent ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <RequiredBadge emphasized />
+                <CategoryBadge category={guide.category} />
+              </div>
+            ) : (
+              <CategoryBadge category={guide.category} />
+            )}
             <h3 className="text-sm font-bold text-gray-900 line-clamp-2">
-              {guide.is_required && <RequiredBadge />} <span>{guide.title}</span>
+              {guide.is_required && !showRequiredAccent && <RequiredBadge />} <span>{guide.title}</span>
             </h3>
             <p className="text-xs text-gray-500 line-clamp-3">{stripMarkdown(guide.description)}</p>
             <p className="text-xs text-gray-400 pt-1">{guide.author} · {dateLabel}</p>
