@@ -133,12 +133,39 @@ export function countCommentsByTask(comments: Pick<AiComment, 'task_id'>[]): Rec
   return counts
 }
 
-// 좋아요 +1 — 로그인 없는 구조라 인증/중복 방지 없이 단순 증가만 수행한다.
-export async function incrementLikes(taskId: string, currentLikes: number): Promise<number> {
-  const next = currentLikes + 1
+// 좋아요 토글 — 로그인이 없는 구조라 서버 인증 대신 브라우저 localStorage로 "이 브라우저가
+// 이 과제에 좋아요를 눌렀는지"만 기억한다. 다른 브라우저/기기에서는 감지하지 못하는 단순 구현.
+const LIKED_TASKS_KEY = 'ai_liked_task_ids'
+
+function readLikedTaskIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set()
+  try {
+    const raw = window.localStorage.getItem(LIKED_TASKS_KEY)
+    return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function writeLikedTaskIds(ids: Set<string>) {
+  window.localStorage.setItem(LIKED_TASKS_KEY, JSON.stringify([...ids]))
+}
+
+export function hasLikedTask(taskId: string): boolean {
+  return readLikedTaskIds().has(taskId)
+}
+
+export async function toggleLike(taskId: string, currentLikes: number): Promise<{ likes: number; liked: boolean }> {
+  const liked = hasLikedTask(taskId)
+  const next = liked ? Math.max(0, currentLikes - 1) : currentLikes + 1
   const { error } = await supabase.from('ai_tasks').update({ likes_count: next }).eq('id', taskId)
   if (error) throw new Error(error.message)
-  return next
+
+  const ids = readLikedTaskIds()
+  if (liked) ids.delete(taskId); else ids.add(taskId)
+  writeLikedTaskIds(ids)
+
+  return { likes: next, liked: !liked }
 }
 
 // 자료 정렬: 필독 최우선 → 고정(Pin) → 최신 등록순

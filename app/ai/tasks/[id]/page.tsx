@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, incrementLikes, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import { verifyPassword, toggleLike, hasLikedTask, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -46,6 +46,7 @@ export default function AiTaskDetailPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [liking, setLiking] = useState(false)
+  const [liked, setLiked] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -57,6 +58,7 @@ export default function AiTaskDetailPage() {
     if (!taskRow) { setNotFound(true); setLoading(false); return }
     setTask(taskRow as AiTask)
     setComments((commentRows ?? []) as AiComment[])
+    setLiked(hasLikedTask(id))
     setLoading(false)
   }, [id])
   useEffect(() => { (async () => { await load() })() }, [load])
@@ -103,8 +105,9 @@ export default function AiTaskDetailPage() {
     if (!task || liking) return
     setLiking(true)
     try {
-      const next = await incrementLikes(task.id, task.likes_count ?? 0)
-      setTask({ ...task, likes_count: next })
+      const result = await toggleLike(task.id, task.likes_count ?? 0)
+      setTask({ ...task, likes_count: result.likes })
+      setLiked(result.liked)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -190,8 +193,10 @@ export default function AiTaskDetailPage() {
                 <ResolutionBadge type={task.resolution_type} />
                 <StatusBadge status={task.status} />
                 <button type="button" onClick={handleLike} disabled={liking}
-                  className="text-xs font-semibold text-gray-500 hover:text-red-500 border border-gray-200 rounded-lg px-2.5 py-0.5 transition-colors disabled:opacity-50">
-                  ❤️ {task.likes_count ?? 0}
+                  className={`text-xs font-semibold border rounded-lg px-2.5 py-0.5 transition-colors disabled:opacity-50 ${
+                    liked ? 'text-red-500 border-red-200 bg-red-50' : 'text-gray-500 border-gray-200 hover:text-red-500'
+                  }`}>
+                  {liked ? '❤️' : '🤍'} {task.likes_count ?? 0}
                 </button>
               </div>
             </div>

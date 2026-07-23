@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { useEffect } from 'react'
 
 const LINKS = [
+  { href: '/ai/about', label: 'AI 해커톤 안내' },
   { href: '/ai/guides', label: 'AI 활용 방법' },
   { href: '/ai', label: 'AI 과제 등록' },
   { href: '/ai/tasks', label: '등록된 과제' },
@@ -29,7 +30,7 @@ export function AiNav() {
   return (
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-gray-100">
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
-        <Link href="/ai/guides" className="flex items-center gap-2 flex-shrink-0">
+        <Link href="/ai/about" className="flex items-center gap-2 flex-shrink-0">
           <div className="w-7 h-7 rounded-lg bg-orange-500 text-white flex items-center justify-center text-sm">🤖</div>
           <span className="font-bold text-sm text-gray-900 hidden sm:inline">AI 해커톤</span>
         </Link>
