@@ -22,9 +22,9 @@ create table if not exists public.ai_tasks (
   status              text not null default 'in_progress' check (status in ('in_progress','done')),  -- 진행 상태: 진행중 | 완료
 
   -- 등록 시 입력 항목 — 등록은 "앞으로 AI로 해결하려는 업무" 기준.
-  current_work        text,        -- 현재 업무 (등록 시)
-  ai_usage             text,        -- AI 활용 계획 (등록 시 입력, 완료 후에도 그대로 유지)
-  result_content       text,        -- 과제 링크 / 결과물 (완료 처리 시 입력 — GitHub/Notion 등 링크 또는 결과물 설명)
+  current_work        text,        -- 개선하고 싶은 업무 또는 프로세스 (등록 시)
+  ai_usage             text,        -- 개선 방향 (등록 시 입력, 완료 후에도 그대로 유지) — 텍스트/파일 첨부 병행 가능
+  result_content       text,        -- 과제 링크 / 결과물 (완료 처리 시 입력 — GitHub/Notion 등 링크 또는 결과물 설명) — 텍스트/파일 첨부 병행 가능
   completed_at         date,
 
   -- 수정/삭제/완료 처리 권한 확인용 (bcrypt 해시로 저장, 평문 저장 금지)
@@ -41,6 +41,13 @@ create table if not exists public.ai_tasks (
 -- 기존(이전 버전) 스키마로 이미 생성된 프로젝트를 위한 마이그레이션 — 새로 생성된 테이블에는 no-op.
 -- 좋아요 수 — 로그인 없는 구조이므로 인증/중복 방지 없이 단순 증가 카운트만 저장한다.
 alter table public.ai_tasks add column if not exists likes_count integer not null default 0;
+
+-- 개선 방향(ai_usage) / 결과 제출(result_content) 각각에 파일 1개씩 첨부 가능
+-- (url + 원본 파일명을 함께 저장 — 다운로드 링크 텍스트에 원본 파일명을 보여주기 위함)
+alter table public.ai_tasks add column if not exists ai_usage_file_url  text;
+alter table public.ai_tasks add column if not exists ai_usage_file_name text;
+alter table public.ai_tasks add column if not exists result_file_url    text;
+alter table public.ai_tasks add column if not exists result_file_name  text;
 
 create index if not exists idx_ai_tasks_status          on public.ai_tasks (status);
 create index if not exists idx_ai_tasks_resolution_type  on public.ai_tasks (resolution_type);
@@ -195,4 +202,12 @@ create policy "allow_all_ai_teams"       on public.ai_teams       for all using 
 drop policy if exists "allow_all_ai_guide_images" on storage.objects;
 create policy "allow_all_ai_guide_images" on storage.objects
   for all using (bucket_id = 'ai-guide-images') with check (bucket_id = 'ai-guide-images');
+
+-- 추가 Storage Bucket (마찬가지로 SQL Editor에서 생성 불가 — 수동 생성 필요)
+-- Supabase Dashboard > Storage > New Bucket:
+--   이름: ai-task-files   /   Public bucket: 체크 (Public: true)
+-- 과제 등록 시 "개선 방향" 첨부파일, 완료 처리 시 "결과 제출" 첨부파일 업로드용.
+drop policy if exists "allow_all_ai_task_files" on storage.objects;
+create policy "allow_all_ai_task_files" on storage.objects
+  for all using (bucket_id = 'ai-task-files') with check (bucket_id = 'ai-task-files');
 -- ============================================================

@@ -120,15 +120,31 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
           <Field label="팀" value={form.team} onChange={v => set('team', v)} />
           <Field label="작성자" value={form.author} onChange={v => set('author', v)} />
         </div>
-        <Field label="현재 업무" value={form.current_work ?? ''} onChange={v => set('current_work', v)} textarea />
-        <Field label="AI 활용 계획" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
+        <Field label="개선하고 싶은 업무 또는 프로세스" value={form.current_work ?? ''} onChange={v => set('current_work', v)} textarea />
+        <div>
+          <Field label="개선 방향" value={form.ai_usage ?? ''} onChange={v => set('ai_usage', v)} textarea />
+          {task.ai_usage_file_url && (
+            <a href={task.ai_usage_file_url} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg mt-1.5 transition-colors">
+              📎 {task.ai_usage_file_name ?? '첨부파일'}
+            </a>
+          )}
+        </div>
 
         <div className="border-t border-gray-100 pt-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs font-bold text-gray-700">완료 처리 정보</p>
             <span className="text-xs font-semibold text-gray-500">❤️ 좋아요 {form.likes_count ?? 0}</span>
           </div>
-          <Field label="과제 링크 / 결과물" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
+          <div>
+            <Field label="과제 링크 / 결과물" value={form.result_content ?? ''} onChange={v => set('result_content', v)} textarea />
+            {task.result_file_url && (
+              <a href={task.result_file_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg mt-1.5 transition-colors">
+                📎 {task.result_file_name ?? '첨부파일'}
+              </a>
+            )}
+          </div>
           <div>
             <label className="text-xs font-semibold text-gray-500 block mb-1.5">완료일</label>
             <input type="date" value={form.completed_at ?? ''} onChange={e => set('completed_at', e.target.value)}
