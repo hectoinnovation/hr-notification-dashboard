@@ -9,6 +9,7 @@ import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
 import { PasswordPrompt } from '@/components/ai/PasswordPrompt'
 import { CompleteTaskModal, type CompleteTaskData } from '@/components/ai/CompleteTaskModal'
+import { TaskWorkFields } from '@/components/ai/TaskWorkFields'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 
@@ -62,6 +63,8 @@ export default function AiTaskDetailPage() {
   const [completing, setCompleting] = useState(false)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<EditForm | null>(null)
+  const [editAiUsageFile, setEditAiUsageFile] = useState<File | null>(null)
+  const [editRemoveAiUsageFile, setEditRemoveAiUsageFile] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [liking, setLiking] = useState(false)
@@ -94,6 +97,8 @@ export default function AiTaskDetailPage() {
 
     if (pending === 'edit') {
       setForm(toEditForm(task))
+      setEditAiUsageFile(null)
+      setEditRemoveAiUsageFile(false)
       setEditing(true)
     } else if (pending === 'delete') {
       const { error: delErr } = await supabase.from('ai_tasks').delete().eq('id', task.id)
@@ -141,18 +146,27 @@ export default function AiTaskDetailPage() {
     if (!task || !form) return
     setSaving(true)
     setError(null)
-    const { error: updErr } = await supabase.from('ai_tasks').update({
-      title: form.title.trim(), team: form.team.trim(), author: form.author.trim(),
-      resolution_type: form.resolution_type,
-      current_work: form.current_work.trim() || null,
-      ai_usage: form.ai_usage.trim() || null,
-      result_content: form.result_content.trim() || null,
-      updated_at: new Date().toISOString(),
-    }).eq('id', task.id)
-    setSaving(false)
-    if (updErr) { setError(updErr.message); return }
-    setEditing(false)
-    await load()
+    try {
+      const fileMeta = editAiUsageFile ? await uploadTaskFile(editAiUsageFile) : null
+      const ai_usage_file_url = fileMeta ? fileMeta.url : (editRemoveAiUsageFile ? null : task.ai_usage_file_url ?? null)
+      const ai_usage_file_name = fileMeta ? fileMeta.name : (editRemoveAiUsageFile ? null : task.ai_usage_file_name ?? null)
+      const { error: updErr } = await supabase.from('ai_tasks').update({
+        title: form.title.trim(), team: form.team.trim(), author: form.author.trim(),
+        resolution_type: form.resolution_type,
+        current_work: form.current_work.trim() || null,
+        ai_usage: form.ai_usage.trim() || null,
+        ai_usage_file_url, ai_usage_file_name,
+        result_content: form.result_content.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', task.id)
+      if (updErr) { setError(updErr.message); return }
+      setEditing(false)
+      await load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (loading) return <LoadingState />
@@ -188,16 +202,14 @@ export default function AiTaskDetailPage() {
               <input value={form.author} onChange={e => setForm({ ...form, author: e.target.value })} placeholder="작성자"
                 className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400" />
             </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">개선하고 싶은 업무 또는 프로세스</label>
-              <textarea value={form.current_work} onChange={e => setForm({ ...form, current_work: e.target.value })} rows={2}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">개선 방향</label>
-              <textarea value={form.ai_usage} onChange={e => setForm({ ...form, ai_usage: e.target.value })} rows={3}
-                className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
-            </div>
+            <TaskWorkFields
+              currentWork={form.current_work} onCurrentWorkChange={v => setForm({ ...form, current_work: v })}
+              aiUsage={form.ai_usage} onAiUsageChange={v => setForm({ ...form, ai_usage: v })}
+              aiUsageFile={editAiUsageFile} onAiUsageFileChange={setEditAiUsageFile}
+              existingFile={!editRemoveAiUsageFile && task.ai_usage_file_url
+                ? { url: task.ai_usage_file_url, name: task.ai_usage_file_name ?? '첨부파일' } : null}
+              onRemoveExistingFile={() => setEditRemoveAiUsageFile(true)}
+            />
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1">🔗 과제 링크 / 결과물</label>
               <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={3}
