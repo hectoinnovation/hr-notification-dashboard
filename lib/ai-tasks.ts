@@ -44,7 +44,11 @@ export type AiTask = {
   status: TaskStatus
   current_work?: string
   ai_usage?: string
+  ai_usage_file_url?: string
+  ai_usage_file_name?: string
   result_content?: string
+  result_file_url?: string
+  result_file_name?: string
   completed_at?: string
   password_hash: string
   assignee?: string
@@ -194,4 +198,13 @@ export async function uploadGuideImage(file: File): Promise<string> {
   if (error) throw error
   const { data } = supabase.storage.from('ai-guide-images').getPublicUrl(path)
   return data.publicUrl
+}
+
+// ─── 과제 첨부파일 업로드 (개선 방향 / 결과 제출 공용, 서버 API 라우트 없이 브라우저에서 직접 업로드) ───
+export async function uploadTaskFile(file: File): Promise<{ url: string; name: string }> {
+  const path = `${Date.now()}_${file.name}`
+  const { error } = await supabase.storage.from('ai-task-files').upload(path, file)
+  if (error) throw error
+  const { data } = supabase.storage.from('ai-task-files').getPublicUrl(path)
+  return { url: data.publicUrl, name: file.name }
 }

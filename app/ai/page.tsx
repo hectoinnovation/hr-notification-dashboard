@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { hashPassword, sortTeams, type ResolutionType, type AiTask, type AiTeam } from '@/lib/ai-tasks'
+import { hashPassword, sortTeams, uploadTaskFile, type ResolutionType, type AiTask, type AiTeam } from '@/lib/ai-tasks'
 import { FormSection } from '@/components/ai/FormSection'
 import { TeamCombobox } from '@/components/ai/TeamCombobox'
+import { FileAttachField } from '@/components/ai/FileAttachField'
 
 export default function AiRegisterPage() {
   const router = useRouter()
@@ -19,6 +20,7 @@ export default function AiRegisterPage() {
   const [author, setAuthor] = useState('')
   const [currentWork, setCurrentWork] = useState('')
   const [aiUsage, setAiUsage] = useState('')
+  const [aiUsageFile, setAiUsageFile] = useState<File | null>(null)
   const [password, setPassword] = useState('')
 
   const [submitting, setSubmitting] = useState(false)
@@ -41,6 +43,7 @@ export default function AiRegisterPage() {
     setError(null)
     try {
       const password_hash = await hashPassword(password.trim())
+      const aiUsageFileMeta = aiUsageFile ? await uploadTaskFile(aiUsageFile) : null
       const { data, error: err } = await supabase.from('ai_tasks').insert({
         title: title.trim(),
         team: team.trim(),
@@ -48,6 +51,8 @@ export default function AiRegisterPage() {
         resolution_type: resolutionType,
         current_work: currentWork.trim() || null,
         ai_usage: aiUsage.trim() || null,
+        ai_usage_file_url: aiUsageFileMeta?.url ?? null,
+        ai_usage_file_name: aiUsageFileMeta?.name ?? null,
         password_hash,
       }).select().single()
       if (err || !data) { setError(err?.message ?? '등록에 실패했습니다.'); return }
@@ -129,16 +134,18 @@ export default function AiRegisterPage() {
       <FormSection step={3} title="업무 내용">
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-semibold text-gray-500 block mb-1.5">현재 업무</label>
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">개선하고 싶은 업무 또는 프로세스</label>
             <textarea value={currentWork} onChange={e => setCurrentWork(e.target.value)} rows={2}
               placeholder="예) 반복적으로 데이터를 취합하고 진행 현황을 수작업으로 관리하고 있습니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
           </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 block mb-1.5">AI 활용 계획</label>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-gray-500 block mb-1.5">개선 방향</label>
             <textarea value={aiUsage} onChange={e => setAiUsage(e.target.value)} rows={3}
               placeholder="예) Claude를 활용한 바이브코딩으로 반복 업무를 자동화하고, 결과를 조회·관리할 수 있는 웹페이지를 개발할 예정입니다."
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
+            <FileAttachField file={aiUsageFile} onChange={setAiUsageFile} />
+            <p className="text-xs text-gray-400">개선 방향은 간단히 입력하거나, Word·PowerPoint·PDF 등의 문서로 정리하여 첨부하셔도 됩니다.</p>
           </div>
         </div>
       </FormSection>

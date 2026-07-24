@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, toggleLike, hasLikedTask, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import { verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -109,10 +109,13 @@ export default function AiTaskDetailPage() {
   async function submitComplete(data: CompleteTaskData) {
     if (!task) return
     const nowIso = new Date().toISOString()
+    const fileMeta = data.result_file ? await uploadTaskFile(data.result_file) : null
     const { error: updErr } = await supabase.from('ai_tasks').update({
       status: 'done',
       completed_at: nowIso.slice(0, 10),
       result_content: data.result_content,
+      result_file_url: fileMeta?.url ?? task.result_file_url ?? null,
+      result_file_name: fileMeta?.name ?? task.result_file_name ?? null,
       updated_at: nowIso,
     }).eq('id', task.id)
     if (updErr) throw new Error(updErr.message)
@@ -186,12 +189,12 @@ export default function AiTaskDetailPage() {
                 className="text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400" />
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">현재 업무</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">개선하고 싶은 업무 또는 프로세스</label>
               <textarea value={form.current_work} onChange={e => setForm({ ...form, current_work: e.target.value })} rows={2}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-500 block mb-1">AI 활용 계획</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">개선 방향</label>
               <textarea value={form.ai_usage} onChange={e => setForm({ ...form, ai_usage: e.target.value })} rows={3}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
             </div>
@@ -229,21 +232,32 @@ export default function AiTaskDetailPage() {
 
             {task.current_work && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">현재 업무</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1">개선하고 싶은 업무 또는 프로세스</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.current_work}</p>
               </div>
             )}
-            {task.ai_usage && (
+            {(task.ai_usage || task.ai_usage_file_url) && (
               <div>
-                <p className="text-xs font-semibold text-gray-500 mb-1">AI 활용 계획</p>
-                <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.ai_usage}</p>
+                <p className="text-xs font-semibold text-gray-500 mb-1">개선 방향</p>
+                {task.ai_usage && <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.ai_usage}</p>}
+                {task.ai_usage_file_url && (
+                  <a href={task.ai_usage_file_url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg mt-1.5 transition-colors">
+                    📎 {task.ai_usage_file_name ?? '첨부파일'}
+                  </a>
+                )}
               </div>
             )}
             <div>
               <p className="text-xs font-semibold text-gray-500 mb-1">🔗 과제 링크 / 결과물</p>
-              {task.result_content ? (
-                <ResultContentDisplay content={task.result_content} />
-              ) : (
+              {task.result_content ? <ResultContentDisplay content={task.result_content} /> : null}
+              {task.result_file_url && (
+                <a href={task.result_file_url} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg mt-1.5 transition-colors">
+                  📎 {task.result_file_name ?? '첨부파일'}
+                </a>
+              )}
+              {!task.result_content && !task.result_file_url && (
                 <p className="text-sm text-gray-400">아직 등록된 결과물이 없습니다.</p>
               )}
             </div>
