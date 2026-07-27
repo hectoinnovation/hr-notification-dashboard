@@ -21,7 +21,7 @@ export function TaskWorkFields({
   return (
     <div className="space-y-3">
       <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-1.5">
-        <p className="text-sm font-bold text-orange-700">💡 좋은 과제는 AI를 활용하는 방법보다, 현재 업무를 얼마나 구체적으로 설명했는지가 더 중요합니다.</p>
+        <p className="text-sm font-bold text-orange-700">💡 좋은 과제는 AI를 얼마나 많이 활용했는지가 아니라, 업무의 본질을 고민하고 AI와 함께 더 가치 있는 일에 집중하는 경험을 만드는 것입니다.</p>
         <p className="text-xs text-orange-700 leading-relaxed">아래 내용을 참고하여 최대한 상세하게 작성해주세요.</p>
         <ul className="text-xs text-orange-700 leading-relaxed list-disc list-inside space-y-0.5">
           <li>현재 어떤 업무를 수행하고 있나요?</li>
