@@ -20,17 +20,8 @@ export function TaskWorkFields({
 }) {
   return (
     <div className="space-y-3">
-      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 space-y-1.5">
+      <div className="bg-orange-50 border border-orange-200 rounded-xl p-4">
         <p className="text-sm font-bold text-orange-700">💡 좋은 과제는 AI를 얼마나 많이 활용했는지가 아니라, 업무의 본질을 고민하고 AI와 함께 더 가치 있는 일에 집중하는 경험을 만드는 것입니다.</p>
-        <p className="text-xs text-orange-700 leading-relaxed">아래 내용을 참고하여 최대한 상세하게 작성해주세요.</p>
-        <ul className="text-xs text-orange-700 leading-relaxed list-disc list-inside space-y-0.5">
-          <li>현재 어떤 업무를 수행하고 있나요?</li>
-          <li>업무는 어떤 절차로 진행되고 있나요?</li>
-          <li>반복되거나 시간이 많이 소요되는 부분은 무엇인가요?</li>
-          <li>현재 어떤 불편함이나 문제가 있나요?</li>
-          <li>AI 또는 바이브코딩으로 어떻게 개선하고 싶나요?</li>
-          <li>개선되면 어떤 효과를 기대하시나요?</li>
-        </ul>
       </div>
       <div>
         <label className="text-xs font-semibold text-gray-500 block mb-1.5">개선하고 싶은 업무 또는 프로세스</label>
