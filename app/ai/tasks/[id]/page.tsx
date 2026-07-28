@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import { verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -227,6 +227,15 @@ export default function AiTaskDetailPage() {
           </div>
         ) : (
           <>
+            {isExampleTask(task) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2">
+                <span className="text-sm leading-none">📌</span>
+                <div className="space-y-0.5">
+                  <p className="text-xs font-bold text-amber-700">예시(참고용) 게시글</p>
+                  <p className="text-xs text-amber-700 leading-relaxed">이 게시글은 과제 작성 방법을 참고하기 위한 예시입니다. 실제 과제 등록 시 참고해 주세요.</p>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <h1 className="text-lg font-bold text-gray-900">🤖 {task.title}</h1>
               <p className="text-xs text-gray-400">{task.team} · {task.author} · {task.created_at.slice(0, 10).replace(/-/g, '.')}</p>
