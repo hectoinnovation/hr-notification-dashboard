@@ -2,11 +2,12 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { toggleLike, hasLikedTask, type AiTask } from '@/lib/ai-tasks'
+import { toggleLike, hasLikedTask, isExampleTask, type AiTask } from '@/lib/ai-tasks'
 import { ResolutionBadge } from './ResolutionBadge'
 
 export function TaskCard({ task, commentCount }: { task: AiTask; commentCount: number }) {
   const done = task.status === 'done'
+  const isExample = isExampleTask(task)
   const [likes, setLikes] = useState(task.likes_count ?? 0)
   // 카드는 부모 목록이 클라이언트에서 데이터를 가져온 뒤에만 렌더링되므로(SSR 시점엔 목록이
   // 비어 있음) 마운트 시점에 localStorage를 바로 읽어도 하이드레이션 불일치가 없다.
@@ -32,8 +33,13 @@ export function TaskCard({ task, commentCount }: { task: AiTask; commentCount: n
   return (
     <Link href={`/ai/tasks/${task.id}`}
       className={`group block bg-white rounded-2xl border border-gray-200 border-l-4 shadow-sm p-5 space-y-3 hover:shadow-md transition-all duration-150 ${
-        done ? 'border-l-emerald-400' : 'border-l-blue-300'
+        isExample ? 'border-l-amber-400' : done ? 'border-l-emerald-400' : 'border-l-blue-300'
       }`}>
+      {isExample && (
+        <span className="inline-flex items-center text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg">
+          📌 예시(참고용)
+        </span>
+      )}
       <div className="flex items-start justify-between gap-2">
         <h3 className="text-sm font-bold text-gray-900 line-clamp-2 group-hover:text-orange-600 transition-colors">
           🤖 {task.title}

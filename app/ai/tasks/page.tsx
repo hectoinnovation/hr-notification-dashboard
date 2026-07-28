@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { RESOLUTION_LABEL, countCommentsByTask, type AiTask, type ResolutionType } from '@/lib/ai-tasks'
+import { RESOLUTION_LABEL, countCommentsByTask, isExampleTask, type AiTask, type ResolutionType } from '@/lib/ai-tasks'
 import { TaskCard } from '@/components/ai/TaskCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -44,7 +44,11 @@ function AiTasksContent() {
     router.replace(`/ai/tasks?${params.toString()}`)
   }
 
-  const filtered = tasks.filter(t => {
+  // 예시 게시글은 검색어와 무관하게 항상 노출하고 최상단에 고정한다 (해결방식 필터는 그대로 적용).
+  const exampleTasks = tasks.filter(t => isExampleTask(t) && (resolutionF === '전체' || t.resolution_type === resolutionF))
+
+  const filteredReal = tasks.filter(t => {
+    if (isExampleTask(t)) return false
     if (resolutionF !== '전체' && t.resolution_type !== resolutionF) return false
     const term = search.trim().toLowerCase()
     if (term) {
@@ -54,13 +58,15 @@ function AiTasksContent() {
     return true
   })
 
-  const sorted = [...filtered].sort((a, b) => {
+  const sortedReal = [...filteredReal].sort((a, b) => {
     if (sort === 'comments') {
       const diff = (commentCounts[b.id] ?? 0) - (commentCounts[a.id] ?? 0)
       if (diff !== 0) return diff
     }
     return b.created_at.localeCompare(a.created_at)
   })
+
+  const sorted = [...exampleTasks, ...sortedReal]
 
   return (
     <div className="space-y-4">

@@ -120,6 +120,12 @@ export function sortComments(comments: AiComment[]): AiComment[] {
   })
 }
 
+// 제목이 "[예시]"로 시작하는 과제는 작성 방법 안내용 예시 게시글이다 — 별도 DB 컬럼 없이
+// 기존 네이밍 컨벤션만으로 판별해 스키마 변경 없이 목록 최상단 고정/배지 표시에 활용한다.
+export function isExampleTask(t: Pick<AiTask, 'title'>): boolean {
+  return t.title.startsWith('[예시]')
+}
+
 // 기본 정렬: 우선순위(긴급→낮음) 우선, 동일 우선순위 내에서는 최신 등록순
 export function sortTasksByPriority(tasks: AiTask[]): AiTask[] {
   return [...tasks].sort((a, b) => {
