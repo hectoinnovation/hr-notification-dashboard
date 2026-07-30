@@ -3,7 +3,12 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask, type AiTask, type AiComment, type ResolutionType } from '@/lib/ai-tasks'
+import {
+  verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask,
+  hasResultLink, isEffectivelyDone, RESULT_REQUIRED_MESSAGE,
+  type AiTask, type AiComment, type ResolutionType,
+} from '@/lib/ai-tasks'
+import { FileAttachField } from '@/components/ai/FileAttachField'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -65,6 +70,8 @@ export default function AiTaskDetailPage() {
   const [form, setForm] = useState<EditForm | null>(null)
   const [editAiUsageFile, setEditAiUsageFile] = useState<File | null>(null)
   const [editRemoveAiUsageFile, setEditRemoveAiUsageFile] = useState(false)
+  const [editResultFile, setEditResultFile] = useState<File | null>(null)
+  const [editRemoveResultFile, setEditRemoveResultFile] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [liking, setLiking] = useState(false)
@@ -99,6 +106,8 @@ export default function AiTaskDetailPage() {
       setForm(toEditForm(task))
       setEditAiUsageFile(null)
       setEditRemoveAiUsageFile(false)
+      setEditResultFile(null)
+      setEditRemoveResultFile(false)
       setEditing(true)
     } else if (pending === 'delete') {
       const { error: delErr } = await supabase.from('ai_tasks').delete().eq('id', task.id)
@@ -115,12 +124,16 @@ export default function AiTaskDetailPage() {
     if (!task) return
     const nowIso = new Date().toISOString()
     const fileMeta = data.result_file ? await uploadTaskFile(data.result_file) : null
+    const result_file_url = fileMeta?.url ?? task.result_file_url ?? null
+    const result_file_name = fileMeta?.name ?? task.result_file_name ?? null
+    if (!hasResultLink(data.result_content) && !result_file_url) {
+      throw new Error(RESULT_REQUIRED_MESSAGE)
+    }
     const { error: updErr } = await supabase.from('ai_tasks').update({
       status: 'done',
       completed_at: nowIso.slice(0, 10),
       result_content: data.result_content,
-      result_file_url: fileMeta?.url ?? task.result_file_url ?? null,
-      result_file_name: fileMeta?.name ?? task.result_file_name ?? null,
+      result_file_url, result_file_name,
       updated_at: nowIso,
     }).eq('id', task.id)
     if (updErr) throw new Error(updErr.message)
@@ -147,16 +160,29 @@ export default function AiTaskDetailPage() {
     setSaving(true)
     setError(null)
     try {
-      const fileMeta = editAiUsageFile ? await uploadTaskFile(editAiUsageFile) : null
-      const ai_usage_file_url = fileMeta ? fileMeta.url : (editRemoveAiUsageFile ? null : task.ai_usage_file_url ?? null)
-      const ai_usage_file_name = fileMeta ? fileMeta.name : (editRemoveAiUsageFile ? null : task.ai_usage_file_name ?? null)
+      const aiUsageFileMeta = editAiUsageFile ? await uploadTaskFile(editAiUsageFile) : null
+      const ai_usage_file_url = aiUsageFileMeta ? aiUsageFileMeta.url : (editRemoveAiUsageFile ? null : task.ai_usage_file_url ?? null)
+      const ai_usage_file_name = aiUsageFileMeta ? aiUsageFileMeta.name : (editRemoveAiUsageFile ? null : task.ai_usage_file_name ?? null)
+
+      const resultFileMeta = editResultFile ? await uploadTaskFile(editResultFile) : null
+      const result_file_url = resultFileMeta ? resultFileMeta.url : (editRemoveResultFile ? null : task.result_file_url ?? null)
+      const result_file_name = resultFileMeta ? resultFileMeta.name : (editRemoveResultFile ? null : task.result_file_name ?? null)
+      const trimmedResultContent = form.result_content.trim()
+
+      // 완료 상태를 유지하려면 결과물 링크 또는 첨부파일이 최소 1개는 있어야 한다.
+      if (task.status === 'done' && !hasResultLink(trimmedResultContent) && !result_file_url) {
+        setError(RESULT_REQUIRED_MESSAGE)
+        return
+      }
+
       const { error: updErr } = await supabase.from('ai_tasks').update({
         title: form.title.trim(), team: form.team.trim(), author: form.author.trim(),
         resolution_type: form.resolution_type,
         current_work: form.current_work.trim() || null,
         ai_usage: form.ai_usage.trim() || null,
         ai_usage_file_url, ai_usage_file_name,
-        result_content: form.result_content.trim() || null,
+        result_content: trimmedResultContent || null,
+        result_file_url, result_file_name,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id)
       if (updErr) { setError(updErr.message); return }
@@ -210,11 +236,19 @@ export default function AiTaskDetailPage() {
                 ? { url: task.ai_usage_file_url, name: task.ai_usage_file_name ?? '첨부파일' } : null}
               onRemoveExistingFile={() => setEditRemoveAiUsageFile(true)}
             />
-            <div>
+            <div className="space-y-1.5">
               <label className="text-xs font-semibold text-gray-500 block mb-1">🔗 과제 링크 / 결과물</label>
               <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={3}
                 placeholder="예) GitHub, Notion, Figma, Google Drive, Apps Script URL 또는 결과물 설명"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
+              <FileAttachField file={editResultFile} onChange={setEditResultFile}
+                existingFile={!editRemoveResultFile && task.result_file_url
+                  ? { url: task.result_file_url, name: task.result_file_name ?? '첨부파일' } : null}
+                onRemoveExisting={() => setEditRemoveResultFile(true)}
+              />
+              {task.status === 'done' && (
+                <p className="text-xs text-gray-400">완료 상태를 유지하려면 결과물 링크 또는 첨부파일이 최소 1개는 있어야 합니다.</p>
+              )}
             </div>
             {error && <p className="text-xs text-red-500">{error}</p>}
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
@@ -241,7 +275,7 @@ export default function AiTaskDetailPage() {
               <p className="text-xs text-gray-400">{task.team} · {task.author} · {task.created_at.slice(0, 10).replace(/-/g, '.')}</p>
               <div className="flex items-center gap-1.5 flex-wrap pt-1">
                 <ResolutionBadge type={task.resolution_type} />
-                <StatusBadge status={task.status} />
+                <StatusBadge status={isEffectivelyDone(task) ? 'done' : 'in_progress'} />
                 <button type="button" onClick={handleLike} disabled={liking}
                   className={`text-xs font-semibold border rounded-lg px-2.5 py-0.5 transition-colors disabled:opacity-50 ${
                     liked ? 'text-red-500 border-red-200 bg-red-50' : 'text-gray-500 border-gray-200 hover:text-red-500'
@@ -284,7 +318,7 @@ export default function AiTaskDetailPage() {
             </div>
 
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-              {task.status === 'in_progress' ? (
+              {!isEffectivelyDone(task) ? (
                 <button onClick={() => setPending('complete')}
                   className="text-xs font-semibold bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1.5 rounded-lg transition-colors">
                   🟢 완료하기

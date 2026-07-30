@@ -33,7 +33,7 @@ export async function POST() {
       id: TASK2_ID, title: '신규입사자 안내 메일 자동화', team: '인사팀', author: '안소정',
       resolution_type: 'self', status: 'done',
       ai_usage: 'Claude를 활용하여\n입사 안내 메일 초안을 자동 작성했습니다.',
-      result_content: '기존 20분 걸리던 업무를\n3분으로 단축했습니다.',
+      result_content: 'https://github.com/example/onboarding-mail-automation\n\n기존 20분 걸리던 업무를\n3분으로 단축했습니다.',
       completed_at: nowIso.slice(0, 10),
       password_hash, priority: 'urgent',
       created_at: nowIso, updated_at: nowIso,

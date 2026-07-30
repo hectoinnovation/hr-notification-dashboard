@@ -2,11 +2,11 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { toggleLike, hasLikedTask, isExampleTask, type AiTask } from '@/lib/ai-tasks'
+import { toggleLike, hasLikedTask, isExampleTask, isEffectivelyDone, type AiTask } from '@/lib/ai-tasks'
 import { ResolutionBadge } from './ResolutionBadge'
 
 export function TaskCard({ task, commentCount }: { task: AiTask; commentCount: number }) {
-  const done = task.status === 'done'
+  const done = isEffectivelyDone(task)
   const isExample = isExampleTask(task)
   const [likes, setLikes] = useState(task.likes_count ?? 0)
   // 카드는 부모 목록이 클라이언트에서 데이터를 가져온 뒤에만 렌더링되므로(SSR 시점엔 목록이
