@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { FileAttachField } from './FileAttachField'
+import { hasResultLink, RESULT_REQUIRED_MESSAGE } from '@/lib/ai-tasks'
 
 export type CompleteTaskData = { result_content: string; result_file: File | null }
 
@@ -16,8 +17,8 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // 결과 설명 / 링크 / 파일 중 최소 하나만 있으면 제출 가능하다.
-  const canSubmit = description.trim().length > 0 || link.trim().length > 0 || resultFile !== null
+  // 완료 처리는 결과물 링크 또는 첨부파일 중 하나가 반드시 있어야 한다 — 설명만으로는 불충분하다.
+  const canSubmit = hasResultLink(link) || resultFile !== null
 
   async function submit() {
     if (!canSubmit) return
@@ -67,9 +68,9 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
           <textarea value={link} onChange={e => setLink(e.target.value)} rows={3}
             placeholder={'예) GitHub Repository, Notion, Figma, Google Drive,\nApps Script URL, 시연 영상 또는 결과물을 확인할 수 있는 링크를 입력해주세요.'}
             className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
-          <p className="text-xs text-gray-400">링크가 없는 경우에는 결과를 설명하는 내용만 작성해도 됩니다.</p>
         </div>
 
+        {!canSubmit && <p className="text-xs text-red-500">{RESULT_REQUIRED_MESSAGE}</p>}
         {error && <p className="text-xs text-red-500">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>

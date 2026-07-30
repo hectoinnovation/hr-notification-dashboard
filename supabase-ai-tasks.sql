@@ -211,3 +211,27 @@ drop policy if exists "allow_all_ai_task_files" on storage.objects;
 create policy "allow_all_ai_task_files" on storage.objects
   for all using (bucket_id = 'ai-task-files') with check (bucket_id = 'ai-task-files');
 -- ============================================================
+
+-- ============================================================
+-- 완료 처리 요건 강제: 결과물 링크 또는 첨부파일 없이는 status='done'을 저장할 수 없다.
+-- 완료 처리 후 링크/파일을 모두 삭제해도 완료 상태가 그대로 남아있던 문제를 막기 위함.
+-- anon key로 REST API를 직접 호출해 프론트엔드를 우회하더라도 이 제약으로 막힌다.
+--
+-- 1) 기존 데이터 정합성 복구: 완료 상태인데 링크(순수 URL 한 줄)도 첨부파일도 없는 과제는
+--    완료 이전 상태로 되돌린다. (예: [예시] 반복 업무 자동화... 과제가 현재 이 상태입니다.)
+update ai_tasks
+set status = 'in_progress', completed_at = null
+where status = 'done'
+  and result_file_url is null
+  and (result_content is null or result_content !~ '(?n)^[ \t]*https?://\S+[ \t]*$');
+
+-- 2) 앞으로의 위반을 DB 레벨에서 원천 차단
+alter table ai_tasks drop constraint if exists ai_tasks_done_requires_result;
+alter table ai_tasks
+  add constraint ai_tasks_done_requires_result
+  check (
+    status <> 'done'
+    or result_file_url is not null
+    or result_content ~ '(?n)^[ \t]*https?://\S+[ \t]*$'
+  );
+-- ============================================================

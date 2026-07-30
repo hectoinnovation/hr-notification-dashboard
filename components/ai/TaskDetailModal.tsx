@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
-  STATUS_LABEL, RESOLUTION_LABEL, PRIORITY_LABEL,
+  STATUS_LABEL, RESOLUTION_LABEL, PRIORITY_LABEL, hasResultLink, RESULT_REQUIRED_MESSAGE,
   type AiTask, type AiComment, type TaskStatus, type ResolutionType, type Priority,
 } from '@/lib/ai-tasks'
 import { Modal } from '@/components/ui/Modal'
@@ -57,8 +57,15 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
   }
 
   async function handleSave() {
-    setSaving(true)
     setError(null)
+
+    // 완료 상태로 저장하려면 결과물 링크 또는 첨부파일이 최소 1개는 있어야 한다 (관리자 화면도 동일 규칙 적용).
+    if (form.status === 'done' && !hasResultLink(form.result_content) && !task.result_file_url) {
+      setError(RESULT_REQUIRED_MESSAGE)
+      return
+    }
+
+    setSaving(true)
     const nowIso = new Date().toISOString()
 
     const assignmentChanged = form.assignee !== task.assignee || form.priority !== task.priority

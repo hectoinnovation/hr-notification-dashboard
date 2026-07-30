@@ -126,6 +126,26 @@ export function isExampleTask(t: Pick<AiTask, 'title'>): boolean {
   return t.title.startsWith('[예시]')
 }
 
+// result_content에 "순수 URL 한 줄"이 포함되어 있는지 확인한다 — 상세 화면의 링크 자동 인식
+// 로직(ResultContentDisplay)과 동일한 기준을 써야 "화면에 링크로 보이는데 완료 요건은 미충족"
+// 같은 불일치가 생기지 않는다.
+export function hasResultLink(text: string | null | undefined): boolean {
+  return (text ?? '').split('\n').some(line => /^https?:\/\/\S+$/i.test(line.trim()))
+}
+
+// 완료 처리 요건: 결과물 링크 또는 첨부파일 중 하나 이상이 있어야 한다 (설명 텍스트만으로는 불충분).
+export function hasTaskResult(t: Pick<AiTask, 'result_content' | 'result_file_url'>): boolean {
+  return hasResultLink(t.result_content) || !!t.result_file_url
+}
+
+// status가 'done'이어도 링크/첨부파일이 전혀 없으면 화면상 "완료"로 취급하지 않는다
+// (완료 후 결과물을 모두 삭제해도 완료 배지가 남아있던 문제를 막기 위함).
+export function isEffectivelyDone(t: Pick<AiTask, 'status' | 'result_content' | 'result_file_url'>): boolean {
+  return t.status === 'done' && hasTaskResult(t)
+}
+
+export const RESULT_REQUIRED_MESSAGE = '결과물 링크 또는 결과물 첨부파일 중 하나 이상을 등록해야 완료 처리할 수 있습니다.'
+
 // 기본 정렬: 우선순위(긴급→낮음) 우선, 동일 우선순위 내에서는 최신 등록순
 export function sortTasksByPriority(tasks: AiTask[]): AiTask[] {
   return [...tasks].sort((a, b) => {
