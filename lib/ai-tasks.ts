@@ -217,9 +217,20 @@ export function sortTeams(teams: AiTeam[]): AiTeam[] {
   })
 }
 
+// 원본 파일명(한글/공백/괄호 등 포함 가능)을 Storage key로 그대로 쓰면 Supabase가
+// "Invalid key"로 업로드를 거부한다. Storage key는 타임스탬프+UUID 기반의 안전한
+// 영문/숫자 조합으로 새로 만들고, 원본 파일명은 DB의 *_file_name 컬럼에 별도로 저장해
+// 화면 표시/다운로드 시 그대로 보여준다.
+function buildSafeStorageKey(file: File): string {
+  const extMatch = /\.([a-zA-Z0-9]{1,10})$/.exec(file.name)
+  const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : ''
+  const uuid = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2)
+  return `${Date.now()}_${uuid}${ext}`
+}
+
 // ─── 대표 이미지 업로드 (서버 API 라우트 없음 — 브라우저에서 Storage 직접 호출) ───
 export async function uploadGuideImage(file: File): Promise<string> {
-  const path = `${Date.now()}_${file.name}`
+  const path = buildSafeStorageKey(file)
   const { error } = await supabase.storage.from('ai-guide-images').upload(path, file)
   if (error) throw error
   const { data } = supabase.storage.from('ai-guide-images').getPublicUrl(path)
@@ -227,8 +238,9 @@ export async function uploadGuideImage(file: File): Promise<string> {
 }
 
 // ─── 과제 첨부파일 업로드 (개선 방향 / 결과 제출 공용, 서버 API 라우트 없이 브라우저에서 직접 업로드) ───
+// 등록/수정/완료 처리(app/ai/page.tsx, app/ai/tasks/[id]/page.tsx)가 모두 이 함수 하나를 공용으로 사용한다.
 export async function uploadTaskFile(file: File): Promise<{ url: string; name: string }> {
-  const path = `${Date.now()}_${file.name}`
+  const path = buildSafeStorageKey(file)
   const { error } = await supabase.storage.from('ai-task-files').upload(path, file)
   if (error) throw error
   const { data } = supabase.storage.from('ai-task-files').getPublicUrl(path)
