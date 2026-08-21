@@ -8,21 +8,31 @@ import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml, 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
 type Recipient = { email: string; label: string }
+const LEAVE_RECIPIENTS = [
+  { email: 'hansh@hecto.co.kr',       label: '한성호'  },
+  { email: 'mscho0500@hecto.co.kr',   label: '조민수A' },
+  { email: 'mrson092@hecto.co.kr',    label: '손동국'  },
+  { email: 'guidong@hecto.co.kr',     label: '최귀동'  },
+  { email: 'tckim@hecto.co.kr',       label: '김태석'  },
+  { email: 'jinwon.lee@hecto.co.kr',  label: '이진원'  },
+  { email: 'whiteggj@hecto.co.kr',    label: '오창원'  },
+  { email: 'mudago@hecto.co.kr',      label: '신현수'  },
+  { email: 'eunsuk.jung@hecto.co.kr', label: '정은석'  },
+  { email: 'lee0477@hecto.co.kr',     label: '이승현'  },
+] as const
+// 퇴사자 메일 전용 기본 수신자(To): 기존 LEAVE_RECIPIENTS + 아래 4명. 휴직자 메일(FR.leave)에는 영향 없음.
+const LEAVE_RESIGN_RECIPIENTS = [
+  ...LEAVE_RECIPIENTS,
+  { email: 'kwon0220@hecto.co.kr',   label: '권성철'     },
+  { email: 'leputers@hecto.co.kr',   label: '송용제'     },
+  { email: 'marko@hecto.co.kr',      label: '조경수'     },
+  { email: 'hi_sysoper@hecto.co.kr', label: '시스템운영팀' },
+] as const
 const FR = {
-  hire:     [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
-  transfer: [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
-  leave:    [
-    { email: 'hansh@hecto.co.kr',       label: '한성호'  },
-    { email: 'mscho0500@hecto.co.kr',   label: '조민수A' },
-    { email: 'mrson092@hecto.co.kr',    label: '손동국'  },
-    { email: 'guidong@hecto.co.kr',     label: '최귀동'  },
-    { email: 'tckim@hecto.co.kr',       label: '김태석'  },
-    { email: 'jinwon.lee@hecto.co.kr',  label: '이진원'  },
-    { email: 'whiteggj@hecto.co.kr',    label: '오창원'  },
-    { email: 'mudago@hecto.co.kr',      label: '신현수'  },
-    { email: 'eunsuk.jung@hecto.co.kr', label: '정은석'  },
-    { email: 'lee0477@hecto.co.kr',     label: '이승현'  },
-  ] as const,
+  hire:        [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  transfer:    [{ email: 't_10010300@hecto.co.kr', label: '협업지원실' }] as const,
+  leave:       LEAVE_RECIPIENTS,
+  leaveResign: LEAVE_RESIGN_RECIPIENTS,
   leaveCC:  [
     { email: 't_849fm@hecto.co.kr',    label: '보안인프라팀' },
     { email: 't_10010300@hecto.co.kr', label: '협업지원실'   },
@@ -1022,7 +1032,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
             {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
           </div>
           <PreviewToggle htmlBody={htmlBody} />
-          <MailPanel fixedRecipients={type === 'hire' ? FR.hire : FR.leave}
+          <MailPanel fixedRecipients={type === 'hire' ? FR.hire : (emp.status === 'resigned' ? FR.leaveResign : FR.leave)}
             fixedCC={type === 'leave' ? FR.leaveCC : []}
             defaultSubject={subject} mailSent={mailSent} htmlBody={htmlBody} onSend={onSend} />
         </div>
@@ -1895,9 +1905,11 @@ export default function HRDashboard() {
     if (key.startsWith('hire_notif_') || key.startsWith('leave_notif_')) {
       const isHire = key.startsWith('hire_notif_')
       const empId  = key.replace(isHire ? 'hire_notif_' : 'leave_notif_', '')
+      const leaveEmp = employees.find(e => String(e.id) === String(empId))
+      const leaveRecipients = leaveEmp?.status === 'resigned' ? FR.leaveResign : FR.leave
       const { error } = await supabase.from('notifications').upsert({
         employee_id: empId, notification_type: isHire ? 'hire' : 'leave',
-        fixed_recipients: isHire ? FR.hire.map(r => r.email) : FR.leave.map(r => r.email),
+        fixed_recipients: isHire ? FR.hire.map(r => r.email) : leaveRecipients.map(r => r.email),
         extra_recipients: [], mail_sent: true, mail_sent_at: new Date().toISOString(),
       }, { onConflict: 'employee_id,notification_type' })
       dbErr = error?.message ?? null
@@ -2182,10 +2194,11 @@ export default function HRDashboard() {
                 ...(showReturn   ? notifyReturn   : []),
               ]
 
-              const allSel      = visibleItems.filter(({ mailKey }) => selectedKeys.has(mailKey))
-              const selHasLeave = allSel.some(e => e.type === 'leave')
-              const selHasHire  = allSel.some(e => e.type === 'hire')
-              const defRcp      = selHasLeave ? FR.leave : FR.hire
+              const allSel         = visibleItems.filter(({ mailKey }) => selectedKeys.has(mailKey))
+              const selHasLeave    = allSel.some(e => e.type === 'leave')
+              const selHasHire     = allSel.some(e => e.type === 'hire')
+              const selHasResigned = allSel.some(e => e.type === 'leave' && e.emp.status === 'resigned')
+              const defRcp      = selHasResigned ? FR.leaveResign : selHasLeave ? FR.leave : FR.hire
               const defCC       = selHasLeave ? FR.leaveCC : []
               const bulkHtml    = allSel.length > 0 ? makeBulkNotifHtml(allSel.map(({ emp, type }) => ({ emp, type }))) : ''
               const bulkSubject = selHasLeave && selHasHire
