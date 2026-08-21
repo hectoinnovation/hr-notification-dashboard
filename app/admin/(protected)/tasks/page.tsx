@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
-  STATUS_LABEL, RESOLUTION_LABEL, TASK_CATEGORY_LABEL, TASK_CATEGORY_ORDER, sortTasksByPriority,
+  STATUS_LABEL, RESOLUTION_LABEL, TASK_CATEGORY_LABEL, TASK_CATEGORY_ORDER, sortTasksByPriority, isExampleTask,
   type AiTask, type TaskStatus, type ResolutionType, type TaskCategory,
 } from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
@@ -125,7 +125,14 @@ function AdminTasksContent() {
                 {filtered.map(t => (
                   <tr key={t.id} onClick={() => openTask(t.id)}
                     className="border-b border-gray-50 last:border-0 hover:bg-gray-50 cursor-pointer transition-colors">
-                    <td className="px-4 py-2.5 font-semibold text-gray-800">{t.title}</td>
+                    <td className="px-4 py-2.5 font-semibold text-gray-800">
+                      <div className="flex items-center gap-1.5">
+                        {isExampleTask(t) && (
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded flex-shrink-0">예시</span>
+                        )}
+                        <span>{t.title}</span>
+                      </div>
+                    </td>
                     <td className="px-4 py-2.5 text-gray-600">{t.team}</td>
                     <td className="px-4 py-2.5 text-gray-600">{t.author}</td>
                     <td className="px-4 py-2.5"><StatusBadge status={t.status} /></td>
