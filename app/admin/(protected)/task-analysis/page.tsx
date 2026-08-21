@@ -70,20 +70,22 @@ export default function TaskAnalysisPage() {
     return true
   })
 
-  async function overrideClassification(taskId: string, value: ClassificationType) {
+  async function overrideClassification(taskId: string, value: ClassificationType | null) {
+    const classification_by = value ? 'admin' : null
+    const classified_at = value ? new Date().toISOString() : null
     setTasks(prev => prev.map(t => t.id === taskId
-      ? { ...t, classification_type: value, classification_by: 'admin', classified_at: new Date().toISOString() }
+      ? { ...t, classification_type: value ?? undefined, classification_by: classification_by ?? undefined, classified_at: classified_at ?? undefined }
       : t))
     const { error } = await supabase.from('ai_tasks').update({
       classification_type: value,
-      classification_by: 'admin',
-      classified_at: new Date().toISOString(),
+      classification_by,
+      classified_at,
     }).eq('id', taskId)
     if (error) setSaveError(`개선 방식 수정 저장 실패: ${error.message}`)
   }
 
-  async function overrideCategory(taskId: string, value: TaskCategory) {
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, task_category: value } : t))
+  async function overrideCategory(taskId: string, value: TaskCategory | null) {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, task_category: value ?? undefined } : t))
     const { error } = await supabase.from('ai_tasks').update({ task_category: value }).eq('id', taskId)
     if (error) setSaveError(`과제 대분류 수정 저장 실패: ${error.message}`)
   }
@@ -229,31 +231,10 @@ export default function TaskAnalysisPage() {
                         </div>
                       </td>
                       <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <ClassificationBadge type={t.classification_type} />
-                          <select
-                            value={t.classification_type ?? ''}
-                            onChange={e => overrideClassification(t.id, e.target.value as ClassificationType)}
-                            className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-400">
-                            <option value="" disabled>수정</option>
-                            {CLASSIFICATION_ORDER.map(c => <option key={c} value={c}>{CLASSIFICATION_LABEL[c]}</option>)}
-                          </select>
-                        </div>
-                        {t.classification_by === 'admin' && (
-                          <span className="text-[11px] text-gray-400 mt-1 block">관리자 수정</span>
-                        )}
+                        <ClassificationBadge type={t.classification_type} onSelect={v => overrideClassification(t.id, v)} />
                       </td>
                       <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <TaskCategoryBadge category={t.task_category} />
-                          <select
-                            value={t.task_category ?? ''}
-                            onChange={e => overrideCategory(t.id, e.target.value as TaskCategory)}
-                            className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-400">
-                            <option value="" disabled>수정</option>
-                            {TASK_CATEGORY_ORDER.map(c => <option key={c} value={c}>{TASK_CATEGORY_LABEL[c]}</option>)}
-                          </select>
-                        </div>
+                        <TaskCategoryBadge category={t.task_category} onSelect={v => overrideCategory(t.id, v)} />
                       </td>
                       <td className="px-4 py-2.5 text-gray-600">
                         {isEditing ? (
