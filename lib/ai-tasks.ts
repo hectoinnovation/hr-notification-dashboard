@@ -20,6 +20,16 @@ export const CLASSIFICATION_LABEL: Record<ClassificationType, string> = {
   needs_review: '판단 필요',
 }
 
+// 외부(엑셀 등)에서 분류값을 일괄 반영할 때, 내부 코드(automation 등)와 한글 라벨(자동화 등)
+// 둘 다 입력으로 받아들이기 위한 역변환. 인식할 수 없는 값이면 null.
+export function parseClassificationValue(raw: string): ClassificationType | null {
+  const v = raw.trim().toLowerCase()
+  if (v === 'automation' || v === 'efficiency' || v === 'needs_review') return v
+  const byLabel = (Object.entries(CLASSIFICATION_LABEL) as [ClassificationType, string][])
+    .find(([, label]) => label === raw.trim())
+  return byLabel ? byLabel[0] : null
+}
+
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: '진행중',
   done: '완료',
