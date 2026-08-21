@@ -10,6 +10,16 @@ export type ResolutionType = 'self' | 'help'
 export type Priority = 'urgent' | 'high' | 'medium' | 'low'
 export type GuideCategory = 'AI 뉴스' | '프롬프트' | '활용 사례' | '바이브코딩' | '추천 툴' | '교육자료' | '기타'
 
+// ─── 과제 분석: 자동화/효율화 1차 분류 (관리자 전용 "과제 분석" 탭에서만 사용) ───
+export type ClassificationType = 'automation' | 'efficiency' | 'needs_review'
+export type ClassificationSource = 'ai' | 'admin'
+
+export const CLASSIFICATION_LABEL: Record<ClassificationType, string> = {
+  automation: '자동화',
+  efficiency: '효율화',
+  needs_review: '판단 필요',
+}
+
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: '진행중',
   done: '완료',
@@ -56,6 +66,11 @@ export type AiTask = {
   likes_count: number
   created_at: string
   updated_at: string
+  // ai_usage_*(사람이 작성한 개선 방향)와는 별개 — "AI 분류 실행"으로 매긴 자동화/효율화 1차 분류.
+  classification_type?: ClassificationType
+  classification_reason?: string
+  classification_by?: ClassificationSource
+  classified_at?: string
 }
 
 export type AiGuide = {
