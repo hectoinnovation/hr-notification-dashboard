@@ -3,10 +3,14 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { STATUS_LABEL, RESOLUTION_LABEL, sortTasksByPriority, type AiTask, type TaskStatus, type ResolutionType } from '@/lib/ai-tasks'
+import {
+  STATUS_LABEL, RESOLUTION_LABEL, TASK_CATEGORY_LABEL, TASK_CATEGORY_ORDER, sortTasksByPriority,
+  type AiTask, type TaskStatus, type ResolutionType, type TaskCategory,
+} from '@/lib/ai-tasks'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { PriorityBadge } from '@/components/ai/PriorityBadge'
+import { TaskCategoryBadge } from '@/components/ai/TaskCategoryBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -18,6 +22,7 @@ function AdminTasksContent() {
 
   const statusF     = (searchParams.get('status') ?? '전체') as '전체' | TaskStatus
   const resolutionF = (searchParams.get('resolution') ?? '전체') as '전체' | ResolutionType
+  const categoryF   = (searchParams.get('category') ?? '전체') as '전체' | TaskCategory
   const q           = searchParams.get('q') ?? ''
   const selectedId  = searchParams.get('id')
 
@@ -46,6 +51,7 @@ function AdminTasksContent() {
   const filtered = tasks.filter(t => {
     if (statusF !== '전체' && t.status !== statusF) return false
     if (resolutionF !== '전체' && t.resolution_type !== resolutionF) return false
+    if (categoryF !== '전체' && t.task_category !== categoryF) return false
     const term = search.trim().toLowerCase()
     if (term) {
       const text = [t.title, t.author, t.team].filter(Boolean).join(' ').toLowerCase()
@@ -80,6 +86,14 @@ function AdminTasksContent() {
           <FilterChip label={RESOLUTION_LABEL.self} active={resolutionF === 'self'} onClick={() => updateParam('resolution', 'self')} />
           <FilterChip label={RESOLUTION_LABEL.help} active={resolutionF === 'help'} onClick={() => updateParam('resolution', 'help')} />
         </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-400">과제 대분류</span>
+          <FilterChip label="전체" active={categoryF === '전체'} onClick={() => updateParam('category', '전체')} />
+          {TASK_CATEGORY_ORDER.map(c => (
+            <FilterChip key={c} label={TASK_CATEGORY_LABEL[c]} active={categoryF === c} onClick={() => updateParam('category', c)} />
+          ))}
+        </div>
       </div>
 
       <p className="text-xs text-gray-400">{filtered.length}건</p>
@@ -100,6 +114,7 @@ function AdminTasksContent() {
                   <th className="px-4 py-2.5 font-medium">작성자</th>
                   <th className="px-4 py-2.5 font-medium">진행 상태</th>
                   <th className="px-4 py-2.5 font-medium">해결 방식</th>
+                  <th className="px-4 py-2.5 font-medium">대분류</th>
                   <th className="px-4 py-2.5 font-medium">담당자</th>
                   <th className="px-4 py-2.5 font-medium">우선순위</th>
                   <th className="px-4 py-2.5 font-medium">좋아요</th>
@@ -115,6 +130,7 @@ function AdminTasksContent() {
                     <td className="px-4 py-2.5 text-gray-600">{t.author}</td>
                     <td className="px-4 py-2.5"><StatusBadge status={t.status} /></td>
                     <td className="px-4 py-2.5"><ResolutionBadge type={t.resolution_type} /></td>
+                    <td className="px-4 py-2.5"><TaskCategoryBadge category={t.task_category} /></td>
                     <td className="px-4 py-2.5 text-gray-600">{t.assignee ?? '-'}</td>
                     <td className="px-4 py-2.5">
                       {t.resolution_type === 'help' ? <PriorityBadge priority={t.priority} /> : <span className="text-xs text-gray-300">-</span>}

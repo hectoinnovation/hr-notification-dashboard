@@ -10,15 +10,47 @@ export type ResolutionType = 'self' | 'help'
 export type Priority = 'urgent' | 'high' | 'medium' | 'low'
 export type GuideCategory = 'AI 뉴스' | '프롬프트' | '활용 사례' | '바이브코딩' | '추천 툴' | '교육자료' | '기타'
 
-// ─── 과제 분석: 자동화/효율화 1차 분류 (관리자 전용 "과제 분석" 탭에서만 사용) ───
-export type ClassificationType = 'automation' | 'efficiency' | 'needs_review'
+// ─── 과제 분석: "개선 방식" 1차 분류 (관리자 전용 "과제 분석" 탭에서 관리) ───
+// automation/efficiency/needs_review 는 최초 도입 당시 코드값 — 이후 advancement/new_usage가
+// 추가되었지만 기존 저장값과의 호환을 위해 이름은 바꾸지 않는다.
+export type ClassificationType = 'automation' | 'efficiency' | 'advancement' | 'new_usage' | 'needs_review'
 export type ClassificationSource = 'ai' | 'admin'
 
 export const CLASSIFICATION_LABEL: Record<ClassificationType, string> = {
   automation: '자동화',
   efficiency: '효율화',
+  advancement: '고도화',
+  new_usage: '신규 활용',
   needs_review: '판단 필요',
 }
+
+// 개선 방식 요약/필터에서 항상 이 순서로 노출 (자동화 → 효율화 → 고도화 → 신규 활용 → 판단 필요)
+export const CLASSIFICATION_ORDER: ClassificationType[] = ['automation', 'efficiency', 'advancement', 'new_usage', 'needs_review']
+
+// ─── 과제 대분류 — 개선 방식과는 별개 축. 관리자가 직접 선택/수정 (AI 자동 분류 없음) ───
+export type TaskCategory =
+  | 'agent_bot'
+  | 'monitoring_alert'
+  | 'data_collection_analysis'
+  | 'document_content_generation'
+  | 'dev_test_automation'
+  | 'process_operations'
+  | 'etc'
+
+export const TASK_CATEGORY_LABEL: Record<TaskCategory, string> = {
+  agent_bot: 'Agent·업무봇',
+  monitoring_alert: '모니터링·알림',
+  data_collection_analysis: '데이터 수집·분석',
+  document_content_generation: '문서·콘텐츠 생성',
+  dev_test_automation: '개발·테스트 자동화',
+  process_operations: '업무 프로세스·운영',
+  etc: '기타',
+}
+
+export const TASK_CATEGORY_ORDER: TaskCategory[] = [
+  'agent_bot', 'monitoring_alert', 'data_collection_analysis',
+  'document_content_generation', 'dev_test_automation', 'process_operations', 'etc',
+]
 
 export const STATUS_LABEL: Record<TaskStatus, string> = {
   in_progress: '진행중',
@@ -66,11 +98,13 @@ export type AiTask = {
   likes_count: number
   created_at: string
   updated_at: string
-  // ai_usage_*(사람이 작성한 개선 방향)와는 별개 — "AI 분류 실행"으로 매긴 자동화/효율화 1차 분류.
+  // ai_usage_*(사람이 작성한 개선 방향)와는 별개 — 관리자가 지정하는 "개선 방식" 1차 분류.
   classification_type?: ClassificationType
   classification_reason?: string
   classification_by?: ClassificationSource
   classified_at?: string
+  // classification_type(개선 방식)과는 별개 축 — 과제 대분류(Agent·업무봇 등). 관리자가 직접 지정.
+  task_category?: TaskCategory
 }
 
 export type AiGuide = {

@@ -3,18 +3,25 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
-import { CLASSIFICATION_LABEL, RESOLUTION_LABEL, isExampleTask, type AiTask, type ClassificationType } from '@/lib/ai-tasks'
+import {
+  CLASSIFICATION_LABEL, CLASSIFICATION_ORDER, RESOLUTION_LABEL,
+  TASK_CATEGORY_LABEL, TASK_CATEGORY_ORDER, isExampleTask,
+  type AiTask, type ClassificationType, type TaskCategory,
+} from '@/lib/ai-tasks'
 import { ClassificationBadge } from '@/components/ai/ClassificationBadge'
+import { TaskCategoryBadge } from '@/components/ai/TaskCategoryBadge'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { LoadingState } from '@/components/ui/LoadingState'
 
-type FilterValue = '전체' | ClassificationType | 'unclassified'
+type ClassificationFilter = '전체' | ClassificationType | 'unclassified'
+type CategoryFilter = '전체' | TaskCategory | 'unclassified'
 
 export default function TaskAnalysisPage() {
   const [tasks, setTasks] = useState<AiTask[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<FilterValue>('전체')
+  const [classificationFilter, setClassificationFilter] = useState<ClassificationFilter>('전체')
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('전체')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [editingReasonId, setEditingReasonId] = useState<string | null>(null)
   const [reasonDraft, setReasonDraft] = useState('')
@@ -29,19 +36,37 @@ export default function TaskAnalysisPage() {
   }, [])
   useEffect(() => { (async () => { await load() })() }, [load])
 
-  const summary = useMemo(() => {
-    const counts = { automation: 0, efficiency: 0, needs_review: 0, unclassified: 0 }
+  const classificationSummary = useMemo(() => {
+    const counts: Record<ClassificationType, number> = { automation: 0, efficiency: 0, advancement: 0, new_usage: 0, needs_review: 0 }
+    let unclassified = 0
     for (const t of tasks) {
       if (t.classification_type) counts[t.classification_type]++
-      else counts.unclassified++
+      else unclassified++
     }
-    return { total: tasks.length, ...counts }
+    return { counts, unclassified }
+  }, [tasks])
+
+  const categorySummary = useMemo(() => {
+    const counts = {} as Record<TaskCategory, number>
+    for (const c of TASK_CATEGORY_ORDER) counts[c] = 0
+    let unclassified = 0
+    for (const t of tasks) {
+      if (t.task_category) counts[t.task_category]++
+      else unclassified++
+    }
+    return { counts, unclassified }
   }, [tasks])
 
   const filtered = tasks.filter(t => {
-    if (filter === '전체') return true
-    if (filter === 'unclassified') return !t.classification_type
-    return t.classification_type === filter
+    if (classificationFilter !== '전체') {
+      const excluded = classificationFilter === 'unclassified' ? !!t.classification_type : t.classification_type !== classificationFilter
+      if (excluded) return false
+    }
+    if (categoryFilter !== '전체') {
+      const excluded = categoryFilter === 'unclassified' ? !!t.task_category : t.task_category !== categoryFilter
+      if (excluded) return false
+    }
+    return true
   })
 
   async function overrideClassification(taskId: string, value: ClassificationType) {
@@ -53,7 +78,13 @@ export default function TaskAnalysisPage() {
       classification_by: 'admin',
       classified_at: new Date().toISOString(),
     }).eq('id', taskId)
-    if (error) setSaveError(`분류 수정 저장 실패: ${error.message}`)
+    if (error) setSaveError(`개선 방식 수정 저장 실패: ${error.message}`)
+  }
+
+  async function overrideCategory(taskId: string, value: TaskCategory) {
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, task_category: value } : t))
+    const { error } = await supabase.from('ai_tasks').update({ task_category: value }).eq('id', taskId)
+    if (error) setSaveError(`과제 대분류 수정 저장 실패: ${error.message}`)
   }
 
   function startEditReason(t: AiTask) {
@@ -106,7 +137,8 @@ export default function TaskAnalysisPage() {
       '해결 방식': RESOLUTION_LABEL[t.resolution_type],
       '첨부파일명': joinAttachments(t, 'name'),
       '첨부파일 URL': joinAttachments(t, 'url'),
-      'AI 분류': t.classification_type ? CLASSIFICATION_LABEL[t.classification_type] : '',
+      '개선 방식': t.classification_type ? CLASSIFICATION_LABEL[t.classification_type] : '',
+      '과제 대분류': t.task_category ? TASK_CATEGORY_LABEL[t.task_category] : '',
       '판단 근거': t.classification_reason ?? '',
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -116,23 +148,27 @@ export default function TaskAnalysisPage() {
     XLSX.writeFile(wb, `AI과제_분석자료_${todayStr}.xlsx`)
   }
 
-  const unclassifiedCount = summary.unclassified
-
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-gray-900">과제 분석</h1>
         <p className="text-sm text-gray-400 mt-0.5">
-          과제별 자동화/효율화 분류 현황입니다. AI 분류와 판단 근거는 이 화면에서 직접 입력·수정할 수 있습니다.
+          과제별 개선 방식·대분류 현황입니다. 개선 방식, 과제 대분류, 판단 근거 모두 이 화면에서 직접 입력·수정할 수 있습니다.
         </p>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <p className="text-sm font-semibold text-gray-700">
-            전체 {summary.total}건 | 자동화 {summary.automation}건 | 효율화 {summary.efficiency}건 | 판단 필요 {summary.needs_review}건
-            {unclassifiedCount > 0 && <span className="text-gray-400 font-normal"> (미분류 {unclassifiedCount}건)</span>}
-          </p>
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-gray-700">
+              전체 {tasks.length}건 | 자동화 {classificationSummary.counts.automation} | 효율화 {classificationSummary.counts.efficiency} | 고도화 {classificationSummary.counts.advancement} | 신규 활용 {classificationSummary.counts.new_usage} | 판단 필요 {classificationSummary.counts.needs_review}
+              {classificationSummary.unclassified > 0 && <span className="text-gray-400 font-normal"> (미분류 {classificationSummary.unclassified})</span>}
+            </p>
+            <p className="text-xs text-gray-500">
+              {TASK_CATEGORY_ORDER.map(c => `${TASK_CATEGORY_LABEL[c]} ${categorySummary.counts[c]}`).join(' | ')}
+              {categorySummary.unclassified > 0 && <span className="text-gray-400"> | 미분류 {categorySummary.unclassified}</span>}
+            </p>
+          </div>
           <button onClick={handleDownloadAnalysis} disabled={loading || tasks.length === 0}
             className="text-sm font-semibold px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 rounded-lg transition-colors disabled:opacity-40">
             분석자료 다운로드
@@ -141,12 +177,23 @@ export default function TaskAnalysisPage() {
 
         {saveError && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveError}</p>}
 
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <FilterChip label="전체" active={filter === '전체'} onClick={() => setFilter('전체')} />
-          <FilterChip label={CLASSIFICATION_LABEL.automation} active={filter === 'automation'} onClick={() => setFilter('automation')} />
-          <FilterChip label={CLASSIFICATION_LABEL.efficiency} active={filter === 'efficiency'} onClick={() => setFilter('efficiency')} />
-          <FilterChip label={CLASSIFICATION_LABEL.needs_review} active={filter === 'needs_review'} onClick={() => setFilter('needs_review')} />
-          <FilterChip label="미분류" active={filter === 'unclassified'} onClick={() => setFilter('unclassified')} />
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-gray-400 mr-1">개선 방식</span>
+            <FilterChip label="전체" active={classificationFilter === '전체'} onClick={() => setClassificationFilter('전체')} />
+            {CLASSIFICATION_ORDER.map(c => (
+              <FilterChip key={c} label={CLASSIFICATION_LABEL[c]} active={classificationFilter === c} onClick={() => setClassificationFilter(c)} />
+            ))}
+            <FilterChip label="미분류" active={classificationFilter === 'unclassified'} onClick={() => setClassificationFilter('unclassified')} />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-gray-400 mr-1">과제 대분류</span>
+            <FilterChip label="전체" active={categoryFilter === '전체'} onClick={() => setCategoryFilter('전체')} />
+            {TASK_CATEGORY_ORDER.map(c => (
+              <FilterChip key={c} label={TASK_CATEGORY_LABEL[c]} active={categoryFilter === c} onClick={() => setCategoryFilter(c)} />
+            ))}
+            <FilterChip label="미분류" active={categoryFilter === 'unclassified'} onClick={() => setCategoryFilter('unclassified')} />
+          </div>
         </div>
       </div>
 
@@ -161,7 +208,8 @@ export default function TaskAnalysisPage() {
                 <tr className="border-b border-gray-100 text-left text-xs text-gray-400">
                   <th className="px-4 py-2.5 font-medium">팀</th>
                   <th className="px-4 py-2.5 font-medium">과제명</th>
-                  <th className="px-4 py-2.5 font-medium">AI 분류</th>
+                  <th className="px-4 py-2.5 font-medium">개선 방식</th>
+                  <th className="px-4 py-2.5 font-medium">과제 대분류</th>
                   <th className="px-4 py-2.5 font-medium min-w-[20rem]">판단 근거</th>
                 </tr>
               </thead>
@@ -180,14 +228,24 @@ export default function TaskAnalysisPage() {
                             onChange={e => overrideClassification(t.id, e.target.value as ClassificationType)}
                             className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-400">
                             <option value="" disabled>수정</option>
-                            <option value="automation">{CLASSIFICATION_LABEL.automation}</option>
-                            <option value="efficiency">{CLASSIFICATION_LABEL.efficiency}</option>
-                            <option value="needs_review">{CLASSIFICATION_LABEL.needs_review}</option>
+                            {CLASSIFICATION_ORDER.map(c => <option key={c} value={c}>{CLASSIFICATION_LABEL[c]}</option>)}
                           </select>
                         </div>
                         {t.classification_by === 'admin' && (
                           <span className="text-[11px] text-gray-400 mt-1 block">관리자 수정</span>
                         )}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          <TaskCategoryBadge category={t.task_category} />
+                          <select
+                            value={t.task_category ?? ''}
+                            onChange={e => overrideCategory(t.id, e.target.value as TaskCategory)}
+                            className="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-400">
+                            <option value="" disabled>수정</option>
+                            {TASK_CATEGORY_ORDER.map(c => <option key={c} value={c}>{TASK_CATEGORY_LABEL[c]}</option>)}
+                          </select>
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 text-gray-600">
                         {isEditing ? (
