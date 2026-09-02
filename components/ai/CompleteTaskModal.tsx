@@ -60,7 +60,7 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">📎 결과물 첨부 (선택)</label>
           <FileAttachField file={resultFile} onChange={setResultFile} />
-          <p className="text-xs text-gray-400">개발 산출물, 발표자료, 사용 가이드, 화면 캡처, Word·PowerPoint·PDF 등을 첨부할 수 있습니다.</p>
+          <p className="text-xs text-gray-400">개발 산출물, 발표자료, 사용 가이드, 화면 캡처, 시연 동영상, Word·PowerPoint·PDF 등을 첨부할 수 있습니다.</p>
         </div>
 
         <div className="space-y-1.5">

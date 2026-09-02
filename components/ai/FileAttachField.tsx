@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 
-const ACCEPT = '.doc,.docx,.ppt,.pptx,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.zip'
+const ACCEPT = '.doc,.docx,.ppt,.pptx,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.zip,.mp4,.mov,.webm,.avi,.mkv'
 
 export type ExistingFile = { url: string; name: string }
 
