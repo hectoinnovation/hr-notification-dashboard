@@ -49,12 +49,14 @@ interface EmployeeForm {
   department: string; division: string; team: string; leader: string
   position: string; phone: string; customer_id: string
   join_reason: string; status: 'active' | 'resigned'
+  performance_point_target: boolean; tenure_point_target: boolean
 }
 const EMPTY_FORM: EmployeeForm = {
   name: '', join_date: '', leave_date: '', exit_date: '',
   department: '', division: '', team: '', leader: '',
   position: '', phone: '', customer_id: '',
   join_reason: '입사', status: 'active',
+  performance_point_target: false, tenure_point_target: false,
 }
 const PAGE_SIZE = 10
 
@@ -196,6 +198,65 @@ function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr:
   return { prePaid, recognized, reclaim }
 }
 
+// ─── 성과포인트 / 근속포인트 (퇴사자 정산 전용) ─────────────────────────────────
+// 두 포인트 모두 "연간 기준금액을 12개월로 나눠 매월 지급"하는 구조라, 중도 퇴사 시
+// 이미 지난 달은 다시 계산/회수하지 않고 "퇴사하는 달의 몫만" 일할계산한다.
+// 기존 calcWellnessHire/Leave와 동일한 규칙(각 최종 금액을 Math.round()로 한 번만
+// 반올림)을 그대로 따른다.
+
+const PERFORMANCE_POINT_ANNUAL = 1_000_000
+
+type LeaveMonthCalc = {
+  annualBase: number       // 연간 기준금액
+  monthlyBase: number      // 월 기준금액 (표시용, 반올림하지 않은 값)
+  daysInLeaveMonth: number // 퇴사월 총일수
+  workedDays: number       // 퇴사월 재직일수 (퇴사일 포함, = 퇴사일의 "일")
+  amount: number           // 퇴사월 일할 지급액 (Math.round 최종 반올림)
+}
+
+/**
+ * 퇴사월 재직일수/총일수는 두 포인트가 동일 — join_date/exit_date만으로 계산
+ * (timezone 영향 없는 date-only 파싱). 입사월과 퇴사월이 같으면(같은 달 입사·퇴사)
+ * 그 달 1일부터가 아니라 입사일~퇴사일(양일 포함)만 재직일수로 인정한다.
+ */
+function leaveMonthDayInfo(joinDateStr: string, exitDateStr: string): { year: number; month: number; workedDays: number; daysInLeaveMonth: number } {
+  const [ey, em, ed] = exitDateStr.split('-').map(Number)
+  const daysInLeaveMonth = daysInMonth(ey, em)
+  const [jy, jm, jd] = joinDateStr.split('-').map(Number)
+  const workedDays = (jy === ey && jm === em) ? (ed - jd + 1) : ed
+  return { year: ey, month: em, workedDays, daysInLeaveMonth }
+}
+
+/** 성과포인트: 연간 기준금액 고정(1,000,000원) — 재직 연차와 무관 */
+function calcPerformancePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc {
+  const { workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
+  const monthlyBase = PERFORMANCE_POINT_ANNUAL / 12
+  const amount = Math.round(monthlyBase * workedDays / daysInLeaveMonth)
+  return { annualBase: PERFORMANCE_POINT_ANNUAL, monthlyBase, daysInLeaveMonth, workedDays, amount }
+}
+
+const TENURE_POINT_PER_YEAR = 50000
+const TENURE_POINT_MAX_YEARS = 10
+
+/**
+ * 근속연수를 달성한 "다음 연도"부터 적용 — 해당 연도 중간에 근속연수가 올라가도
+ * 그해 기준금액은 바뀌지 않는다. 월/일과 무관하게 "입사연도"만으로 계산 가능:
+ * targetYear 시점에 적용되는 연차 = targetYear - 입사연도 - 1 (0 미만이면 0, 최대 10년 캡).
+ */
+function calcTenureAppliedYears(joinYear: number, targetYear: number): number {
+  return Math.min(Math.max(0, targetYear - joinYear - 1), TENURE_POINT_MAX_YEARS)
+}
+
+/** 근속포인트: 퇴사연도에 적용되는 연차 기준으로 연간 기준금액을 산정한 뒤 퇴사월만 일할계산 */
+function calcTenurePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc & { appliedYears: number; eligible: boolean } {
+  const joinYear = Number(joinDateStr.split('-')[0])
+  const { year: exitYear, workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
+  const appliedYears = calcTenureAppliedYears(joinYear, exitYear)
+  const annualBase = appliedYears * TENURE_POINT_PER_YEAR
+  const monthlyBase = annualBase / 12
+  const amount = annualBase > 0 ? Math.round(monthlyBase * workedDays / daysInLeaveMonth) : 0
+  return { appliedYears, annualBase, monthlyBase, daysInLeaveMonth, workedDays, amount, eligible: annualBase > 0 }
+}
 
 function parseExcelFile(buffer: ArrayBuffer): Record<number, ExcelSheetData> {
   const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
@@ -791,6 +852,76 @@ async function downloadWellnessCoinExcel(rows: WellnessCoinRow[]): Promise<strin
   } catch (err) {
     return err instanceof Error ? err.message : '네트워크 오류'
   }
+}
+
+// ─── 성과포인트 / 근속포인트 대상자 목록 (화면·엑셀 공용 — 계산은 위 calc 함수만 사용) ───
+type PerformancePointRow = { emp: Employee; calc: LeaveMonthCalc | null }
+type TenurePointRow = { emp: Employee; calc: (LeaveMonthCalc & { appliedYears: number; eligible: boolean }) | null }
+
+function buildPerformancePointRows(list: Employee[]): PerformancePointRow[] {
+  return list
+    .filter(e => e.status === 'resigned' && e.performance_point_target === true)
+    .map(emp => ({
+      emp,
+      calc: emp.join_date && emp.exit_date ? calcPerformancePointLeaveMonth(emp.join_date, emp.exit_date) : null,
+    }))
+}
+
+function buildTenurePointRows(list: Employee[]): TenurePointRow[] {
+  return list
+    .filter(e => e.status === 'resigned' && e.tenure_point_target === true)
+    .map(emp => ({
+      emp,
+      calc: emp.exit_date && emp.join_date ? calcTenurePointLeaveMonth(emp.join_date, emp.exit_date) : null,
+    }))
+}
+
+function performancePointStatus(row: PerformancePointRow): string {
+  if (row.calc) return '계산완료'
+  if (!row.emp.join_date) return '입사일 미입력'
+  return '퇴사일 미입력'
+}
+function tenurePointStatus(row: TenurePointRow): string {
+  if (row.calc) return '계산완료'
+  if (!row.emp.join_date) return '입사일 미입력'
+  return '퇴사일 미입력'
+}
+
+function buildPerformancePointExcelRows(rows: PerformancePointRow[]): Record<string, unknown>[] {
+  return rows.map(({ emp, calc }) => ({
+    '이름': emp.name,
+    '부서': emp.department ?? '-',
+    '입사일': emp.join_date ?? '-',
+    '퇴사일': emp.exit_date ?? '-',
+    '연간 기준금액': calc ? calc.annualBase : 0,
+    '월 기준금액': calc ? Math.round(calc.monthlyBase) : 0,
+    '퇴사월 총일수': calc ? calc.daysInLeaveMonth : 0,
+    '퇴사월 재직일수': calc ? calc.workedDays : 0,
+    '성과포인트 지급액': calc ? calc.amount : 0,
+    '정산 상태': performancePointStatus({ emp, calc }),
+  }))
+}
+
+function buildTenurePointExcelRows(rows: TenurePointRow[]): Record<string, unknown>[] {
+  return rows.map(({ emp, calc }) => ({
+    '이름': emp.name,
+    '부서': emp.department ?? '-',
+    '입사일': emp.join_date ?? '-',
+    '퇴사일': emp.exit_date ?? '-',
+    '해당 연도 적용 근속연수': calc ? calc.appliedYears : 0,
+    '연간 근속포인트 기준금액': calc ? calc.annualBase : 0,
+    '월 기준금액': calc ? Math.round(calc.monthlyBase) : 0,
+    '퇴사월 총일수': calc ? calc.daysInLeaveMonth : 0,
+    '퇴사월 재직일수': calc ? calc.workedDays : 0,
+    '근속포인트 지급액': calc ? calc.amount : 0,
+    '지급 대상 여부': calc ? (calc.eligible ? '지급 대상' : '지급 대상 아님') : '-',
+    '정산 상태': tenurePointStatus({ emp, calc }),
+  }))
+}
+
+function performanceTenureFilename(kind: '성과포인트' | '근속포인트', d: Date = new Date()): string {
+  const yyyymm = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`
+  return `${kind}_퇴사자정산_${yyyymm}.xlsx`
 }
 
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
@@ -1407,9 +1538,10 @@ function FormField({ label, value, onChange, placeholder, type = 'text', require
     </div>
   )
 }
-function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onClose }: {
+function EmployeeModal({ show, isEdit, form, submitting, onChange, onToggle, onSubmit, onClose }: {
   show: boolean; isEdit: boolean; form: EmployeeForm; submitting: boolean
   onChange: (f: keyof EmployeeForm, v: string) => void
+  onToggle: (f: 'performance_point_target' | 'tenure_point_target', v: boolean) => void
   onSubmit: () => void; onClose: () => void
 }) {
   if (!show) return null
@@ -1443,6 +1575,20 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
               <div className="grid grid-cols-2 gap-3">
                 <FormField label="마지막 출근일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
                 <FormField label="퇴사일" type="date" value={form.exit_date} onChange={v => onChange('exit_date', v)} />
+              </div>
+              <div className="space-y-1.5 pt-0.5">
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" checked={form.performance_point_target}
+                    onChange={e => onToggle('performance_point_target', e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-orange-500 focus:ring-orange-400" />
+                  성과포인트 정산 대상
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                  <input type="checkbox" checked={form.tenure_point_target}
+                    onChange={e => onToggle('tenure_point_target', e.target.checked)}
+                    className="w-4 h-4 rounded border-gray-300 text-orange-500 focus:ring-orange-400" />
+                  근속포인트 정산 대상
+                </label>
               </div>
             </>
           ) : form.join_reason === '휴직' ? (
@@ -1674,7 +1820,7 @@ function PagedList({ items, renderItem, limit, onMore, grid = false }: {
 }
 
 // ─── 메인 ─────────────────────────────────────────────────────────────────────
-type TabId = 'notify' | 'onboard' | 'cafe' | 'wellness'
+type TabId = 'notify' | 'onboard' | 'cafe' | 'wellness' | 'performance' | 'tenure'
 
 export default function HRDashboard() {
   const [employees,  setEmployees]  = useState<Employee[]>([])
@@ -1829,6 +1975,18 @@ export default function HRDashboard() {
   const filteredCafe     = allCafe.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
   const filteredWellness = allWellness.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
 
+  // 성과/근속포인트: 퇴사자 중 담당자가 정산 대상으로 체크한 사람만 — 상단 검색창(이름/부서/실/팀)만 공유 적용
+  function matchesSearch(e: Employee): boolean {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    const text = [e.name, e.department, e.division, e.team].filter(Boolean).join(' ').toLowerCase()
+    return text.includes(q)
+  }
+  const performancePointRows = buildPerformancePointRows(departures.filter(matchesSearch))
+  const tenurePointRows      = buildTenurePointRows(departures.filter(matchesSearch))
+  const allPerformanceCount  = buildPerformancePointRows(departures).length
+  const allTenureCount       = buildTenurePointRows(departures).length
+
   // 카페/웰니스 탭: 입사/휴직복귀자 / 퇴사/휴직자 그룹별로 나눠 표시 (입사/퇴사 관리 탭과 동일한 Accordion 구조).
   // 절대 한 영역에 섞어서 렌더링하지 않도록, 카드 목록은 항상 그룹별 섹션으로만 렌더링한다.
   // 각 그룹 내부는 기준일(입사일/복귀일/퇴사일/휴직시작일) 오름차순 정렬: 빠른 사람 → 위, 늦은 사람 → 아래
@@ -1869,6 +2027,8 @@ export default function HRDashboard() {
     { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.filter(e => !isOnboardingExcluded(e)).length },
     { id: 'cafe'     as TabId, label: '카페포인트',       count: allCafe.length },
     { id: 'wellness' as TabId, label: '웰니스포인트',     count: allWellness.length },
+    { id: 'performance' as TabId, label: '성과포인트', count: allPerformanceCount },
+    { id: 'tenure'      as TabId, label: '근속포인트', count: allTenureCount },
   ]
 
   function toggleSelect(key: string, checked: boolean) {
@@ -1957,6 +2117,8 @@ export default function HRDashboard() {
       position: form.position || null, leader: form.leader || null,
       phone: form.phone || null, customer_id: form.customer_id.trim() || null,
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
+      performance_point_target: form.status === 'resigned' ? form.performance_point_target : false,
+      tenure_point_target: form.status === 'resigned' ? form.tenure_point_target : false,
     }
 
     // ── 직원 저장 ────────────────────────────────────────────────────────────
@@ -2078,7 +2240,9 @@ export default function HRDashboard() {
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
       position: emp.position ?? '', leader: emp.leader ?? '',
       phone: emp.phone ?? '', customer_id: emp.customer_id ?? '',
-      join_reason: emp.join_reason ?? '입사', status: emp.status })
+      join_reason: emp.join_reason ?? '입사', status: emp.status,
+      performance_point_target: emp.performance_point_target ?? false,
+      tenure_point_target: emp.tenure_point_target ?? false })
     setShowForm(true)
   }
   function closeForm() { setShowForm(false); setEditTarget(null); setForm(EMPTY_FORM) }
@@ -2164,7 +2328,9 @@ export default function HRDashboard() {
   return (
     <main className="min-h-screen bg-slate-50">
       <EmployeeModal show={showForm} isEdit={!!editTarget} form={form} submitting={submitting}
-        onChange={(f, v) => setForm(p => ({ ...p, [f]: v }))} onSubmit={handleSubmit} onClose={closeForm} />
+        onChange={(f, v) => setForm(p => ({ ...p, [f]: v }))}
+        onToggle={(f, v) => setForm(p => ({ ...p, [f]: v }))}
+        onSubmit={handleSubmit} onClose={closeForm} />
 
       {wellnessCoinModal && (
         <WellnessCoinExcelModal
@@ -2624,7 +2790,7 @@ export default function HRDashboard() {
               )
             })()
 
-            : (() => {
+            : activeTab === 'wellness' ? (() => {
               const renderWellnessCard = (entry: PointEntry) => {
                 const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
                 return (
@@ -2711,7 +2877,131 @@ export default function HRDashboard() {
                 )}
               </div>
               )
-            })()}
+            })()
+            : activeTab === 'performance' ? (() => {
+              const totalAmount = performancePointRows.reduce((sum, r) => sum + (r.calc?.amount ?? 0), 0)
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <p className="text-xs text-gray-400">
+                      대상자 {performancePointRows.length}명{hasFilter ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
+                    </p>
+                    <button
+                      onClick={() => exportToExcel(buildPerformancePointExcelRows(performancePointRows), performanceTenureFilename('성과포인트'))}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      엑셀 다운로드
+                    </button>
+                  </div>
+                  {performancePointRows.length === 0 ? (
+                    <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '성과포인트 정산 대상으로 체크된 퇴사자가 없습니다'} />
+                  ) : (
+                    <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">부서</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">연간 기준금액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 기준금액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사월 총일수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사월 재직일수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성과포인트 지급액</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">정산 상태</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {performancePointRows.map(row => (
+                            <tr key={row.emp.id} className="border-t border-gray-100">
+                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{row.emp.name}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.department ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.join_date ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.exit_date ?? '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.annualBase.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? Math.round(row.calc.monthlyBase).toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.daysInLeaveMonth : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.workedDays : '-'}</td>
+                              <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{row.calc ? row.calc.amount.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{performancePointStatus(row)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()
+            : activeTab === 'tenure' ? (() => {
+              const totalAmount = tenurePointRows.reduce((sum, r) => sum + (r.calc?.amount ?? 0), 0)
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <p className="text-xs text-gray-400">
+                      대상자 {tenurePointRows.length}명{hasFilter ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
+                    </p>
+                    <button
+                      onClick={() => exportToExcel(buildTenurePointExcelRows(tenurePointRows), performanceTenureFilename('근속포인트'))}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      엑셀 다운로드
+                    </button>
+                  </div>
+                  {tenurePointRows.length === 0 ? (
+                    <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '근속포인트 정산 대상으로 체크된 퇴사자가 없습니다'} />
+                  ) : (
+                    <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">부서</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">적용 근속연수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">연간 기준금액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 기준금액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사월 총일수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사월 재직일수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">근속포인트 지급액</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 대상 여부</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">정산 상태</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tenurePointRows.map(row => (
+                            <tr key={row.emp.id} className="border-t border-gray-100">
+                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{row.emp.name}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.department ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.join_date ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{row.emp.exit_date ?? '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? `${row.calc.appliedYears}년` : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.annualBase.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? Math.round(row.calc.monthlyBase).toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.daysInLeaveMonth : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{row.calc ? row.calc.workedDays : '-'}</td>
+                              <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{row.calc ? row.calc.amount.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {!row.calc ? '-' : row.calc.eligible
+                                  ? <span className="text-emerald-600 font-semibold">지급 대상</span>
+                                  : <span className="text-gray-400">지급 대상 아님</span>}
+                              </td>
+                              <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{tenurePointStatus(row)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })() : null}
           </div>
         </div>
 
