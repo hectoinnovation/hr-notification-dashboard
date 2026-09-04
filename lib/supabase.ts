@@ -23,4 +23,5 @@ export type Employee = {
   phone?: string        // 휴대폰번호
   status: 'active' | 'resigned'
   is_onboarding_excluded?: boolean  // 관리자가 온보딩 목록에서 수동 제외 처리했는지 여부
+  customer_id?: string  // 웰니스코인 엑셀(선불 관리자 거래 요청 양식) C열에 쓰이는 고객아이디. 기존 직원은 비어있을 수 있음
 }

@@ -47,13 +47,13 @@ const FR = {
 interface EmployeeForm {
   name: string; join_date: string; leave_date: string; exit_date: string
   department: string; division: string; team: string; leader: string
-  position: string; phone: string
+  position: string; phone: string; customer_id: string
   join_reason: string; status: 'active' | 'resigned'
 }
 const EMPTY_FORM: EmployeeForm = {
   name: '', join_date: '', leave_date: '', exit_date: '',
   department: '', division: '', team: '', leader: '',
-  position: '', phone: '',
+  position: '', phone: '', customer_id: '',
   join_reason: '입사', status: 'active',
 }
 const PAGE_SIZE = 10
@@ -705,6 +705,94 @@ function buildWellnessExcelRows(
   })
 }
 
+// ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────
+// 매월 15일 지급 대상자를 취합해 결제사 업로드용 엑셀을 만들기 위한 행 계산.
+// 기존 웰니스포인트 일할계산 로직(calcWellnessHire / calcWellnessLeave)을 그대로
+// 재사용 — 새 계산 로직 없음, 두 함수 모두 절대 수정하지 않는다.
+type WellnessCoinRow = { emp: Employee; amount: number }
+type WellnessCoinLeaveDetail = { prePaid: number; recognized: number; reclaim: number }
+type WellnessCoinExcluded = { emp: Employee; reason: string; leaveDetail?: WellnessCoinLeaveDetail }
+
+// 퇴사자 웰니스코인 "엑셀 반영 금액" 산정 규칙 — 회사의 퇴사자 정산 방침이 아직
+// 확정되지 않아 현재는 항상 null(계산 보류)을 반환해 퇴사자를 엑셀 대상에서 제외한다.
+// 방침이 확정되면 이 함수만 교체하면 된다 (예: recognized를 반환하도록 바꾸는 식).
+// calcWellnessLeave() 자체는 여기서도 절대 수정하지 않는다 — PointCard의 기존
+// 선지급액/인정액/환수금 화면 표시가 그대로 이 함수를 계속 사용하고 있다.
+function resolveWellnessCoinLeaveAmount(emp: Employee, detail: WellnessCoinLeaveDetail): number | null {
+  void emp; void detail // 방침 확정 후 아래 두 값을 사용해 반환값을 채우면 된다
+  return null // TODO: 퇴사자 웰니스코인 정산 방침 확정 후 구현
+}
+
+function buildWellnessCoinRows(
+  entries: Array<{ emp: Employee; empType: 'hire' | 'leave' }>,
+): { included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[] } {
+  const included: WellnessCoinRow[] = []
+  const excluded: WellnessCoinExcluded[] = []
+  for (const { emp, empType } of entries) {
+    const isTransfer = emp.join_reason === '전적'
+    const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
+    if (isTransfer) {
+      excluded.push({ emp, reason: '전적자는 웰니스코인 지급 대상이 아닙니다.' })
+    } else if (isLeaveType) {
+      if (!emp.join_date) {
+        excluded.push({ emp, reason: '입사일이 입력되지 않아 계산할 수 없습니다.' })
+        continue
+      }
+      const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.leave_date
+      if (!leaveDateForCalc) {
+        excluded.push({ emp, reason: emp.join_reason === '휴직' ? '휴직시작일이 입력되지 않아 계산할 수 없습니다.' : '퇴사일이 입력되지 않아 계산할 수 없습니다.' })
+        continue
+      }
+      const leaveDetail = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+      const amount = resolveWellnessCoinLeaveAmount(emp, leaveDetail)
+      if (amount === null) {
+        excluded.push({ emp, reason: '퇴사자 정산 기준이 아직 확정되지 않았습니다.', leaveDetail })
+      } else {
+        included.push({ emp, amount })
+      }
+    } else if (!emp.join_date) {
+      excluded.push({ emp, reason: '입사일(복귀일)이 입력되지 않아 계산할 수 없습니다.' })
+    } else {
+      included.push({ emp, amount: calcWellnessHire(emp.join_date) })
+    }
+  }
+  return { included, excluded }
+}
+
+function wellnessCoinFilename(d: Date = new Date()): string {
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `웰니스코인_${yyyy}년_${mm}월.xlsx`
+}
+
+async function downloadWellnessCoinExcel(rows: WellnessCoinRow[]): Promise<string | null> {
+  try {
+    const res = await fetch('/api/wellness-coin-excel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rows: rows.map(r => ({ name: r.emp.name, customerId: r.emp.customer_id, amount: r.amount })),
+      }),
+    })
+    if (!res.ok) {
+      let errMsg = '엑셀 생성에 실패했습니다.'
+      try { const data = await res.json() as { error?: string }; errMsg = data.error ?? errMsg } catch { /* ignore */ }
+      return errMsg
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = wellnessCoinFilename()
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : '네트워크 오류'
+  }
+}
+
 // ─── 공통 UI ──────────────────────────────────────────────────────────────────
 function TypeBadge({ type }: { type: string }) {
   const s = type === '입사'       ? 'bg-blue-50 text-blue-700 border-blue-200'
@@ -1344,6 +1432,10 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
           </div>
           <FormField label="팀장" value={form.leader} onChange={v => onChange('leader', v)} placeholder="이민수 팀장" />
           <FormField label="휴대폰번호" value={form.phone} onChange={v => onChange('phone', v)} placeholder="010-0000-0000" />
+          <div>
+            <FormField label="고객아이디 (웰니스코인)" value={form.customer_id} onChange={v => onChange('customer_id', v)} placeholder="예) hecto1234" />
+            <p className="text-xs text-gray-400 mt-1">웰니스코인 지급 엑셀 생성 시 사용됩니다. 나중에 입력해도 됩니다.</p>
+          </div>
           {form.status === 'resigned' ? (
             // 퇴사자 날짜 필드
             <>
@@ -1412,6 +1504,90 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onSubmit, onC
     </div>
   )
 }
+
+// ─── 웰니스코인 엑셀 다운로드 전 확인 모달 ──────────────────────────────────────
+function WellnessCoinExcelModal({ included, excluded, downloading, error, onDownload, onClose }: {
+  included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[]
+  downloading: boolean; error: string | null
+  onDownload: () => void; onClose: () => void
+}) {
+  const missing = included.filter(r => !r.emp.customer_id?.trim())
+  const ready   = included.filter(r => r.emp.customer_id?.trim())
+  const canDownload = missing.length === 0 && ready.length > 0
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+          <h3 className="font-bold text-gray-900">웰니스코인 엑셀 다운로드</h3>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">✕</button>
+        </div>
+        <div className="px-6 py-5 space-y-3">
+          <p className="text-xs text-gray-500">선택한 대상자 {included.length + excluded.length}명 중 지급 대상 {included.length}명</p>
+
+          {missing.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+              <p className="text-xs font-semibold text-red-600">
+                고객아이디가 등록되지 않은 대상자가 있습니다: {missing.map(r => r.emp.name).join(', ')}
+              </p>
+              <p className="text-xs text-red-500 mt-0.5">직원 정보 수정 화면에서 고객아이디를 먼저 등록해주세요.</p>
+            </div>
+          )}
+
+          {ready.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 font-semibold text-gray-500">이름</th>
+                    <th className="text-left px-3 py-1.5 font-semibold text-gray-500">고객아이디</th>
+                    <th className="text-right px-3 py-1.5 font-semibold text-gray-500">지급금액</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ready.map(r => (
+                    <tr key={r.emp.id} className="border-t border-gray-100">
+                      <td className="px-3 py-1.5 text-gray-800">{r.emp.name}</td>
+                      <td className="px-3 py-1.5 text-gray-600">{r.emp.customer_id}</td>
+                      <td className="px-3 py-1.5 text-right text-gray-800">{r.amount.toLocaleString()}원</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {excluded.length > 0 && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 space-y-2">
+              <p className="text-xs font-semibold text-gray-500">다음 대상자는 지급 대상이 아니라 제외됩니다</p>
+              {excluded.map(e => (
+                <div key={e.emp.id} className="text-xs text-gray-500">
+                  <p>{e.emp.name} — {e.reason}</p>
+                  {e.leaveDetail && (
+                    <p className="text-gray-400 pl-2 mt-0.5">
+                      지급된 금액 {e.leaveDetail.prePaid.toLocaleString()}원 · 근무일 기준 인정 금액 {e.leaveDetail.recognized.toLocaleString()}원 ·
+                      회수 필요 금액 {e.leaveDetail.reclaim.toLocaleString()}원 · 최종 정산금액 후보 {e.leaveDetail.recognized.toLocaleString()}원
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
+          <button onClick={onDownload} disabled={!canDownload || downloading}
+            className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold disabled:opacity-40 transition-colors">
+            {downloading ? '생성 중...' : '다운로드'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="bg-white rounded-xl border border-dashed border-gray-200 py-12 flex items-center justify-center">
@@ -1508,6 +1684,9 @@ export default function HRDashboard() {
   const [editTarget, setEditTarget] = useState<Employee | null>(null)
   const [form,       setForm]       = useState<EmployeeForm>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
+  const [wellnessCoinModal, setWellnessCoinModal] = useState<{ included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[] } | null>(null)
+  const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
+  const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
   const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
   const [onboardSentAt,  setOnboardSentAt]  = useState<Record<string, string>>({})
@@ -1776,7 +1955,7 @@ export default function HRDashboard() {
       exit_date: form.exit_date || null,
       department: form.department || null, division: form.division || null, team: form.team || null,
       position: form.position || null, leader: form.leader || null,
-      phone: form.phone || null,
+      phone: form.phone || null, customer_id: form.customer_id.trim() || null,
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
     }
 
@@ -1875,6 +2054,22 @@ export default function HRDashboard() {
     fetchAllData()
   }
 
+  function openWellnessCoinModal(entries: Array<{ emp: Employee; empType: 'hire' | 'leave' }>) {
+    if (entries.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+    setWellnessCoinError(null)
+    setWellnessCoinModal(buildWellnessCoinRows(entries))
+  }
+  async function handleWellnessCoinDownload() {
+    if (!wellnessCoinModal) return
+    setWellnessCoinDownloading(true)
+    setWellnessCoinError(null)
+    const ready = wellnessCoinModal.included.filter(r => r.emp.customer_id?.trim())
+    const err = await downloadWellnessCoinExcel(ready)
+    setWellnessCoinDownloading(false)
+    if (err) { setWellnessCoinError(err); return }
+    setWellnessCoinModal(null)
+  }
+
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }
   function openEdit(emp: Employee) {
     setEditTarget(emp)
@@ -1882,7 +2077,7 @@ export default function HRDashboard() {
       exit_date: emp.exit_date ?? '',
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
       position: emp.position ?? '', leader: emp.leader ?? '',
-      phone: emp.phone ?? '',
+      phone: emp.phone ?? '', customer_id: emp.customer_id ?? '',
       join_reason: emp.join_reason ?? '입사', status: emp.status })
     setShowForm(true)
   }
@@ -1970,6 +2165,14 @@ export default function HRDashboard() {
     <main className="min-h-screen bg-slate-50">
       <EmployeeModal show={showForm} isEdit={!!editTarget} form={form} submitting={submitting}
         onChange={(f, v) => setForm(p => ({ ...p, [f]: v }))} onSubmit={handleSubmit} onClose={closeForm} />
+
+      {wellnessCoinModal && (
+        <WellnessCoinExcelModal
+          included={wellnessCoinModal.included} excluded={wellnessCoinModal.excluded}
+          downloading={wellnessCoinDownloading} error={wellnessCoinError}
+          onDownload={handleWellnessCoinDownload}
+          onClose={() => { setWellnessCoinModal(null); setWellnessCoinError(null) }} />
+      )}
 
       {/* OTP 추가 등록 모달 */}
       {otpEnrollOpen && (
@@ -2460,7 +2663,7 @@ export default function HRDashboard() {
                           sel.map(e => e.mailKey),
                           cc
                         )} />
-                      <div className="flex justify-end mt-1">
+                      <div className="flex justify-end gap-2 mt-1">
                         <button
                           onClick={() => {
                             if (sel.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
@@ -2473,6 +2676,14 @@ export default function HRDashboard() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                           </svg>
                           엑셀 다운로드{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
+                        </button>
+                        <button
+                          onClick={() => openWellnessCoinModal(sel.map(({ emp, empType }) => ({ emp, empType })))}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-3 py-1.5 rounded-lg transition-colors">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          웰니스코인 엑셀 다운로드{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
                         </button>
                       </div>
                     </>
