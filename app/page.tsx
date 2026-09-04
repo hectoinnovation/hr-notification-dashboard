@@ -707,12 +707,21 @@ function buildWellnessExcelRows(
 
 // ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────
 // 매월 15일 지급 대상자를 취합해 결제사 업로드용 엑셀을 만들기 위한 행 계산.
-// 기존 웰니스포인트 일할계산 로직(calcWellnessHire)을 그대로 재사용 — 새 계산 로직 없음.
-// "지급"이 성립하는 입사자/휴직복귀자만 대상으로 한다: 전적자는 계산 대상이 아니고(기존 로직과 동일),
-// 퇴사/휴직자는 calcWellnessLeave가 산출하는 값이 "지급"이 아니라 "환수/정산"이라 이 엑셀(충전 요청)의
-// 성격과 맞지 않아 제외한다 — 환수는 이 기능의 범위 밖이므로 별도로 판단해 달라고 화면에서 안내한다.
+// 기존 웰니스포인트 일할계산 로직(calcWellnessHire / calcWellnessLeave)을 그대로
+// 재사용 — 새 계산 로직 없음, 두 함수 모두 절대 수정하지 않는다.
 type WellnessCoinRow = { emp: Employee; amount: number }
-type WellnessCoinExcluded = { emp: Employee; reason: string }
+type WellnessCoinLeaveDetail = { prePaid: number; recognized: number; reclaim: number }
+type WellnessCoinExcluded = { emp: Employee; reason: string; leaveDetail?: WellnessCoinLeaveDetail }
+
+// 퇴사자 웰니스코인 "엑셀 반영 금액" 산정 규칙 — 회사의 퇴사자 정산 방침이 아직
+// 확정되지 않아 현재는 항상 null(계산 보류)을 반환해 퇴사자를 엑셀 대상에서 제외한다.
+// 방침이 확정되면 이 함수만 교체하면 된다 (예: recognized를 반환하도록 바꾸는 식).
+// calcWellnessLeave() 자체는 여기서도 절대 수정하지 않는다 — PointCard의 기존
+// 선지급액/인정액/환수금 화면 표시가 그대로 이 함수를 계속 사용하고 있다.
+function resolveWellnessCoinLeaveAmount(emp: Employee, detail: WellnessCoinLeaveDetail): number | null {
+  void emp; void detail // 방침 확정 후 아래 두 값을 사용해 반환값을 채우면 된다
+  return null // TODO: 퇴사자 웰니스코인 정산 방침 확정 후 구현
+}
 
 function buildWellnessCoinRows(
   entries: Array<{ emp: Employee; empType: 'hire' | 'leave' }>,
@@ -725,7 +734,22 @@ function buildWellnessCoinRows(
     if (isTransfer) {
       excluded.push({ emp, reason: '전적자는 웰니스코인 지급 대상이 아닙니다.' })
     } else if (isLeaveType) {
-      excluded.push({ emp, reason: '퇴사/휴직자는 지급이 아닌 환수/정산 대상이라 이 엑셀에는 포함되지 않습니다.' })
+      if (!emp.join_date) {
+        excluded.push({ emp, reason: '입사일이 입력되지 않아 계산할 수 없습니다.' })
+        continue
+      }
+      const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.leave_date
+      if (!leaveDateForCalc) {
+        excluded.push({ emp, reason: emp.join_reason === '휴직' ? '휴직시작일이 입력되지 않아 계산할 수 없습니다.' : '퇴사일이 입력되지 않아 계산할 수 없습니다.' })
+        continue
+      }
+      const leaveDetail = calcWellnessLeave(emp.join_date, leaveDateForCalc)
+      const amount = resolveWellnessCoinLeaveAmount(emp, leaveDetail)
+      if (amount === null) {
+        excluded.push({ emp, reason: '퇴사자 정산 기준이 아직 확정되지 않았습니다.', leaveDetail })
+      } else {
+        included.push({ emp, amount })
+      }
     } else if (!emp.join_date) {
       excluded.push({ emp, reason: '입사일(복귀일)이 입력되지 않아 계산할 수 없습니다.' })
     } else {
@@ -1534,10 +1558,18 @@ function WellnessCoinExcelModal({ included, excluded, downloading, error, onDown
           )}
 
           {excluded.length > 0 && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 space-y-1">
+            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 space-y-2">
               <p className="text-xs font-semibold text-gray-500">다음 대상자는 지급 대상이 아니라 제외됩니다</p>
               {excluded.map(e => (
-                <p key={e.emp.id} className="text-xs text-gray-500">{e.emp.name} — {e.reason}</p>
+                <div key={e.emp.id} className="text-xs text-gray-500">
+                  <p>{e.emp.name} — {e.reason}</p>
+                  {e.leaveDetail && (
+                    <p className="text-gray-400 pl-2 mt-0.5">
+                      지급된 금액 {e.leaveDetail.prePaid.toLocaleString()}원 · 근무일 기준 인정 금액 {e.leaveDetail.recognized.toLocaleString()}원 ·
+                      회수 필요 금액 {e.leaveDetail.reclaim.toLocaleString()}원 · 최종 정산금액 후보 {e.leaveDetail.recognized.toLocaleString()}원
+                    </p>
+                  )}
+                </div>
               ))}
             </div>
           )}
