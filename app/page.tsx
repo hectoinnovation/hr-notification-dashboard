@@ -69,6 +69,12 @@ type NotifyEntry = { emp: Employee; type: 'hire' | 'leave'; mailKey: string }
 type PointEntry  = { emp: Employee; empType: 'hire' | 'leave'; mailKey: string }
 
 // ─── 유틸 ─────────────────────────────────────────────────────────────────────
+// KST(UTC+9) 기준 "오늘" 날짜(YYYY-MM-DD) — 브라우저 로컬 타임존 설정과 무관하게
+// UTC 시각에 9시간을 더해 계산하므로 안전하다. 과거 온보딩 예약메일 생성을 막는
+// 가드(handleSubmit)에서 사용한다.
+function todayKstDateStr(): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10)
+}
 function formatMonth(dateStr: string | null): string {
   if (!dateStr) return '-'
   const d = new Date(dateStr)
@@ -2168,10 +2174,16 @@ export default function HRDashboard() {
         }
 
         // D-7(s5), D-1(s6), D-Day(s7) 예약메일 생성
+        // 과거 입사자(예: 오래전 입사한 직원의 정보를 단순 수정·저장)의 경우 계산된 날짜가
+        // 이미 지난 경우가 있다 — 이런 지난 날짜로 pending 행을 새로 만들면 다음 cron
+        // 실행 때 "밀린 메일"처럼 즉시 발송되어 버리므로, 오늘(KST) 이전 날짜는 애초에
+        // 생성하지 않는다. (오늘 날짜는 정상적으로 당일 발송 대상이라 포함한다.)
+        const todayKst = todayKstDateStr()
         const onboardStages = STAGES.filter(s => ['s5', 's6', 's7'].includes(s.id))
         const mailRows = onboardStages.flatMap(stage => {
           const targetDate = calcDday(joinDate, stage.timing)
           if (!targetDate) return []
+          if (targetDate < todayKst) return []
           return [{
             to_email:     recipient,
             subject:      `[온보딩 알림] ${name}님 ${stage.label} 진행 요청`,
