@@ -214,15 +214,22 @@ type LeaveMonthCalc = {
   amount: number           // 퇴사월 일할 지급액 (Math.round 최종 반올림)
 }
 
-/** 퇴사월 재직일수/총일수는 두 포인트가 동일 — exit_date만으로 계산 (timezone 영향 없는 date-only 파싱) */
-function leaveMonthDayInfo(exitDateStr: string): { year: number; month: number; workedDays: number; daysInLeaveMonth: number } {
-  const [y, m, d] = exitDateStr.split('-').map(Number)
-  return { year: y, month: m, workedDays: d, daysInLeaveMonth: daysInMonth(y, m) }
+/**
+ * 퇴사월 재직일수/총일수는 두 포인트가 동일 — join_date/exit_date만으로 계산
+ * (timezone 영향 없는 date-only 파싱). 입사월과 퇴사월이 같으면(같은 달 입사·퇴사)
+ * 그 달 1일부터가 아니라 입사일~퇴사일(양일 포함)만 재직일수로 인정한다.
+ */
+function leaveMonthDayInfo(joinDateStr: string, exitDateStr: string): { year: number; month: number; workedDays: number; daysInLeaveMonth: number } {
+  const [ey, em, ed] = exitDateStr.split('-').map(Number)
+  const daysInLeaveMonth = daysInMonth(ey, em)
+  const [jy, jm, jd] = joinDateStr.split('-').map(Number)
+  const workedDays = (jy === ey && jm === em) ? (ed - jd + 1) : ed
+  return { year: ey, month: em, workedDays, daysInLeaveMonth }
 }
 
 /** 성과포인트: 연간 기준금액 고정(1,000,000원) — 재직 연차와 무관 */
-function calcPerformancePointLeaveMonth(exitDateStr: string): LeaveMonthCalc {
-  const { workedDays, daysInLeaveMonth } = leaveMonthDayInfo(exitDateStr)
+function calcPerformancePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc {
+  const { workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
   const monthlyBase = PERFORMANCE_POINT_ANNUAL / 12
   const amount = Math.round(monthlyBase * workedDays / daysInLeaveMonth)
   return { annualBase: PERFORMANCE_POINT_ANNUAL, monthlyBase, daysInLeaveMonth, workedDays, amount }
@@ -243,7 +250,7 @@ function calcTenureAppliedYears(joinYear: number, targetYear: number): number {
 /** 근속포인트: 퇴사연도에 적용되는 연차 기준으로 연간 기준금액을 산정한 뒤 퇴사월만 일할계산 */
 function calcTenurePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc & { appliedYears: number; eligible: boolean } {
   const joinYear = Number(joinDateStr.split('-')[0])
-  const { year: exitYear, workedDays, daysInLeaveMonth } = leaveMonthDayInfo(exitDateStr)
+  const { year: exitYear, workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
   const appliedYears = calcTenureAppliedYears(joinYear, exitYear)
   const annualBase = appliedYears * TENURE_POINT_PER_YEAR
   const monthlyBase = annualBase / 12
@@ -854,7 +861,10 @@ type TenurePointRow = { emp: Employee; calc: (LeaveMonthCalc & { appliedYears: n
 function buildPerformancePointRows(list: Employee[]): PerformancePointRow[] {
   return list
     .filter(e => e.status === 'resigned' && e.performance_point_target === true)
-    .map(emp => ({ emp, calc: emp.exit_date ? calcPerformancePointLeaveMonth(emp.exit_date) : null }))
+    .map(emp => ({
+      emp,
+      calc: emp.join_date && emp.exit_date ? calcPerformancePointLeaveMonth(emp.join_date, emp.exit_date) : null,
+    }))
 }
 
 function buildTenurePointRows(list: Employee[]): TenurePointRow[] {
@@ -867,7 +877,9 @@ function buildTenurePointRows(list: Employee[]): TenurePointRow[] {
 }
 
 function performancePointStatus(row: PerformancePointRow): string {
-  return row.calc ? '계산완료' : '퇴사일 미입력'
+  if (row.calc) return '계산완료'
+  if (!row.emp.join_date) return '입사일 미입력'
+  return '퇴사일 미입력'
 }
 function tenurePointStatus(row: TenurePointRow): string {
   if (row.calc) return '계산완료'
