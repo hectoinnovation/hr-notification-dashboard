@@ -130,6 +130,28 @@ function toggleSetMember(set: Set<string>, id: string): Set<string> {
   return next
 }
 
+// ─── 온보딩 진행중/완료 자동 분류 (읽기 전용 — 체크 상태·진행률 계산 로직은 그대로, 분류만 파생) ───
+/** 직원에게 적용되는 온보딩 체크리스트 — 전적자는 사전 준비 3항목만, 그 외는 전체 15항목 (OnboardingCard와 동일 규칙) */
+function onboardStagesFor(e: Employee): readonly Stage[] {
+  return e.join_reason === '전적' ? TRANSFER_STAGES : STAGES
+}
+/** 체크리스트 전 항목이 완료됐는지 여부 — 별도 completed 컬럼 없이 기존 stageDone(is_done)만으로 계산 */
+function isOnboardComplete(e: Employee, stageDone: Record<string, boolean>): boolean {
+  const stages = onboardStagesFor(e)
+  return stages.length > 0 && stages.every(s => !!stageDone[`${e.id}_${s.id}`])
+}
+/** 온보딩 완료 시점 — 체크리스트 항목 중 가장 늦게 완료 처리된 시각(done_at). 기록이 없으면 null */
+function onboardCompletedAt(e: Employee, stageDone: Record<string, boolean>, stageDoneAt: Record<string, string>): string | null {
+  let latest: string | null = null
+  for (const s of onboardStagesFor(e)) {
+    const key = `${e.id}_${s.id}`
+    if (!stageDone[key]) continue
+    const at = stageDoneAt[key]
+    if (at && (!latest || at > latest)) latest = at
+  }
+  return latest
+}
+
 // ─── 월별 그룹화 / 기간 필터 (읽기 전용 UI 레이어 — 분류·계산 로직에는 관여하지 않음) ───
 const MONTH_UNKNOWN = 'unknown'
 function monthKeyOf(dateStr: string | null | undefined): string {
@@ -1957,6 +1979,7 @@ export default function HRDashboard() {
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
+  const [stageDoneAt,    setStageDoneAt]    = useState<Record<string, string>>({})
   const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
   const [onboardSentAt,  setOnboardSentAt]  = useState<Record<string, string>>({})
   const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
@@ -1969,6 +1992,8 @@ export default function HRDashboard() {
   const [typeF,     setTypeF]     = useState('전체')
   const [sentF,     setSentF]     = useState('전체')
   const [limit,     setLimit]     = useState(PAGE_SIZE)
+  const [completedLimit, setCompletedLimit] = useState(PAGE_SIZE)
+  const [onboardSectCollapsed, setOnboardSectCollapsed] = useState<Set<string>>(new Set(['done']))
   const [cafeGroupF,     setCafeGroupF]     = useState<PointGroupFilter>('전체')
   const [wellnessGroupF, setWellnessGroupF] = useState<PointGroupFilter>('전체')
   const [cafeSectCollapsed,     setCafeSectCollapsed]     = useState<Set<string>>(new Set())
@@ -2040,7 +2065,7 @@ export default function HRDashboard() {
   const todayLeaves = departures.filter(d => d.leave_date === todayStr).length
 
   // 검색/필터/탭 변경 시 초기화
-  useEffect(() => { setLimit(PAGE_SIZE) }, [activeTab, notifySubTab, search, typeF, sentF, cafeGroupF, wellnessGroupF, notifyMonthFilter, cafeMonthFilter, wellnessMonthFilter])
+  useEffect(() => { setLimit(PAGE_SIZE); setCompletedLimit(PAGE_SIZE) }, [activeTab, notifySubTab, search, typeF, sentF, cafeGroupF, wellnessGroupF, notifyMonthFilter, cafeMonthFilter, wellnessMonthFilter])
   useEffect(() => { setSelectedKeys(new Set()); setBulkResult(null) }, [activeTab, notifySubTab, search, typeF, sentF, cafeGroupF, wellnessGroupF, notifyMonthFilter, cafeMonthFilter, wellnessMonthFilter])
 
   // 직원 타입 레이블 (필터용)
@@ -2198,7 +2223,7 @@ export default function HRDashboard() {
     setLoading(true); setError(null)
     const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
-      supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent'),
+      supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent,done_at'),
       supabase.from('notifications').select('employee_id,notification_type,mail_sent'),
       supabase.from('point_requests').select('employee_id,employee_type,point_type,mail_sent'),
       supabase.from('cafe_excel_data').select('file_name,data').eq('id', 'singleton').maybeSingle(),
@@ -2208,10 +2233,12 @@ export default function HRDashboard() {
     const empData = empRes.data ?? []
     setEmployees(empData)
     const newDone:    Record<string, boolean> = {}
+    const newDoneAt:  Record<string, string>  = {}
     const newMail:    Record<string, boolean> = {}
     const newSentAt:  Record<string, string>  = {}
     for (const t of taskRes.data ?? []) {
       if (t.is_done)   newDone[`${t.employee_id}_${t.stage_id}`]      = true
+      if (t.is_done && t.done_at) newDoneAt[`${t.employee_id}_${t.stage_id}`] = t.done_at as string
       if (t.mail_sent) newMail[`mail_${t.employee_id}_${t.stage_id}`] = true
     }
     // scheduled_mails sent 항목 → mailSent 및 sent_at 반영
@@ -2238,7 +2265,7 @@ export default function HRDashboard() {
       setCafeExcel(excelRes.data.data as Record<number, ExcelSheetData>)
       setCafeExcelFileName(excelRes.data.file_name ?? null)
     }
-    setStageDone(newDone); setMailSent(newMail); setOnboardSentAt(newSentAt); setLoading(false)
+    setStageDone(newDone); setStageDoneAt(newDoneAt); setMailSent(newMail); setOnboardSentAt(newSentAt); setLoading(false)
   }
 
   async function handleCafeExcelUpload(data: Record<number, ExcelSheetData>, fileName: string) {
@@ -2398,13 +2425,20 @@ export default function HRDashboard() {
 
   async function toggleDone(empId: string, stageId: string) {
     const key = `${empId}_${stageId}`; const newDone = !stageDone[key]
+    const prevAt = stageDoneAt[key]
+    const newAt  = newDone ? new Date().toISOString() : null
     setStageDone(p => ({ ...p, [key]: newDone }))
+    setStageDoneAt(p => { const n = { ...p }; if (newAt) n[key] = newAt; else delete n[key]; return n })
     const stage = STAGES.find(s => s.id === stageId)!
     const { error } = await supabase.from('onboarding_tasks').upsert({
       employee_id: empId, stage_id: stageId, stage_label: stage.label, timing: stage.timing,
-      sort_order: STAGES.indexOf(stage), is_done: newDone, done_at: newDone ? new Date().toISOString() : null,
+      sort_order: STAGES.indexOf(stage), is_done: newDone, done_at: newAt,
     }, { onConflict: 'employee_id,stage_id' })
-    if (error) { setError(error.message); setStageDone(p => ({ ...p, [key]: !newDone })) }
+    if (error) {
+      setError(error.message)
+      setStageDone(p => ({ ...p, [key]: !newDone }))
+      setStageDoneAt(p => { const n = { ...p }; if (prevAt) n[key] = prevAt; else delete n[key]; return n })
+    }
   }
 
   async function sendMail(key: string) {
@@ -2845,21 +2879,44 @@ export default function HRDashboard() {
               )
             })()
 
-            : activeTab === 'onboard' ? (
-              <div className="space-y-3">
+            : activeTab === 'onboard' ? (() => {
+              const onboardInProgress = filteredOnboard
+                .filter(e => !isOnboardComplete(e, stageDone))
+                .sort((a, b) => compareDateDesc(a.join_date, b.join_date))
+              const onboardCompleted = filteredOnboard
+                .filter(e => isOnboardComplete(e, stageDone))
+                .sort((a, b) => {
+                  const cmp = compareDateDesc(onboardCompletedAt(a, stageDone, stageDoneAt), onboardCompletedAt(b, stageDone, stageDoneAt))
+                  return cmp !== 0 ? cmp : compareDateDesc(a.join_date, b.join_date)
+                })
+              const renderOnboardCard = (hire: Employee) => (
+                <OnboardingCard hire={hire} stageDone={stageDone} mailSent={mailSent}
+                  onboardSentAt={onboardSentAt}
+                  onToggleDone={toggleDone} onSendMail={sendMail}
+                  onExclude={() => handleExcludeOnboarding(hire.id, hire.name)} />
+              )
+              return (
+              <div className="space-y-4">
                 <p className="text-xs text-gray-400">{filteredOnboard.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
-                {filteredOnboard.length === 0 ? <EmptyState label={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'} /> : (
-                  <PagedList items={filteredOnboard} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
-                    renderItem={(hire: Employee) => (
-                      <OnboardingCard hire={hire} stageDone={stageDone} mailSent={mailSent}
-                        onboardSentAt={onboardSentAt}
-                        onToggleDone={toggleDone} onSendMail={sendMail}
-                        onExclude={() => handleExcludeOnboarding(hire.id, hire.name)} />
-                    )} />
-                )}
+                <AccordionSection title="진행중" count={onboardInProgress.length} color="amber"
+                  collapsed={onboardSectCollapsed.has('progress')}
+                  onToggle={() => setOnboardSectCollapsed(p => toggleSetMember(p, 'progress'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '진행중인 온보딩이 없습니다'}>
+                  <PagedList items={onboardInProgress} limit={limit} onMore={() => setLimit(l => l + PAGE_SIZE)}
+                    renderItem={renderOnboardCard} />
+                </AccordionSection>
+                <AccordionSection title="완료" count={onboardCompleted.length} color="emerald"
+                  collapsed={onboardSectCollapsed.has('done')}
+                  onToggle={() => setOnboardSectCollapsed(p => toggleSetMember(p, 'done'))}
+                  hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '완료된 온보딩이 없습니다'}>
+                  <PagedList items={onboardCompleted} limit={completedLimit} onMore={() => setCompletedLimit(l => l + PAGE_SIZE)}
+                    renderItem={renderOnboardCard} />
+                </AccordionSection>
               </div>
+              )
+            })()
 
-            ) : activeTab === 'cafe' ? (() => {
+            : activeTab === 'cafe' ? (() => {
               const renderCafeCard = (entry: PointEntry) => {
                 const isTransfer = entry.emp.join_reason === '전적' && entry.empType === 'hire'
                 // 휴직자: effectiveDate(휴직시작일-1일) / 그 외: exit_date 그대로
