@@ -140,7 +140,18 @@ function monthKeyLabel(key: string): string {
   const [y, m] = key.split('-')
   return `${y}년 ${parseInt(m, 10)}월`
 }
-/** 목록을 월별로 묶는다 — 그룹 내부 순서는 그대로 유지, 그룹은 최신월 → 과거월 → 날짜없음 순 */
+/** 두 날짜를 내림차순(최신 → 과거)으로 비교 — 날짜 없음은 맨 뒤로 */
+function compareDateDesc(a: string | null | undefined, b: string | null | undefined): number {
+  if (!a && !b) return 0
+  if (!a) return 1
+  if (!b) return -1
+  return a < b ? 1 : a > b ? -1 : 0
+}
+/**
+ * 목록을 월별로 묶는다 — 그룹은 최신월 → 과거월 → 날짜없음 순, 그룹 내부도 항상
+ * 최신 날짜 → 과거 날짜(내림차순)로 정렬한다. 입력 배열(items)은 절대 변형하지 않고
+ * 그룹별로 새로 만든 복사본만 정렬한다.
+ */
 function groupByMonth<T>(items: T[], dateOf: (item: T) => string | null | undefined): Array<{ key: string; label: string; items: T[] }> {
   const map = new Map<string, T[]>()
   for (const item of items) {
@@ -150,7 +161,10 @@ function groupByMonth<T>(items: T[], dateOf: (item: T) => string | null | undefi
   }
   const keys = [...map.keys()].filter(k => k !== MONTH_UNKNOWN).sort((a, b) => b.localeCompare(a))
   if (map.has(MONTH_UNKNOWN)) keys.push(MONTH_UNKNOWN)
-  return keys.map(key => ({ key, label: monthKeyLabel(key), items: map.get(key)! }))
+  return keys.map(key => ({
+    key, label: monthKeyLabel(key),
+    items: [...map.get(key)!].sort((a, b) => compareDateDesc(dateOf(a), dateOf(b))),
+  }))
 }
 
 type PeriodFilter = '3m' | '6m' | 'all'
