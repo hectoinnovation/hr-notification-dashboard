@@ -152,10 +152,26 @@ function groupByMonth<T>(items: T[], dateOf: (item: T) => string | null | undefi
   if (map.has(MONTH_UNKNOWN)) keys.push(MONTH_UNKNOWN)
   return keys.map(key => ({ key, label: monthKeyLabel(key), items: map.get(key)! }))
 }
-/** 기간 필터 드롭다운에 표시할 월 목록(최신 → 과거) — 필터와 무관하게 전체 데이터 기준으로 뽑는다 */
-function availableMonths<T>(items: T[], dateOf: (item: T) => string | null | undefined): string[] {
-  const keys = new Set(items.map(item => monthKeyOf(dateOf(item))).filter(k => k !== MONTH_UNKNOWN))
-  return [...keys].sort((a, b) => b.localeCompare(a))
+
+type PeriodFilter = '3m' | '6m' | 'all'
+/** "최근 N개월"의 가장 이른 포함 월(YYYY-MM) — 이번 달을 포함해 N개월이므로 (N-1)개월 전까지 포함 */
+function periodCutoffKey(period: PeriodFilter): string | null {
+  if (period === 'all') return null
+  const monthsBack = period === '3m' ? 2 : 5
+  const [y, m] = todayKstDateStr().split('-').map(Number)
+  const d = new Date(y, m - 1 - monthsBack, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+/** 날짜 미입력 항목은 '전체'가 아니면 기간 필터에서 제외(특정 월 필터와 동일한 기존 규칙) */
+function inPeriod(dateStr: string | null | undefined, period: PeriodFilter): boolean {
+  const cutoff = periodCutoffKey(period)
+  if (!cutoff) return true
+  const key = monthKeyOf(dateStr)
+  return key !== MONTH_UNKNOWN && key >= cutoff
+}
+/** 검색어가 있으면 기간 필터와 무관하게 전체 기간에서 검색한다 */
+function effectivePeriod(period: PeriodFilter, searchActive: boolean): PeriodFilter {
+  return searchActive ? 'all' : period
 }
 
 /**
@@ -1828,45 +1844,57 @@ function AccordionSection({ title, count, color, collapsed, onToggle, hasFilter,
 }
 
 // ─── 월별 그룹 목록 (읽기 전용 UI 레이어) ───────────────────────────────────────
-function MonthGroupList<T>({ groups, sectionKey, collapsedKeys, onToggle, emptyLabel, renderItems }: {
+// 기본: 가장 최근 월(그룹 배열의 첫 번째, groupByMonth가 이미 최신순 정렬)만 펼침, 나머지는 접힘.
+// toggledKeys는 "기본값에서 사용자가 뒤집은" 월만 기록 — 그래서 어떤 월이든 자유롭게 펼치고 접을 수
+// 있고 여러 월을 동시에 펼칠 수 있다. 검색 중(forceExpandAll)에는 전부 펼침으로 강제한다.
+function MonthGroupList<T>({ groups, sectionKey, toggledKeys, onToggle, emptyLabel, forceExpandAll, renderItems }: {
   groups: Array<{ key: string; label: string; items: T[] }>
   sectionKey: string
-  collapsedKeys: Set<string>
+  toggledKeys: Set<string>
   onToggle: (fullKey: string) => void
   emptyLabel: string
+  forceExpandAll: boolean
   renderItems: (items: T[]) => ReactNode
 }) {
   if (groups.length === 0) return <p className="text-sm text-gray-400 pl-2">{emptyLabel}</p>
+  const mostRecentKey = groups[0].key
   return (
     <div className="space-y-3">
       {groups.map(g => {
         const fullKey = `${sectionKey}:${g.key}`
-        const isCollapsed = collapsedKeys.has(fullKey)
+        const defaultExpanded = g.key === mostRecentKey
+        const isExpanded = forceExpandAll || (toggledKeys.has(fullKey) ? !defaultExpanded : defaultExpanded)
         return (
           <div key={g.key} className="space-y-2">
             <button onClick={() => onToggle(fullKey)}
               className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors">
-              <svg className={`w-3 h-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={`w-3 h-3 transition-transform ${isExpanded ? '' : '-rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
-              {g.label}
-              <span className="font-normal opacity-70">{g.items.length}명</span>
+              {g.label} · <span className="font-normal opacity-70">{g.items.length}명</span>
             </button>
-            {!isCollapsed && renderItems(g.items)}
+            {isExpanded && renderItems(g.items)}
           </div>
         )
       })}
     </div>
   )
 }
-function MonthFilterSelect({ months, value, onChange }: { months: string[]; value: string; onChange: (v: string) => void }) {
-  if (months.length === 0) return null
+function PeriodFilterChips({ value, onChange }: { value: PeriodFilter; onChange: (v: PeriodFilter) => void }) {
+  const options: Array<{ id: PeriodFilter; label: string }> = [
+    { id: '3m', label: '최근 3개월' },
+    { id: '6m', label: '최근 6개월' },
+    { id: 'all', label: '전체' },
+  ]
   return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="text-xs font-semibold border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-orange-400">
-      <option value="all">전체 기간</option>
-      {months.map(k => <option key={k} value={k}>{monthKeyLabel(k)}</option>)}
-    </select>
+    <div className="flex items-center gap-1.5">
+      {options.map(o => (
+        <button key={o.id} onClick={() => onChange(o.id)}
+          className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${value === o.id ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+          {o.label}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -1932,14 +1960,14 @@ export default function HRDashboard() {
   const [cafeSectCollapsed,     setCafeSectCollapsed]     = useState<Set<string>>(new Set())
   const [wellnessSectCollapsed, setWellnessSectCollapsed] = useState<Set<string>>(new Set())
 
-  // 월별 그룹 접기/펼치기(전 탭 공유, key로 탭·섹션·월 구분) + 탭별 기간(월) 필터
-  const [monthCollapsed, setMonthCollapsed] = useState<Set<string>>(new Set())
-  function toggleMonth(fullKey: string) { setMonthCollapsed(p => toggleSetMember(p, fullKey)) }
-  const [notifyMonthFilter,      setNotifyMonthFilter]      = useState('all')
-  const [cafeMonthFilter,        setCafeMonthFilter]        = useState('all')
-  const [wellnessMonthFilter,    setWellnessMonthFilter]    = useState('all')
-  const [performanceMonthFilter, setPerformanceMonthFilter] = useState('all')
-  const [tenureMonthFilter,      setTenureMonthFilter]      = useState('all')
+  // 월별 그룹 접기/펼치기(전 탭 공유, key로 탭·섹션·월 구분 — "기본값에서 뒤집은" 월만 기록) + 탭별 기간 필터
+  const [monthToggled, setMonthToggled] = useState<Set<string>>(new Set())
+  function toggleMonth(fullKey: string) { setMonthToggled(p => toggleSetMember(p, fullKey)) }
+  const [notifyMonthFilter,      setNotifyMonthFilter]      = useState<PeriodFilter>('3m')
+  const [cafeMonthFilter,        setCafeMonthFilter]        = useState<PeriodFilter>('3m')
+  const [wellnessMonthFilter,    setWellnessMonthFilter]    = useState<PeriodFilter>('3m')
+  const [performanceMonthFilter, setPerformanceMonthFilter] = useState<PeriodFilter>('3m')
+  const [tenureMonthFilter,      setTenureMonthFilter]      = useState<PeriodFilter>('3m')
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [bulkSending,  setBulkSending]  = useState(false)
@@ -2064,12 +2092,12 @@ export default function HRDashboard() {
   }), e => e.join_date ?? null)
   const filteredCafeBase     = allCafe.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
   const filteredWellnessBase = allWellness.filter(({ emp, mailKey }) => filterEntry(emp, mailKey))
-  // 기간(월) 필터 드롭다운 옵션은 월 필터 적용 전 목록 기준(선택 가능한 월이 사라지지 않도록)
-  const cafeMonths     = availableMonths(filteredCafeBase, pointEntryDate)
-  const wellnessMonths = availableMonths(filteredWellnessBase, pointEntryDate)
-  // 기본값 'all'일 때는 기존과 완전히 동일한 목록
-  const filteredCafe     = filteredCafeBase.filter(e => cafeMonthFilter === 'all' || monthKeyOf(pointEntryDate(e)) === cafeMonthFilter)
-  const filteredWellness = filteredWellnessBase.filter(e => wellnessMonthFilter === 'all' || monthKeyOf(pointEntryDate(e)) === wellnessMonthFilter)
+  // 검색어가 있으면 기간 필터와 무관하게 전체 기간에서 검색
+  const searchActive = !!search.trim()
+  const cafeEffectivePeriod     = effectivePeriod(cafeMonthFilter, searchActive)
+  const wellnessEffectivePeriod = effectivePeriod(wellnessMonthFilter, searchActive)
+  const filteredCafe     = filteredCafeBase.filter(e => inPeriod(pointEntryDate(e), cafeEffectivePeriod))
+  const filteredWellness = filteredWellnessBase.filter(e => inPeriod(pointEntryDate(e), wellnessEffectivePeriod))
 
   // 성과/근속포인트: 퇴사자 중 담당자가 정산 대상으로 체크한 사람만 — 상단 검색창(이름/부서/실/팀)만 공유 적용
   function matchesSearch(e: Employee): boolean {
@@ -2080,12 +2108,11 @@ export default function HRDashboard() {
   }
   const performancePointRowsBase = buildPerformancePointRows(departures.filter(matchesSearch))
   const tenurePointRowsBase      = buildTenurePointRows(departures.filter(matchesSearch))
-  // 기간(월) 필터 드롭다운 옵션 — 월 필터 적용 전 목록 기준(퇴사일=exit_date)
-  const performanceMonths = availableMonths(performancePointRowsBase, r => r.emp.exit_date)
-  const tenureMonths      = availableMonths(tenurePointRowsBase, r => r.emp.exit_date)
-  // 기본값 'all'일 때는 기존과 완전히 동일한 목록/금액
-  const performancePointRows = performancePointRowsBase.filter(r => performanceMonthFilter === 'all' || monthKeyOf(r.emp.exit_date) === performanceMonthFilter)
-  const tenurePointRows      = tenurePointRowsBase.filter(r => tenureMonthFilter === 'all' || monthKeyOf(r.emp.exit_date) === tenureMonthFilter)
+  // 검색어가 있으면 기간 필터와 무관하게 전체 기간에서 검색
+  const performanceEffectivePeriod = effectivePeriod(performanceMonthFilter, searchActive)
+  const tenureEffectivePeriod      = effectivePeriod(tenureMonthFilter, searchActive)
+  const performancePointRows = performancePointRowsBase.filter(r => inPeriod(r.emp.exit_date, performanceEffectivePeriod))
+  const tenurePointRows      = tenurePointRowsBase.filter(r => inPeriod(r.emp.exit_date, tenureEffectivePeriod))
   const allPerformanceCount  = buildPerformancePointRows(departures).length
   const allTenureCount       = buildTenurePointRows(departures).length
 
@@ -2642,9 +2669,9 @@ export default function HRDashboard() {
                 <span className="text-sm">불러오는 중...</span>
               </div>
             ) : activeTab === 'notify' ? (() => {
-              // 기간(월) 필터 — 기본값 'all'일 때는 기존 동작과 완전히 동일
-              const notifyMonths = availableMonths(filteredNotify, notifyEntryDate)
-              const inNotifyMonth = (e: NotifyEntry) => notifyMonthFilter === 'all' || monthKeyOf(notifyEntryDate(e)) === notifyMonthFilter
+              // 기간 필터 — 검색어가 있으면 기간과 무관하게 전체 기간에서 검색
+              const notifyEffectivePeriod = effectivePeriod(notifyMonthFilter, searchActive)
+              const inNotifyMonth = (e: NotifyEntry) => inPeriod(notifyEntryDate(e), notifyEffectivePeriod)
 
               // 하위 필터별 직원 목록
               const notifyHire     = filteredNotify.filter(e => e.type === 'hire'  && !['전적', '휴직복귀'].includes(e.emp.join_reason ?? '') && inNotifyMonth(e))
@@ -2732,12 +2759,11 @@ export default function HRDashboard() {
                   </div>
                 </div>
 
-                {notifyMonths.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400">기간</span>
-                    <MonthFilterSelect months={notifyMonths} value={notifyMonthFilter} onChange={setNotifyMonthFilter} />
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-400">기간</span>
+                  <PeriodFilterChips value={notifyMonthFilter} onChange={setNotifyMonthFilter} />
+                  {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간에서 검색)</span>}
+                </div>
 
                 {/* 통합 발송 컨트롤 */}
                 {visibleItems.length > 0 && (
@@ -2780,8 +2806,9 @@ export default function HRDashboard() {
                         <MonthGroupList
                           groups={groupByMonth(s.items, notifyEntryDate)}
                           sectionKey={`notify:${s.id}`}
-                          collapsedKeys={monthCollapsed}
+                          toggledKeys={monthToggled}
                           onToggle={toggleMonth}
+                          forceExpandAll={searchActive}
                           emptyLabel={hasFilter ? '검색 결과가 없습니다.' : `등록된 ${s.title}자가 없습니다.`}
                           renderItems={(items: NotifyEntry[]) => (
                             <div className="space-y-2">
@@ -2839,12 +2866,14 @@ export default function HRDashboard() {
               return (
               <div className="space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
-                  <p className="text-xs text-gray-400">{cafeVisibleAll.length}명{hasFilter || cafeGroupF !== '전체' || cafeMonthFilter !== 'all' ? ' (필터 적용)' : ''}</p>
+                  <p className="text-xs text-gray-400">{cafeVisibleAll.length}명{hasFilter || cafeGroupF !== '전체' ? ' (필터 적용)' : ''}</p>
                   <ExcelUploadBtn onParsed={handleCafeExcelUpload} savedFileName={cafeExcelFileName} />
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <PointGroupChips value={cafeGroupF} onChange={setCafeGroupF} counts={cafeGroupCounts} />
-                  {cafeMonths.length > 0 && <MonthFilterSelect months={cafeMonths} value={cafeMonthFilter} onChange={setCafeMonthFilter} />}
+                  <span className="text-xs text-gray-400 ml-1">기간</span>
+                  <PeriodFilterChips value={cafeMonthFilter} onChange={setCafeMonthFilter} />
+                  {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간에서 검색)</span>}
                 </div>
                 {cafeVisibleAll.length > 0 && (() => {
                   const sel = cafeVisibleAll.filter(({ mailKey }) => selectedKeys.has(mailKey))
@@ -2900,7 +2929,7 @@ export default function HRDashboard() {
                     onToggle={() => setCafeSectCollapsed(p => toggleSetMember(p, 'hire'))}
                     hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'}>
                     <MonthGroupList groups={groupByMonth(cafeHireGroup, pointEntryDate)} sectionKey="cafe:hire"
-                      collapsedKeys={monthCollapsed} onToggle={toggleMonth} emptyLabel="등록된 입사자가 없습니다"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 입사자가 없습니다"
                       renderItems={(items: PointEntry[]) => (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {items.map(renderCafeCard)}
@@ -2914,7 +2943,7 @@ export default function HRDashboard() {
                     onToggle={() => setCafeSectCollapsed(p => toggleSetMember(p, 'leave'))}
                     hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
                     <MonthGroupList groups={groupByMonth(cafeLeaveGroup, pointEntryDate)} sectionKey="cafe:leave"
-                      collapsedKeys={monthCollapsed} onToggle={toggleMonth} emptyLabel="등록된 퇴사자가 없습니다"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 퇴사자가 없습니다"
                       renderItems={(items: PointEntry[]) => (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {items.map(renderCafeCard)}
@@ -2939,10 +2968,12 @@ export default function HRDashboard() {
               }
               return (
               <div className="space-y-3">
-                <p className="text-xs text-gray-400">{wellnessVisibleAll.length}명{hasFilter || wellnessGroupF !== '전체' || wellnessMonthFilter !== 'all' ? ' (필터 적용)' : ''}</p>
+                <p className="text-xs text-gray-400">{wellnessVisibleAll.length}명{hasFilter || wellnessGroupF !== '전체' ? ' (필터 적용)' : ''}</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <PointGroupChips value={wellnessGroupF} onChange={setWellnessGroupF} counts={wellnessGroupCounts} />
-                  {wellnessMonths.length > 0 && <MonthFilterSelect months={wellnessMonths} value={wellnessMonthFilter} onChange={setWellnessMonthFilter} />}
+                  <span className="text-xs text-gray-400 ml-1">기간</span>
+                  <PeriodFilterChips value={wellnessMonthFilter} onChange={setWellnessMonthFilter} />
+                  {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간에서 검색)</span>}
                 </div>
                 {wellnessVisibleAll.length > 0 && (() => {
                   const sel = wellnessVisibleAll.filter(({ mailKey }) => selectedKeys.has(mailKey))
@@ -3000,7 +3031,7 @@ export default function HRDashboard() {
                     onToggle={() => setWellnessSectCollapsed(p => toggleSetMember(p, 'hire'))}
                     hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 입사자가 없습니다'}>
                     <MonthGroupList groups={groupByMonth(wellnessHireGroup, pointEntryDate)} sectionKey="wellness:hire"
-                      collapsedKeys={monthCollapsed} onToggle={toggleMonth} emptyLabel="등록된 입사자가 없습니다"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 입사자가 없습니다"
                       renderItems={(items: PointEntry[]) => (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {items.map(renderWellnessCard)}
@@ -3014,7 +3045,7 @@ export default function HRDashboard() {
                     onToggle={() => setWellnessSectCollapsed(p => toggleSetMember(p, 'leave'))}
                     hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
                     <MonthGroupList groups={groupByMonth(wellnessLeaveGroup, pointEntryDate)} sectionKey="wellness:leave"
-                      collapsedKeys={monthCollapsed} onToggle={toggleMonth} emptyLabel="등록된 퇴사자가 없습니다"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 퇴사자가 없습니다"
                       renderItems={(items: PointEntry[]) => (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {items.map(renderWellnessCard)}
@@ -3028,14 +3059,17 @@ export default function HRDashboard() {
             : activeTab === 'performance' ? (() => {
               const totalAmount = performancePointRows.reduce((sum, r) => sum + (r.calc?.amount ?? 0), 0)
               const performanceGroups = groupByMonth(performancePointRows, r => r.emp.exit_date)
+              const performanceMostRecentKey = performanceGroups[0]?.key
               return (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <p className="text-xs text-gray-400">
-                      대상자 {performancePointRows.length}명{hasFilter || performanceMonthFilter !== 'all' ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
+                      대상자 {performancePointRows.length}명{hasFilter ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
                     </p>
                     <div className="flex items-center gap-2">
-                      {performanceMonths.length > 0 && <MonthFilterSelect months={performanceMonths} value={performanceMonthFilter} onChange={setPerformanceMonthFilter} />}
+                      <span className="text-xs text-gray-400">기간</span>
+                      <PeriodFilterChips value={performanceMonthFilter} onChange={setPerformanceMonthFilter} />
+                      {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간)</span>}
                       <button
                         onClick={() => exportToExcel(buildPerformancePointExcelRows(performancePointRows), performanceTenureFilename('성과포인트'))}
                         className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
@@ -3068,22 +3102,22 @@ export default function HRDashboard() {
                         <tbody>
                           {performanceGroups.flatMap(g => {
                             const fullKey = `performance:${g.key}`
-                            const isCollapsed = monthCollapsed.has(fullKey)
+                            const defaultExpanded = g.key === performanceMostRecentKey
+                            const isExpanded = searchActive || (monthToggled.has(fullKey) ? !defaultExpanded : defaultExpanded)
                             const rows = [
                               <tr key={`group-${g.key}`} className="border-t border-gray-100 bg-gray-50/60">
                                 <td colSpan={10} className="px-3 py-1.5">
                                   <button onClick={() => toggleMonth(fullKey)}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">
-                                    <svg className={`w-3 h-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className={`w-3 h-3 transition-transform ${isExpanded ? '' : '-rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
-                                    {g.label}
-                                    <span className="font-normal opacity-70">{g.items.length}명</span>
+                                    {g.label} · <span className="font-normal opacity-70">{g.items.length}명</span>
                                   </button>
                                 </td>
                               </tr>,
                             ]
-                            if (!isCollapsed) {
+                            if (isExpanded) {
                               rows.push(...g.items.map(row => (
                                 <tr key={row.emp.id} className="border-t border-gray-100">
                                   <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{row.emp.name}</td>
@@ -3111,14 +3145,17 @@ export default function HRDashboard() {
             : activeTab === 'tenure' ? (() => {
               const totalAmount = tenurePointRows.reduce((sum, r) => sum + (r.calc?.amount ?? 0), 0)
               const tenureGroups = groupByMonth(tenurePointRows, r => r.emp.exit_date)
+              const tenureMostRecentKey = tenureGroups[0]?.key
               return (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <p className="text-xs text-gray-400">
-                      대상자 {tenurePointRows.length}명{hasFilter || tenureMonthFilter !== 'all' ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
+                      대상자 {tenurePointRows.length}명{hasFilter ? ' (필터 적용)' : ''} · 총 지급액 {totalAmount.toLocaleString()}원
                     </p>
                     <div className="flex items-center gap-2">
-                      {tenureMonths.length > 0 && <MonthFilterSelect months={tenureMonths} value={tenureMonthFilter} onChange={setTenureMonthFilter} />}
+                      <span className="text-xs text-gray-400">기간</span>
+                      <PeriodFilterChips value={tenureMonthFilter} onChange={setTenureMonthFilter} />
+                      {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간)</span>}
                       <button
                         onClick={() => exportToExcel(buildTenurePointExcelRows(tenurePointRows), performanceTenureFilename('근속포인트'))}
                         className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
@@ -3153,22 +3190,22 @@ export default function HRDashboard() {
                         <tbody>
                           {tenureGroups.flatMap(g => {
                             const fullKey = `tenure:${g.key}`
-                            const isCollapsed = monthCollapsed.has(fullKey)
+                            const defaultExpanded = g.key === tenureMostRecentKey
+                            const isExpanded = searchActive || (monthToggled.has(fullKey) ? !defaultExpanded : defaultExpanded)
                             const rows = [
                               <tr key={`group-${g.key}`} className="border-t border-gray-100 bg-gray-50/60">
                                 <td colSpan={12} className="px-3 py-1.5">
                                   <button onClick={() => toggleMonth(fullKey)}
                                     className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-700 transition-colors">
-                                    <svg className={`w-3 h-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className={`w-3 h-3 transition-transform ${isExpanded ? '' : '-rotate-90'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
-                                    {g.label}
-                                    <span className="font-normal opacity-70">{g.items.length}명</span>
+                                    {g.label} · <span className="font-normal opacity-70">{g.items.length}명</span>
                                   </button>
                                 </td>
                               </tr>,
                             ]
-                            if (!isCollapsed) {
+                            if (isExpanded) {
                               rows.push(...g.items.map(row => (
                                 <tr key={row.emp.id} className="border-t border-gray-100">
                                   <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{row.emp.name}</td>
