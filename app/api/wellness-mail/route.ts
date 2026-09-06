@@ -7,6 +7,9 @@ import { sendMail } from '@/lib/mail'
 // nodemailer는 Node.js 전용 (net/tls 모듈 사용) — Edge runtime에서 실행 시 500 발생
 export const runtime = 'nodejs'
 
+// 엑셀(.xlsx) 고정 MIME 타입 — nodemailer의 파일명 기반 자동 감지에 의존하지 않고 명시적으로 지정
+const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
 export async function POST(req: NextRequest) {
   const { to, cc, subject, html, attachmentBase64, attachmentFilename } = await req.json() as {
     to: string[]; cc?: string[]; subject: string; html: string
@@ -25,8 +28,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 400 })
   }
 
-  console.log('[api/wellness-mail] 수신 →', { to, cc, subject, attachmentFilename, size: content.length })
-  const err = await sendMail({ to, cc, subject, html, attachments: [{ filename: attachmentFilename, content }] })
+  const attachments = [{ filename: attachmentFilename, content, contentType: XLSX_CONTENT_TYPE }]
+  // 디버그 체크포인트 1/2: 라우트에서 sendMail() 호출 직전 — 개인정보/엑셀 실제 내용은 남기지 않음
+  console.log('[api/wellness-mail] sendMail 호출 직전 →', {
+    to, cc, subject,
+    attachmentCount: attachments.length,
+    filename: attachments[0].filename,
+    byteLength: attachments[0].content.length,
+    contentType: attachments[0].contentType,
+  })
+  const err = await sendMail({ to, cc, subject, html, attachments })
   if (err) {
     console.error('[api/wellness-mail] sendMail 오류 →', err)
     return NextResponse.json({ error: err }, { status: 500 })
