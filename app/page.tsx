@@ -460,6 +460,72 @@ async function sendMailApi(to: string[], subject: string, html: string, cc?: str
   }
 }
 
+/**
+ * 웰니스포인트 탭 "메일 보내기"(수동 즉시 발송) 전용 — /api/wellness-mail 호출.
+ * sendMailApi(/api/send-mail)와는 완전히 별개 경로이며 scheduled_mails/cron과 무관하다.
+ */
+async function sendWellnessMailApi(
+  to: string[], subject: string, html: string,
+  attachmentBase64: string, attachmentFilename: string, cc?: string[],
+): Promise<string | null> {
+  try {
+    const res = await fetch('/api/wellness-mail', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, cc, subject, html, attachmentBase64, attachmentFilename }),
+    })
+    if (res.redirected) {
+      try {
+        const finalPath = new URL(res.url).pathname
+        if (finalPath === '/login') return '세션이 만료되었습니다. 페이지를 새로고침한 후 다시 로그인해주세요.'
+      } catch { /* URL 파싱 실패 시 무시 */ }
+    }
+    if (!res.ok) {
+      let errMsg = '메일 발송에 실패했습니다.'
+      try { const data = await res.json() as { error?: string }; errMsg = data.error ?? errMsg } catch { /* JSON 파싱 실패 시 기본 메시지 사용 */ }
+      return errMsg
+    }
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : '네트워크 오류로 메일 발송에 실패했습니다.'
+  }
+}
+
+const WEEKDAY_KO = ['일', '월', '화', '수', '목', '금', '토']
+/** 'YYYY-MM-DD' → '26년 9월 8일(화)' */
+function formatKoreanDateWithWeekday(dateStr: string): string {
+  if (!dateStr) return ''
+  const [y, m, d] = dateStr.split('-').map(Number)
+  if (!y || !m || !d) return ''
+  const dt = new Date(y, m - 1, d)
+  return `${String(y).slice(2)}년 ${m}월 ${d}일(${WEEKDAY_KO[dt.getDay()]})`
+}
+/** 웰니스코인 지급 요청 메일 기본 본문 — 입금일자/충전일자/인원/금액은 체크된 대상자 기준 자동 반영 */
+function buildWellnessMailBody(payDate: string, chargeDate: string, count: number, totalAmount: number): string {
+  return `안녕하세요.
+
+헥토이노베이션 인재협업팀 입니다.
+
+[요청내용(공통)]
+
+- 거래구분 : 포인트지급
+- 구분상세 : 웰니스코인
+- 입금일자 : ${formatKoreanDateWithWeekday(payDate) || '(미선택)'}
+- 충전일자 : ${formatKoreanDateWithWeekday(chargeDate) || '(미선택)'}
+- 인원 : ${count}명
+- 금액 : ${totalAmount.toLocaleString()}원
+- 적요 : 이노wc
+
+첨부파일 첨부드렸습니다.
+확인 부탁드립니다.
+
+감사합니다.`
+}
+/** 사용자가 편집한 평문 본문을 메일 HTML로 변환(줄바꿈 보존, 이스케이프) */
+function textToMailHtml(text: string): string {
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<div style="font-family:sans-serif;font-size:14px;color:#374151;white-space:pre-wrap">${esc}</div>`
+}
+
 // ─── HTML 생성 ────────────────────────────────────────────────────────────────
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
 const TH = 'background:#fff7ed;border:1px solid #fed7aa;padding:8px 12px;text-align:left;white-space:nowrap'
@@ -709,18 +775,29 @@ type XlsxEntry = {
   points: DayPointData | null   // 카페포인트용 (없으면 null)
 }
 
+/** 행 배열로 워크북 생성 — 다운로드(exportToExcel)와 메일첨부(buildXlsxBase64)가 공유 */
+function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: string) {
+  const ws = XLSX.utils.json_to_sheet(rows)
+  // 컬럼 너비 자동 설정
+  ws['!cols'] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length * 2, 16) }))
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  return wb
+}
+
 /** XLSX 파일 생성 및 브라우저 다운로드 */
 function exportToExcel(rows: Record<string, unknown>[], filename: string) {
   if (rows.length === 0) {
     alert('다운로드할 대상자를 선택해주세요.')
     return
   }
-  const ws = XLSX.utils.json_to_sheet(rows)
-  // 컬럼 너비 자동 설정
-  ws['!cols'] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length * 2, 16) }))
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '정산내역')
-  XLSX.writeFile(wb, filename)
+  XLSX.writeFile(buildXlsxWorkbook(rows, '정산내역'), filename)
+}
+
+/** 메일 첨부용 XLSX base64 인코딩 — 다운로드와 동일한 워크북 생성 로직 재사용 */
+function buildXlsxBase64(rows: Record<string, unknown>[]): string | null {
+  if (rows.length === 0) return null
+  return XLSX.write(buildXlsxWorkbook(rows, '정산내역'), { type: 'base64', bookType: 'xlsx' }) as string
 }
 
 /** 카페포인트 엑셀 행 생성 */
@@ -854,6 +931,22 @@ function buildWellnessExcelRows(
       '비고': '',
     }
   })
+}
+
+/**
+ * buildWellnessExcelRows가 생성한 '최종 처리 금액' 표시 문자열(예: '1,234원' / '환수 1,234원' /
+ * '인정 1,234원' / '-')을 숫자로 환산. 별도 계산 로직이 아니라 엑셀에 실제 표시되는 값 자체를
+ * 파싱하는 방식이라 메일 본문 합계가 항상 엑셀 내용과 정확히 일치한다.
+ */
+function parseWellnessFinalAmount(text: unknown): number {
+  const s = String(text ?? '')
+  const digits = s.replace(/[^0-9]/g, '')
+  if (!digits) return 0
+  const n = parseInt(digits, 10)
+  return s.includes('환수') ? -n : n
+}
+function sumWellnessFinalAmount(rows: Record<string, unknown>[]): number {
+  return rows.reduce((sum, r) => sum + parseWellnessFinalAmount(r['최종 처리 금액']), 0)
 }
 
 // ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────
@@ -1824,6 +1917,177 @@ function WellnessCoinExcelModal({ included, excluded, downloading, error, onDown
   )
 }
 
+/**
+ * 웰니스포인트 탭 "메일 보내기" 모달 — 수동 즉시 발송 전용(예약메일/자동메일과 무관).
+ * rows는 buildWellnessExcelRows() 결과를 그대로 전달받아 다운로드 엑셀과 100% 동일한
+ * 내용을 첨부한다.
+ */
+function WellnessMailModal({ rows, count, totalAmount, filename, onClose }: {
+  rows: Record<string, unknown>[]; count: number; totalAmount: number; filename: string
+  onClose: () => void
+}) {
+  const today = new Date()
+  const defaultSubject = `[웰니스코인 지급 요청] ${today.getFullYear()}년 ${today.getMonth() + 1}월`
+
+  const [activeTo, setActiveTo] = useState<string[]>(FR.wellness.map(r => r.email))
+  const [activeCC, setActiveCC] = useState<string[]>(FR.wellnessCC.map(r => r.email))
+  const [extraTo,  setExtraTo]  = useState('')
+  const [extraCC,  setExtraCC]  = useState('')
+  const [subject,    setSubject]    = useState(defaultSubject)
+  const [payDate,    setPayDate]    = useState('')
+  const [chargeDate, setChargeDate] = useState('')
+  const [attachName, setAttachName] = useState(filename)
+  const [body,      setBody]      = useState(() => buildWellnessMailBody('', '', count, totalAmount))
+  const [bodyDirty, setBodyDirty] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [sending,   setSending]   = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+  const [success,   setSuccess]   = useState(false)
+
+  // 입금일자/충전일자가 바뀌면(사용자가 본문을 직접 수정하기 전까지) 본문을 다시 채워준다.
+  // useEffect 대신 렌더 중 조건부 setState로 처리 — React가 권장하는 "props 변경에 따른
+  // state 조정" 패턴이라 렌더 중 setState 그대로도 무한루프 없이 안전하다.
+  const autoBodyKey = `${payDate}|${chargeDate}`
+  const [prevAutoBodyKey, setPrevAutoBodyKey] = useState(autoBodyKey)
+  if (!bodyDirty && autoBodyKey !== prevAutoBodyKey) {
+    setPrevAutoBodyKey(autoBodyKey)
+    setBody(buildWellnessMailBody(payDate, chargeDate, count, totalAmount))
+  }
+
+  const to = [...activeTo, ...extraTo.split(',').map(s => s.trim()).filter(Boolean)]
+  const cc = [...activeCC, ...extraCC.split(',').map(s => s.trim()).filter(Boolean)]
+  const finalFilename = (() => {
+    const n = attachName.trim() || filename
+    return n.toLowerCase().endsWith('.xlsx') ? n : `${n}.xlsx`
+  })()
+
+  function handleProceed() {
+    setError(null)
+    if (to.length === 0) { setError('받는 사람을 최소 1명 이상 입력해주세요.'); return }
+    if (!subject.trim()) { setError('메일 제목을 입력해주세요.'); return }
+    setConfirming(true)
+  }
+
+  async function handleConfirmSend() {
+    if (sending) return
+    setSending(true); setError(null)
+    const base64 = buildXlsxBase64(rows)
+    if (!base64) {
+      setSending(false)
+      setError('첨부파일 생성에 실패했습니다. 대상자를 다시 확인해주세요.')
+      return
+    }
+    const err = await sendWellnessMailApi(to, subject, textToMailHtml(body), base64, finalFilename, cc.length ? cc : undefined)
+    setSending(false)
+    if (err) { setError(err); return }
+    setSuccess(true)
+  }
+
+  if (success) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3 3 7-7"/></svg>
+          </div>
+          <p className="text-sm font-semibold text-gray-800">메일이 정상적으로 발송되었습니다.</p>
+          <button onClick={onClose} className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold w-full">확인</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (confirming) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+          <h3 className="font-bold text-gray-900">웰니스코인 지급 요청 메일을 발송하시겠습니까?</h3>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 space-y-1.5 text-xs text-gray-600">
+            <p><span className="text-gray-400">수신자(To):</span> {to.join(', ')}</p>
+            {cc.length > 0 && <p><span className="text-gray-400">참조(CC):</span> {cc.join(', ')}</p>}
+            <p><span className="text-gray-400">대상자:</span> {count}명</p>
+            <p><span className="text-gray-400">총 지급액:</span> {totalAmount.toLocaleString()}원</p>
+            <p><span className="text-gray-400">첨부파일:</span> {finalFilename}</p>
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirming(false)} disabled={sending}
+              className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-40">취소</button>
+            <button onClick={handleConfirmSend} disabled={sending}
+              className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold disabled:opacity-40 transition-colors">
+              {sending ? '발송 중...' : '발송'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+          <h3 className="font-bold text-gray-900">웰니스코인 지급 요청 메일 보내기</h3>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">✕</button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-xs text-gray-500">대상자 {count}명 · 총 지급액 {totalAmount.toLocaleString()}원</p>
+
+          <RcpChips items={FR.wellness} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x => x !== e) : [...p, e])} label="받는 사람(To)" />
+          <input type="text" value={extraTo} onChange={e => setExtraTo(e.target.value)}
+            placeholder="추가 To (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+
+          <RcpChips items={FR.wellnessCC} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x => x !== e) : [...p, e])} label="참조(CC, 선택)" />
+          <input type="text" value={extraCC} onChange={e => setExtraCC(e.target.value)}
+            placeholder="추가 CC (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">제목</p>
+            <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className="text-xs font-semibold text-gray-400 mb-1.5">입금일자</p>
+              <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-gray-400 mb-1.5">충전일자</p>
+              <input type="date" value={chargeDate} onChange={e => setChargeDate(e.target.value)}
+                className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">본문</p>
+            <textarea value={body} onChange={e => { setBody(e.target.value); setBodyDirty(true) }} rows={12}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 font-mono leading-relaxed" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">첨부파일명</p>
+            <input type="text" value={attachName} onChange={e => setAttachName(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
+          <button onClick={handleProceed}
+            className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold transition-colors">
+            메일 보내기
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="bg-white rounded-xl border border-dashed border-gray-200 py-12 flex items-center justify-center">
@@ -1976,6 +2240,7 @@ export default function HRDashboard() {
   const [form,       setForm]       = useState<EmployeeForm>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [wellnessCoinModal, setWellnessCoinModal] = useState<{ included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[] } | null>(null)
+  const [wellnessMailModal, setWellnessMailModal] = useState<{ rows: Record<string, unknown>[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
@@ -2397,6 +2662,13 @@ export default function HRDashboard() {
     setWellnessCoinError(null)
     setWellnessCoinModal(buildWellnessCoinRows(entries))
   }
+  // 웰니스포인트 "메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessExcelRows 결과를 그대로 사용
+  function openWellnessMailModal(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }>) {
+    if (entries.length === 0) { alert('메일로 보낼 대상자를 선택해주세요.'); return }
+    const rows = buildWellnessExcelRows(entries, mailSent)
+    const today = new Date().toISOString().slice(0, 10)
+    setWellnessMailModal({ rows, count: entries.length, totalAmount: sumWellnessFinalAmount(rows), filename: `웰니스포인트_정산내역_${today}.xlsx` })
+  }
   async function handleWellnessCoinDownload() {
     if (!wellnessCoinModal) return
     setWellnessCoinDownloading(true)
@@ -2521,6 +2793,13 @@ export default function HRDashboard() {
           downloading={wellnessCoinDownloading} error={wellnessCoinError}
           onDownload={handleWellnessCoinDownload}
           onClose={() => { setWellnessCoinModal(null); setWellnessCoinError(null) }} />
+      )}
+
+      {wellnessMailModal && (
+        <WellnessMailModal
+          rows={wellnessMailModal.rows} count={wellnessMailModal.count}
+          totalAmount={wellnessMailModal.totalAmount} filename={wellnessMailModal.filename}
+          onClose={() => setWellnessMailModal(null)} />
       )}
 
       {/* OTP 추가 등록 모달 */}
@@ -3083,6 +3362,14 @@ export default function HRDashboard() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                           </svg>
                           엑셀 다운로드{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
+                        </button>
+                        <button
+                          onClick={() => openWellnessMailModal(selWithMeta)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
+                          </svg>
+                          메일 보내기{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
                         </button>
                         <button
                           onClick={() => openWellnessCoinModal(sel.map(({ emp, empType }) => ({ emp, empType })))}
