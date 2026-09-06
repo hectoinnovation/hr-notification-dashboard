@@ -1,14 +1,20 @@
 // nodemailer v8: named import 사용 (default import가 ESM 환경에서 undefined로 평가되는 경우 방어)
 import { createTransport } from 'nodemailer'
 
+export interface MailAttachment {
+  filename: string
+  content: Buffer
+}
+
 export interface MailPayload {
   to: string[]
   cc?: string[]
   subject: string
   html: string
+  attachments?: MailAttachment[]
 }
 
-export async function sendMail({ to, cc, subject, html }: MailPayload): Promise<string | null> {
+export async function sendMail({ to, cc, subject, html, attachments }: MailPayload): Promise<string | null> {
   const host = process.env.SMTP_HOST
   const port = parseInt(process.env.SMTP_PORT ?? '587')
   const user = process.env.SMTP_USER
@@ -36,7 +42,7 @@ export async function sendMail({ to, cc, subject, html }: MailPayload): Promise<
         servername: host,
       },
     })
-    await transporter.sendMail({ from, to, cc, subject, html })
+    await transporter.sendMail({ from, to, cc, subject, html, attachments })
     return null
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
