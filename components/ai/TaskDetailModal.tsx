@@ -3,11 +3,15 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
-  STATUS_LABEL, RESOLUTION_LABEL, PRIORITY_LABEL, hasResultLink, RESULT_REQUIRED_MESSAGE,
+  STATUS_LABEL, RESOLUTION_LABEL, PRIORITY_LABEL, hasResultLink, RESULT_REQUIRED_MESSAGE, hashPassword,
   type AiTask, type AiComment, type TaskStatus, type ResolutionType, type Priority,
 } from '@/lib/ai-tasks'
 import { Modal } from '@/components/ui/Modal'
 import { CommentThread } from './CommentThread'
+
+// 관리자가 참여자 비밀번호를 잊었을 때 되돌려주는 초기 비밀번호 — 기존 등록/수정 시 비밀번호
+// 설정 로직(app/ai/page.tsx 등)과는 무관하게, 이 화면에서 강제로 되돌리는 값에만 사용한다.
+const RESET_PASSWORD = '1234!@'
 
 function Field({ label, value, onChange, textarea }: {
   label: string; value: string; onChange: (v: string) => void; textarea?: boolean
@@ -33,6 +37,8 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
   const [comments, setComments] = useState<AiComment[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [resetting, setResetting] = useState(false)
+  const [resetMessage, setResetMessage] = useState<string | null>(null)
 
   async function loadExtras() {
     const { data: commentRows, error: commentErr } = await supabase
@@ -100,10 +106,25 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
     onDeleted()
   }
 
+  // 참여자가 등록/수정 시 설정한 비밀번호를 잊었을 때, 관리자가 공통 초기 비밀번호로 되돌린다.
+  // 기존 로그인·비밀번호 설정(app/ai/page.tsx, PasswordPrompt)에는 손대지 않고 password_hash만 갱신한다.
+  async function handleResetPassword() {
+    if (!confirm('비밀번호를 초기화하시겠습니까?')) return
+    setError(null)
+    setResetMessage(null)
+    setResetting(true)
+    const password_hash = await hashPassword(RESET_PASSWORD)
+    const { error: resetErr } = await supabase.from('ai_tasks').update({ password_hash }).eq('id', task.id)
+    setResetting(false)
+    if (resetErr) { setError(resetErr.message); return }
+    setResetMessage(`비밀번호가 ${RESET_PASSWORD}로 초기화되었습니다.`)
+  }
+
   return (
     <Modal title="과제 관리" onClose={onClose} maxWidth="max-w-2xl">
       <div className="space-y-4">
         {error && <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>}
+        {resetMessage && <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{resetMessage}</p>}
 
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -183,9 +204,15 @@ export function TaskDetailModal({ task, onClose, onSaved, onDeleted }: {
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          <button onClick={handleDelete} className="text-xs font-semibold text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors">
-            과제 삭제
-          </button>
+          <div className="flex gap-1">
+            <button onClick={handleDelete} className="text-xs font-semibold text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors">
+              과제 삭제
+            </button>
+            <button onClick={handleResetPassword} disabled={resetting}
+              className="text-xs font-semibold text-gray-500 hover:bg-gray-100 px-3 py-2 rounded-lg transition-colors disabled:opacity-40">
+              {resetting ? '초기화 중...' : '비밀번호 초기화'}
+            </button>
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
             <button onClick={handleSave} disabled={saving}
