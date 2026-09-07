@@ -9,6 +9,10 @@ import {
   buildXlsxWorkbook, buildWellnessExcelRows, sumWellnessFinalAmount,
   wellnessMailAttachmentFilename, type WellnessMailEntryInput,
 } from '@/lib/wellness-mail'
+import {
+  buildWellnessCoinRows, wellnessCoinFilename,
+  type WellnessCoinRow, type WellnessCoinExcluded,
+} from '@/lib/wellness-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
@@ -776,65 +780,10 @@ function buildCafeExcelRows(
 // 가져와 사용 — app/api/wellness-mail 서버 라우트가 첨부 엑셀을 생성할 때도 동일 함수를 그대로
 // 재사용해서 화면 체크 대상 = 엑셀 다운로드 대상 = 메일 첨부 엑셀 대상이 항상 일치하도록 한다.
 
-// ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────
-// 매월 15일 지급 대상자를 취합해 결제사 업로드용 엑셀을 만들기 위한 행 계산.
-// 기존 웰니스포인트 일할계산 로직(calcWellnessHire / calcWellnessLeave)을 그대로
-// 재사용 — 새 계산 로직 없음, 두 함수 모두 절대 수정하지 않는다.
-type WellnessCoinRow = { emp: Employee; amount: number }
-type WellnessCoinLeaveDetail = { prePaid: number; recognized: number; reclaim: number }
-type WellnessCoinExcluded = { emp: Employee; reason: string; leaveDetail?: WellnessCoinLeaveDetail }
-
-// 퇴사자 웰니스코인 "엑셀 반영 금액" 산정 규칙 — 회사의 퇴사자 정산 방침이 아직
-// 확정되지 않아 현재는 항상 null(계산 보류)을 반환해 퇴사자를 엑셀 대상에서 제외한다.
-// 방침이 확정되면 이 함수만 교체하면 된다 (예: recognized를 반환하도록 바꾸는 식).
-// calcWellnessLeave() 자체는 여기서도 절대 수정하지 않는다 — PointCard의 기존
-// 선지급액/인정액/환수금 화면 표시가 그대로 이 함수를 계속 사용하고 있다.
-function resolveWellnessCoinLeaveAmount(emp: Employee, detail: WellnessCoinLeaveDetail): number | null {
-  void emp; void detail // 방침 확정 후 아래 두 값을 사용해 반환값을 채우면 된다
-  return null // TODO: 퇴사자 웰니스코인 정산 방침 확정 후 구현
-}
-
-function buildWellnessCoinRows(
-  entries: Array<{ emp: Employee; empType: 'hire' | 'leave' }>,
-): { included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[] } {
-  const included: WellnessCoinRow[] = []
-  const excluded: WellnessCoinExcluded[] = []
-  for (const { emp, empType } of entries) {
-    const isTransfer = emp.join_reason === '전적'
-    const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
-    if (isTransfer) {
-      excluded.push({ emp, reason: '전적자는 웰니스코인 지급 대상이 아닙니다.' })
-    } else if (isLeaveType) {
-      if (!emp.join_date) {
-        excluded.push({ emp, reason: '입사일이 입력되지 않아 계산할 수 없습니다.' })
-        continue
-      }
-      const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.leave_date
-      if (!leaveDateForCalc) {
-        excluded.push({ emp, reason: emp.join_reason === '휴직' ? '휴직시작일이 입력되지 않아 계산할 수 없습니다.' : '퇴사일이 입력되지 않아 계산할 수 없습니다.' })
-        continue
-      }
-      const leaveDetail = calcWellnessLeave(emp.join_date, leaveDateForCalc)
-      const amount = resolveWellnessCoinLeaveAmount(emp, leaveDetail)
-      if (amount === null) {
-        excluded.push({ emp, reason: '퇴사자 정산 기준이 아직 확정되지 않았습니다.', leaveDetail })
-      } else {
-        included.push({ emp, amount })
-      }
-    } else if (!emp.join_date) {
-      excluded.push({ emp, reason: '입사일(복귀일)이 입력되지 않아 계산할 수 없습니다.' })
-    } else {
-      included.push({ emp, amount: calcWellnessHire(emp.join_date) })
-    }
-  }
-  return { included, excluded }
-}
-
-function wellnessCoinFilename(d: Date = new Date()): string {
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  return `웰니스코인_${yyyy}년_${mm}월.xlsx`
-}
+// buildWellnessCoinRows/resolveWellnessCoinLeaveAmount/wellnessCoinFilename/WellnessCoinRow/
+// WellnessCoinExcluded는 @/lib/wellness-coin에서 가져와 사용 — 화면 "웰니스코인 엑셀
+// 다운로드"와 메일 첨부(app/api/wellness-mail)가 동일한 계산/파일형식을 공유하도록
+// 계산·타입은 이 파일에 두지 않고 공용 lib로 옮겼다(복제 아님).
 
 async function downloadWellnessCoinExcel(rows: WellnessCoinRow[]): Promise<string | null> {
   try {

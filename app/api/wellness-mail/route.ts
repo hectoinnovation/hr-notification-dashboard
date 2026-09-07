@@ -1,27 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sendWellnessMailWithAttachment } from '@/lib/mail'
-import { buildWellnessExcelRows, buildWellnessMailXlsxBuffer, type WellnessMailEntryInput } from '@/lib/wellness-mail'
+import { type WellnessMailEntryInput } from '@/lib/wellness-mail'
+import { buildWellnessCoinRows, fillWellnessCoinTemplate } from '@/lib/wellness-coin'
 
 // 웰니스포인트 탭 "메일 보내기" 전용 라우트 — 사용자가 버튼을 직접 눌렀을 때만 호출된다.
 // scheduled_mails / cron / 온보딩 자동메일과는 완전히 분리되어 있으며, 기존 /api/send-mail
 // 라우트도 건드리지 않는다. sendWellnessMailWithAttachment()(lib/mail.ts)만 공유.
 //
-// xlsx는 클라이언트에서 base64로 인코딩해 보내지 않는다 — 브라우저 번들 xlsx가 base64를
-// 만드는 경로 자체를 제거하기 위해, 화면에서 체크한 entries(원본 데이터)만 전달받아
-// 여기(Node 서버)에서 @/lib/wellness-mail의 buildWellnessExcelRows()를 그대로 호출해
-// rows를 얻는다 — 계산/데이터/컬럼/순서는 화면 엑셀 다운로드와 항상 완전히 동일하다.
-// 업체 제출용 파일이라 컬럼/순서/값을 절대 줄이거나 바꾸지 않는다(가공 없이 그대로 전달).
-//
-// 첨부 워크북 생성 코드(buildWellnessMailXlsxBuffer)는 실제 발송 테스트로 수신 성공이
-// 확인된 코드와 완전히 동일하다 — rows를 가공하지 않고 그대로 넘기는 것까지 포함해서
-// 그 성공한 경로와 이 라우트가 실질적으로 동일하도록 맞췄다.
+// 첨부 파일은 화면 "웰니스코인 엑셀 다운로드"(app/api/wellness-coin-excel)가 쓰는 것과
+// 완전히 동일한 고정 템플릿(lib/templates/wellness-coin-template.xlsx — 상단 도움말/
+// 병합셀/스타일/열 너비/행 높이 그대로)에 buildWellnessCoinRows()로 계산한 값을 채워
+// 생성한다(fillWellnessCoinTemplate, lib/wellness-coin.ts 공유) — 워크북 생성 로직을
+// 이 라우트에서 새로 만들지 않는다. 계산도 새로 하지 않고 웰니스코인 다운로드가 쓰는
+// buildWellnessCoinRows()를 그대로 재사용 — 전적자/정산 미확정 퇴사자 등 제외 규칙도
+// 다운로드와 동일하게 적용된다.
 // nodemailer는 Node.js 전용 (net/tls 모듈 사용) — Edge runtime에서 실행 시 500 발생
 export const runtime = 'nodejs'
 
 const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 export async function POST(req: NextRequest) {
-  const { to, cc, subject, html, entries, sentKeys, attachmentFilename } = await req.json() as {
+  const { to, cc, subject, html, entries, attachmentFilename } = await req.json() as {
     to: string[]; cc?: string[]; subject: string; html: string
     entries?: WellnessMailEntryInput[]; sentKeys?: string[]; attachmentFilename?: string
   }
@@ -33,19 +32,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '첨부파일명이 지정되지 않았습니다.' }, { status: 400 })
   }
 
-  const sentMap = Object.fromEntries((sentKeys ?? []).map(k => [k, true]))
-  // 화면 "엑셀 다운로드"와 완전히 동일한 rows — 가공/축소 없이 그대로 첨부에 사용한다.
-  const rows = buildWellnessExcelRows(entries, sentMap)
-  if (rows.length === 0) {
-    return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 400 })
+  // 화면 "웰니스코인 엑셀 다운로드"와 완전히 동일한 대상자 판정/금액 계산(재계산 없음)
+  const { included, excluded } = buildWellnessCoinRows(entries)
+  if (included.length === 0) {
+    return NextResponse.json({
+      error: `웰니스코인 지급 대상자가 없습니다(${excluded.map(e => `${e.emp.name}: ${e.reason}`).join(', ') || '전적자/정산 기준 미확정 등 제외 규칙 확인 필요'}).`,
+    }, { status: 400 })
+  }
+  const missingCustomerId = included.filter(r => !r.emp.customer_id?.trim())
+  if (missingCustomerId.length > 0) {
+    return NextResponse.json({
+      error: `고객아이디가 등록되지 않은 대상자가 있습니다: ${missingCustomerId.map(r => r.emp.name).join(', ')}`,
+    }, { status: 400 })
   }
 
   let content: Buffer
   try {
-    content = buildWellnessMailXlsxBuffer(rows)
+    content = await fillWellnessCoinTemplate(
+      included.map(r => ({ name: r.emp.name, customerId: r.emp.customer_id, amount: r.amount })),
+    )
   } catch (err) {
     console.error('[api/wellness-mail] xlsx 생성 실패 →', err instanceof Error ? err.message : String(err))
-    return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 500 })
+    return NextResponse.json({ error: err instanceof Error ? err.message : '첨부파일 생성에 실패했습니다.' }, { status: 500 })
   }
   if (!content || content.length === 0) {
     return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 400 })

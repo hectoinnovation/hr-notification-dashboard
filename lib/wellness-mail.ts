@@ -105,16 +105,6 @@ export function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: st
   return wb
 }
 
-/**
- * 메일 첨부 XLSX Buffer 생성 — 화면 "엑셀 다운로드"가 쓰는 buildXlsxWorkbook()을 그대로
- * 감싸 Buffer로 반환한다(생성 로직/옵션 완전히 동일). 실제 발송 테스트로 수신 성공이
- * 확인된 코드이며, /api/wellness-mail이 그대로 이 함수에 buildWellnessExcelRows() 결과를
- * 가공 없이 전달한다 — 컬럼/순서/값은 절대 줄이거나 바꾸지 않는다(업체 제출용 파일).
- */
-export function buildWellnessMailXlsxBuffer(rows: Record<string, unknown>[]): Buffer {
-  return XLSX.write(buildXlsxWorkbook(rows, '정산내역'), { type: 'buffer', bookType: 'xlsx' }) as Buffer
-}
-
 /** buildWellnessExcelRows 입력 항목 — 클라이언트(화면 체크 대상)와 서버(메일 첨부 생성)가 공유하는 형태 */
 export type WellnessMailEntryInput = { emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }
 
