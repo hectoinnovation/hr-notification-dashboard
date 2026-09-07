@@ -702,7 +702,7 @@ type XlsxEntry = {
 }
 
 // buildXlsxWorkbook은 @/lib/wellness-mail에서 가져와 사용 — 화면 "엑셀 다운로드" 전용
-// (메일 첨부는 별도의 buildMinimalXlsxBuffer()를 서버에서 사용, app/api/wellness-mail 참고)
+// (메일 첨부는 별도의 buildWellnessMailXlsxBuffer()를 서버에서 사용, app/api/wellness-mail 참고)
 
 /** XLSX 파일 생성 및 브라우저 다운로드 */
 function exportToExcel(rows: Record<string, unknown>[], filename: string) {

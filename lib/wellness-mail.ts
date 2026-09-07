@@ -106,18 +106,44 @@ export function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: st
 }
 
 /**
- * 메일 첨부용 최소 구조 워크북 Buffer — 화면 다운로드(buildXlsxWorkbook)와 완전히 분리된
- * 별도 경로. 열 너비(!cols) 등 표시용 메타데이터 없이 단일 시트 + 셀 값만 담는다. 실제
- * 정산 데이터/계산 결과(rows)는 buildWellnessExcelRows()가 만든 것을 그대로 받아 쓸 뿐,
- * 데이터나 계산식은 전혀 바뀌지 않는다. 포렌식 검사 결과 buildXlsxWorkbook도 이미 이미지/
- * 매크로/외부참조/병합셀/수식이 전혀 없는 구조였지만(SheetJS json_to_sheet 특성상 애초에
- * 생성되지 않음), 메일 첨부는 화면 표시용 메타데이터까지 걷어낸 가장 단순한 형태로 만든다.
+ * 메일 첨부 XLSX Buffer 생성 — /api/debug/txt-attachment-test의 xlsx-small variant로
+ * 실제 수신 성공이 확인된 것과 정확히 동일한 코드(buildXlsxWorkbook + XLSX.write(buffer)).
+ * 프로덕션 웰니스 메일과 그 성공한 테스트의 차이가 "전달되는 rows" 외에는 없도록,
+ * 워크북 생성 코드 자체는 이 함수 하나로 통일해서 둘 다 가져다 쓴다.
  */
-export function buildMinimalXlsxBuffer(rows: Record<string, unknown>[]): Buffer {
-  const ws = XLSX.utils.json_to_sheet(rows)
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, '정산내역')
-  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+export function buildWellnessMailXlsxBuffer(rows: Record<string, unknown>[]): Buffer {
+  return XLSX.write(buildXlsxWorkbook(rows, '정산내역'), { type: 'buffer', bookType: 'xlsx' }) as Buffer
+}
+
+/** 문자열/숫자 혼재 금액 표시("1,234원"/"-")를 순수 숫자로 환산(부호 없음, N/A는 0) */
+function parsePlainAmount(text: unknown): number {
+  const digits = String(text ?? '').replace(/[^0-9]/g, '')
+  return digits ? parseInt(digits, 10) : 0
+}
+
+/**
+ * buildWellnessExcelRows()가 만든 화면 표시용 rows를 메일 첨부(실제 업체 정산용)에 필요한
+ * 컬럼만 골라 문자열/숫자 primitive 값으로 정규화한다. 계산은 이미 buildWellnessExcelRows()
+ * 에서 끝난 값을 그대로 옮기는 것뿐 — 새로 계산하지 않으며 화면 표시용 rows/계산 로직
+ * 자체는 전혀 건드리지 않는다.
+ * 제외하는 컬럼: 이메일(항상 '-'), 포인트 종류(항상 '웰니스포인트' 고정), 메일 발송 상태·비고
+ * (앱 내부 추적용, 정산과 무관), 계산 기준 설명(→ 등 특수문자가 섞인 화면 참고용 긴 문장 —
+ * 실제 정산에 쓰이는 값이 아니라 관리자 화면 참고용 설명일 뿐이라 첨부에서는 제외).
+ */
+export function buildWellnessMailRows(displayRows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return displayRows.map(r => ({
+    '구분': String(r['구분'] ?? ''),
+    '이름': String(r['이름'] ?? ''),
+    '부서': String(r['부서'] ?? ''),
+    '직책/직급': String(r['직책/직급'] ?? ''),
+    '입사일': String(r['입사일'] ?? ''),
+    '표시일': String(r['표시일'] ?? ''),
+    '기준일': String(r['기준일'] ?? ''),
+    '지급/환수 구분': String(r['지급/환수 구분'] ?? ''),
+    '지급 예정 금액': parsePlainAmount(r['지급 예정 금액']),
+    '환수 예정 금액': parsePlainAmount(r['환수 예정 금액']),
+    '최종 처리 금액': parseWellnessFinalAmount(r['최종 처리 금액']),
+  }))
 }
 
 /** buildWellnessExcelRows 입력 항목 — 클라이언트(화면 체크 대상)와 서버(메일 첨부 생성)가 공유하는 형태 */
