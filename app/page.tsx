@@ -525,6 +525,16 @@ function textToMailHtml(text: string): string {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<div style="font-family:sans-serif;font-size:14px;color:#374151;white-space:pre-wrap">${esc}</div>`
 }
+/**
+ * 메일 첨부파일명 전용(화면 엑셀 다운로드 파일명과는 별개, 한글 그대로 유지) — ASCII 영문
+ * 파일명 사용. 한글 파일명은 MIME에서 RFC 2231 다중 파라미터로 인코딩되어 일부 메일
+ * 게이트웨이/클라이언트가 정상적으로 재조립하지 못해 첨부가 누락될 수 있음이 확인되어
+ * 메일 첨부 시에만 영문 파일명으로 바꾼다.
+ */
+function wellnessMailAttachmentFilename(date: Date): string {
+  const yyyymm = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`
+  return `wellness_settlement_${yyyymm}.xlsx`
+}
 
 // ─── HTML 생성 ────────────────────────────────────────────────────────────────
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
@@ -2662,12 +2672,12 @@ export default function HRDashboard() {
     setWellnessCoinError(null)
     setWellnessCoinModal(buildWellnessCoinRows(entries))
   }
-  // 웰니스포인트 "메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessExcelRows 결과를 그대로 사용
+  // 웰니스포인트 "메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessExcelRows 결과를 그대로 사용.
+  // 첨부파일명은 화면 다운로드 파일명(한글)과 별개로 ASCII 영문 파일명을 사용한다(모달 내 설명 참고).
   function openWellnessMailModal(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }>) {
     if (entries.length === 0) { alert('메일로 보낼 대상자를 선택해주세요.'); return }
     const rows = buildWellnessExcelRows(entries, mailSent)
-    const today = new Date().toISOString().slice(0, 10)
-    setWellnessMailModal({ rows, count: entries.length, totalAmount: sumWellnessFinalAmount(rows), filename: `웰니스포인트_정산내역_${today}.xlsx` })
+    setWellnessMailModal({ rows, count: entries.length, totalAmount: sumWellnessFinalAmount(rows), filename: wellnessMailAttachmentFilename(new Date()) })
   }
   async function handleWellnessCoinDownload() {
     if (!wellnessCoinModal) return
