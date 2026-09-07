@@ -198,12 +198,8 @@ export function sumWellnessFinalAmount(rows: Record<string, unknown>[]): number 
   return rows.reduce((sum, r) => sum + parseWellnessFinalAmount(r['최종 처리 금액']), 0)
 }
 
-/**
- * 메일 첨부파일명 전용(화면 엑셀 다운로드 파일명과는 별개, 한글 그대로 유지) — ASCII 영문
- * 파일명 사용. 한글 파일명은 MIME에서 RFC 2231 다중 파라미터로 인코딩되는데, 이것만으로는
- * 첨부 누락이 재현되지 않았지만(테스트 결과 계속 미수신) 예방적으로 유지한다.
- */
+/** 메일 첨부파일명 전용(화면 엑셀 다운로드 파일명과는 별개) — 정산월 YYYYMM 자동 반영 */
 export function wellnessMailAttachmentFilename(date: Date): string {
   const yyyymm = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`
-  return `wellness_settlement_${yyyymm}.xlsx`
+  return `웰니스코인_지급요청_${yyyymm}.xlsx`
 }
