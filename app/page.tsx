@@ -1703,7 +1703,7 @@ function WellnessMailModal({ entries, sentKeys, count, totalAmount, filename, on
   onClose: () => void
 }) {
   const today = new Date()
-  const defaultSubject = `[웰니스코인 지급 요청] ${today.getFullYear()}년 ${today.getMonth() + 1}월`
+  const defaultSubject = `[헥토이노베이션] ${today.getMonth() + 1}월 웰니스 코인 지급 요청`
 
   const [activeTo, setActiveTo] = useState<string[]>(FR.wellness.map(r => r.email))
   const [activeCC, setActiveCC] = useState<string[]>(FR.wellnessCC.map(r => r.email))
