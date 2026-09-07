@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
-  verifyPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask,
+  verifyPassword, hashPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask,
   hasResultLink, isEffectivelyDone, RESULT_REQUIRED_MESSAGE,
   type AiTask, type AiComment, type ResolutionType,
 } from '@/lib/ai-tasks'
@@ -14,11 +14,12 @@ import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
 import { PasswordPrompt } from '@/components/ai/PasswordPrompt'
 import { CompleteTaskModal, type CompleteTaskData } from '@/components/ai/CompleteTaskModal'
+import { ChangePasswordModal } from '@/components/ai/ChangePasswordModal'
 import { TaskWorkFields } from '@/components/ai/TaskWorkFields'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 
-type PendingAction = 'edit' | 'delete' | 'complete'
+type PendingAction = 'edit' | 'delete' | 'complete' | 'change_password'
 
 type EditForm = {
   title: string
@@ -66,6 +67,8 @@ export default function AiTaskDetailPage() {
 
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [completing, setCompleting] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+  const [passwordChangedMessage, setPasswordChangedMessage] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [form, setForm] = useState<EditForm | null>(null)
   const [editAiUsageFile, setEditAiUsageFile] = useState<File | null>(null)
@@ -115,9 +118,24 @@ export default function AiTaskDetailPage() {
       router.push('/ai/tasks')
     } else if (pending === 'complete') {
       setCompleting(true)
+    } else if (pending === 'change_password') {
+      setPasswordChangedMessage(null)
+      setChangingPassword(true)
     }
     setPending(null)
     return true
+  }
+
+  // 관리자가 초기화한 비밀번호(1234!@)로 로그인한 뒤, 본인이 원하는 비밀번호로 다시 설정할 수 있게 한다.
+  // 현재 비밀번호 확인(PasswordPrompt)을 통과한 뒤에만 호출되며, 등록 시 설정 로직과는 별개로
+  // password_hash만 갱신한다.
+  async function submitChangePassword(newPassword: string) {
+    if (!task) return
+    const password_hash = await hashPassword(newPassword)
+    const { error: updErr } = await supabase.from('ai_tasks').update({ password_hash }).eq('id', task.id)
+    if (updErr) throw new Error(updErr.message)
+    setChangingPassword(false)
+    setPasswordChangedMessage('비밀번호가 변경되었습니다.')
   }
 
   async function submitComplete(data: CompleteTaskData) {
@@ -317,6 +335,10 @@ export default function AiTaskDetailPage() {
               )}
             </div>
 
+            {passwordChangedMessage && (
+              <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{passwordChangedMessage}</p>
+            )}
+
             <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
               {!isEffectivelyDone(task) ? (
                 <button onClick={() => setPending('complete')}
@@ -336,6 +358,10 @@ export default function AiTaskDetailPage() {
                 className="text-xs font-semibold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors">
                 삭제
               </button>
+              <button onClick={() => setPending('change_password')}
+                className="text-xs font-semibold text-gray-500 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors">
+                비밀번호 변경
+              </button>
             </div>
           </>
         )}
@@ -347,9 +373,21 @@ export default function AiTaskDetailPage() {
 
       {pending && (
         <PasswordPrompt
-          title={pending === 'delete' ? '과제 삭제' : pending === 'complete' ? '완료하기' : '과제 수정'}
+          title={
+            pending === 'delete' ? '과제 삭제'
+              : pending === 'complete' ? '완료하기'
+              : pending === 'change_password' ? '비밀번호 변경'
+              : '과제 수정'
+          }
           onVerify={handleVerified}
           onClose={() => setPending(null)}
+        />
+      )}
+
+      {changingPassword && (
+        <ChangePasswordModal
+          onClose={() => setChangingPassword(false)}
+          onSubmit={submitChangePassword}
         />
       )}
 
