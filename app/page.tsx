@@ -3178,6 +3178,10 @@ export default function HRDashboard() {
                           sel.map(e => e.mailKey),
                           cc
                         )} />
+                      <p className="text-xs text-gray-400 -mt-1">
+                        ※ 위 &quot;통합 메일 발송&quot;은 기존 웰니스포인트 요청 메일(HTML 본문만, XLSX 첨부 없음)입니다.
+                        XLSX 정산내역을 첨부해서 보내려면 아래 &quot;XLSX 첨부 메일 보내기&quot;를 사용해주세요.
+                      </p>
                       <div className="flex justify-end gap-2 mt-1">
                         <button
                           onClick={() => {
@@ -3198,7 +3202,7 @@ export default function HRDashboard() {
                           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
                           </svg>
-                          메일 보내기{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
+                          XLSX 첨부 메일 보내기{sel.length > 0 ? ` (${sel.length}명 선택)` : ' (대상자 선택 필요)'}
                         </button>
                         <button
                           onClick={() => openWellnessCoinModal(sel.map(({ emp, empType }) => ({ emp, empType })))}
