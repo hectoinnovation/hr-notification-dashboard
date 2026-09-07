@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { sendWellnessMailWithAttachment } from '@/lib/mail'
-import {
-  buildWellnessExcelRows, buildWellnessMailRows, buildWellnessMailXlsxBuffer, type WellnessMailEntryInput,
-} from '@/lib/wellness-mail'
+import { buildWellnessExcelRows, buildWellnessMailXlsxBuffer, type WellnessMailEntryInput } from '@/lib/wellness-mail'
 
 // 웰니스포인트 탭 "메일 보내기" 전용 라우트 — 사용자가 버튼을 직접 눌렀을 때만 호출된다.
 // scheduled_mails / cron / 온보딩 자동메일과는 완전히 분리되어 있으며, 기존 /api/send-mail
@@ -11,12 +9,13 @@ import {
 // xlsx는 클라이언트에서 base64로 인코딩해 보내지 않는다 — 브라우저 번들 xlsx가 base64를
 // 만드는 경로 자체를 제거하기 위해, 화면에서 체크한 entries(원본 데이터)만 전달받아
 // 여기(Node 서버)에서 @/lib/wellness-mail의 buildWellnessExcelRows()를 그대로 호출해
-// 계산 결과(displayRows)를 얻는다 — 계산/데이터는 화면 엑셀 다운로드와 항상 동일하다.
+// rows를 얻는다 — 계산/데이터/컬럼/순서는 화면 엑셀 다운로드와 항상 완전히 동일하다.
+// 업체 제출용 파일이라 컬럼/순서/값을 절대 줄이거나 바꾸지 않는다(다운로드 rows 그대로 사용).
 //
-// 첨부 워크북 생성 코드(buildWellnessMailXlsxBuffer)는 /api/debug/txt-attachment-test의
-// xlsx-small variant로 실제 수신 성공이 확인된 것과 완전히 동일한 함수 — 성공한 테스트와
-// 이 라우트의 차이는 전달하는 rows(buildWellnessMailRows로 정산 필요 컬럼만 primitive
-// 값으로 정규화)와 filename뿐이다.
+// 첨부 워크북 생성 코드(buildWellnessMailXlsxBuffer)는 화면 다운로드가 쓰는 buildXlsxWorkbook()을
+// 그대로 감싼 것 — /api/debug/txt-attachment-test의 xlsx-small variant로 실제 수신 성공이
+// 확인된 것과도 완전히 동일한 함수다. 성공한 테스트와 이 라우트의 실질적인 차이는 rows의
+// "내용"(대상자 수)과 filename뿐이며, 컬럼 구성 자체는 화면 다운로드와 100% 동일하다.
 // nodemailer는 Node.js 전용 (net/tls 모듈 사용) — Edge runtime에서 실행 시 500 발생
 export const runtime = 'nodejs'
 
@@ -36,15 +35,15 @@ export async function POST(req: NextRequest) {
   }
 
   const sentMap = Object.fromEntries((sentKeys ?? []).map(k => [k, true]))
-  const displayRows = buildWellnessExcelRows(entries, sentMap)
-  if (displayRows.length === 0) {
+  // 화면 "엑셀 다운로드"와 완전히 동일한 rows — 컬럼/순서/값을 줄이거나 바꾸지 않는다.
+  const rows = buildWellnessExcelRows(entries, sentMap)
+  if (rows.length === 0) {
     return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 400 })
   }
-  const mailRows = buildWellnessMailRows(displayRows)
 
   let content: Buffer
   try {
-    content = buildWellnessMailXlsxBuffer(mailRows)
+    content = buildWellnessMailXlsxBuffer(rows)
   } catch (err) {
     console.error('[api/wellness-mail] xlsx 생성 실패 →', err instanceof Error ? err.message : String(err))
     return NextResponse.json({ error: '첨부파일 생성에 실패했습니다.' }, { status: 500 })
