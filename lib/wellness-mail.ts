@@ -95,7 +95,7 @@ export function calcWellnessLeave(joinDateStr: string | null | undefined, leaveD
   return { prePaid, recognized, reclaim }
 }
 
-/** 행 배열로 워크북 생성 — 화면 다운로드와 서버 메일첨부가 공유 */
+/** 행 배열로 워크북 생성 — 화면 "엑셀 다운로드" 전용(열 너비 등 표시용 메타데이터 포함) */
 export function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: string) {
   const ws = XLSX.utils.json_to_sheet(rows)
   // 컬럼 너비 자동 설정
@@ -103,6 +103,21 @@ export function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: st
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, sheetName)
   return wb
+}
+
+/**
+ * 메일 첨부용 최소 구조 워크북 Buffer — 화면 다운로드(buildXlsxWorkbook)와 완전히 분리된
+ * 별도 경로. 열 너비(!cols) 등 표시용 메타데이터 없이 단일 시트 + 셀 값만 담는다. 실제
+ * 정산 데이터/계산 결과(rows)는 buildWellnessExcelRows()가 만든 것을 그대로 받아 쓸 뿐,
+ * 데이터나 계산식은 전혀 바뀌지 않는다. 포렌식 검사 결과 buildXlsxWorkbook도 이미 이미지/
+ * 매크로/외부참조/병합셀/수식이 전혀 없는 구조였지만(SheetJS json_to_sheet 특성상 애초에
+ * 생성되지 않음), 메일 첨부는 화면 표시용 메타데이터까지 걷어낸 가장 단순한 형태로 만든다.
+ */
+export function buildMinimalXlsxBuffer(rows: Record<string, unknown>[]): Buffer {
+  const ws = XLSX.utils.json_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '정산내역')
+  return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }
 
 /** buildWellnessExcelRows 입력 항목 — 클라이언트(화면 체크 대상)와 서버(메일 첨부 생성)가 공유하는 형태 */
