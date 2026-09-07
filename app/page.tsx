@@ -4,6 +4,11 @@ import { useState, useEffect, useRef, type ReactNode } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, type Employee } from '@/lib/supabase'
 import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml, isOnboardingExcluded } from '@/lib/onboarding'
+import {
+  daysInMonth, empLabel, calcEffectiveLeaveDate, calcWellnessHire, calcWellnessLeave,
+  buildXlsxWorkbook, buildWellnessExcelRows, sumWellnessFinalAmount,
+  wellnessMailAttachmentFilename, type WellnessMailEntryInput,
+} from '@/lib/wellness-mail'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
@@ -90,15 +95,7 @@ function getDateLabel(type: 'hire' | 'leave', isTransfer: boolean, joinReason?: 
   return type === 'hire' ? '입사일' : '퇴사일'
 }
 
-/** 직원 유형 표시 레이블 (TypeBadge / 구분 컬럼 공용) */
-function empLabel(emp: { status: string; join_reason?: string }): string {
-  if (emp.status === 'resigned')          return '퇴사'
-  if (emp.join_reason === '전적')         return '전적'
-  if (emp.join_reason === '휴직')         return '휴직자'
-  if (emp.join_reason === '휴직복귀')     return '휴직복귀자'
-  if (emp.join_reason === '인턴')         return '인턴'
-  return '입사'
-}
+// empLabel은 @/lib/wellness-mail에서 가져와 사용 (서버 메일 첨부 생성 경로와 계산 공유)
 
 // isOnboardingExcluded는 @/lib/onboarding에서 가져와 사용 (자동 메일 발송 경로와 조건 공유)
 
@@ -210,83 +207,8 @@ function effectivePeriod(period: PeriodFilter, searchActive: boolean): PeriodFil
   return searchActive ? 'all' : period
 }
 
-/**
- * 포인트 계산 기준일 반환
- * ─ 휴직자: 휴직시작일(exit_date) − 1일  (전날까지 근무 인정)
- * ─ 퇴사자 / 기타: exit_date 그대로 반환 (기존 로직 유지)
- * ─ exit_date 없음: null 반환
- *
- * ※ 입사자·퇴사자·전적자·휴직복귀자에는 일체 영향 없음
- */
-function calcEffectiveLeaveDate(emp: Employee): string | null {
-  if (!emp.exit_date) return null
-  if (emp.join_reason !== '휴직') return emp.exit_date   // 퇴사자 등: 변경 없음
-  // 휴직자 전용: 휴직시작일 − 1일
-  const d = new Date(emp.exit_date)
-  d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate()
-}
-
-function calcWellnessHire(joinDateStr: string): number {
-  const d = new Date(joinDateStr)
-  const month = d.getMonth() + 1
-  const day = d.getDate()
-  const dim = daysInMonth(d.getFullYear(), month)
-  // 입사월은 원단위 반올림, 완전 재직월은 정수
-  const hireMonthAmt = Math.round(50000 * (dim - day + 1) / dim)
-  const remainingMonths = 12 - month
-  return hireMonthAmt + remainingMonths * 50000
-}
-
-function calcWellnessLeave(joinDateStr: string | null | undefined, leaveDateStr: string): {
-  prePaid: number; recognized: number; reclaim: number
-} {
-  const leaveD     = new Date(leaveDateStr)
-  const leaveYear  = leaveD.getFullYear()
-  const leaveMonth = leaveD.getMonth() + 1
-  const leaveDay   = leaveD.getDate()
-  const dimLeave   = daysInMonth(leaveYear, leaveMonth)
-
-  // 각 월 단위로 개별 반올림 후 합산 (소수 항목 2개 합산 시 1원 오차 방지)
-  let recognized = 0
-  if (joinDateStr) {
-    const joinD     = new Date(joinDateStr)
-    const joinYear  = joinD.getFullYear()
-    const joinMonth = joinD.getMonth() + 1
-    const joinDay   = joinD.getDate()
-    const dimJoin   = daysInMonth(joinYear, joinMonth)
-
-    if (joinYear === leaveYear) {
-      if (joinMonth === leaveMonth) {
-        recognized = Math.round(50000 * (leaveDay - joinDay + 1) / dimJoin)
-      } else {
-        const joinAmt   = Math.round(50000 * (dimJoin - joinDay + 1) / dimJoin)
-        const midMonths = leaveMonth - joinMonth - 1
-        const leaveAmt  = Math.round(50000 * leaveDay / dimLeave)
-        recognized = joinAmt + midMonths * 50000 + leaveAmt
-      }
-    } else {
-      // 입사년도 < 퇴사년도: 정산년도 1월부터 완전월 + 퇴사월 일할
-      const leaveAmt = Math.round(50000 * leaveDay / dimLeave)
-      recognized = (leaveMonth - 1) * 50000 + leaveAmt
-    }
-  } else {
-    const leaveAmt = Math.round(50000 * leaveDay / dimLeave)
-    recognized = (leaveMonth - 1) * 50000 + leaveAmt
-  }
-
-  // 정산년도(leaveYear) > 입사년도 → 연초에 12개월 전체 선지급으로 봄 (600,000)
-  // 정산년도 === 입사년도 → 입사일부터 12월 말까지 일할계산
-  const prePaid = joinDateStr
-    ? (new Date(joinDateStr).getFullYear() < leaveYear ? 600000 : calcWellnessHire(joinDateStr))
-    : 0
-  const reclaim = Math.round(Math.max(0, prePaid - recognized))
-  return { prePaid, recognized, reclaim }
-}
+// daysInMonth/calcEffectiveLeaveDate/calcWellnessHire/calcWellnessLeave는 @/lib/wellness-mail에서
+// 가져와 사용 (leaveMonthDayInfo 등 아래 성과/근속포인트 계산도 daysInMonth를 그대로 재사용)
 
 // ─── 성과포인트 / 근속포인트 (퇴사자 정산 전용) ─────────────────────────────────
 // 두 포인트 모두 "연간 기준금액을 12개월로 나눠 매월 지급"하는 구조라, 중도 퇴사 시
@@ -463,15 +385,18 @@ async function sendMailApi(to: string[], subject: string, html: string, cc?: str
 /**
  * 웰니스포인트 탭 "메일 보내기"(수동 즉시 발송) 전용 — /api/wellness-mail 호출.
  * sendMailApi(/api/send-mail)와는 완전히 별개 경로이며 scheduled_mails/cron과 무관하다.
+ * xlsx는 base64로 미리 만들지 않고 원본 entries만 전달 — 서버가 @/lib/wellness-mail의
+ * buildWellnessExcelRows()를 그대로 호출해 Buffer를 직접 생성한다(클라이언트 xlsx 인코딩
+ * 경유 없이 Node에서 한 번만 생성 — 브라우저 번들 xlsx의 base64 인코딩 경로를 완전히 제거).
  */
 async function sendWellnessMailApi(
   to: string[], subject: string, html: string,
-  attachmentBase64: string, attachmentFilename: string, cc?: string[],
+  entries: WellnessMailEntryInput[], sentKeys: string[], attachmentFilename: string, cc?: string[],
 ): Promise<string | null> {
   try {
     const res = await fetch('/api/wellness-mail', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to, cc, subject, html, attachmentBase64, attachmentFilename }),
+      body: JSON.stringify({ to, cc, subject, html, entries, sentKeys, attachmentFilename }),
     })
     if (res.redirected) {
       try {
@@ -525,16 +450,7 @@ function textToMailHtml(text: string): string {
   const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   return `<div style="font-family:sans-serif;font-size:14px;color:#374151;white-space:pre-wrap">${esc}</div>`
 }
-/**
- * 메일 첨부파일명 전용(화면 엑셀 다운로드 파일명과는 별개, 한글 그대로 유지) — ASCII 영문
- * 파일명 사용. 한글 파일명은 MIME에서 RFC 2231 다중 파라미터로 인코딩되어 일부 메일
- * 게이트웨이/클라이언트가 정상적으로 재조립하지 못해 첨부가 누락될 수 있음이 확인되어
- * 메일 첨부 시에만 영문 파일명으로 바꾼다.
- */
-function wellnessMailAttachmentFilename(date: Date): string {
-  const yyyymm = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}`
-  return `wellness_settlement_${yyyymm}.xlsx`
-}
+// wellnessMailAttachmentFilename은 @/lib/wellness-mail에서 가져와 사용
 
 // ─── HTML 생성 ────────────────────────────────────────────────────────────────
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
@@ -785,15 +701,7 @@ type XlsxEntry = {
   points: DayPointData | null   // 카페포인트용 (없으면 null)
 }
 
-/** 행 배열로 워크북 생성 — 다운로드(exportToExcel)와 메일첨부(buildXlsxBase64)가 공유 */
-function buildXlsxWorkbook(rows: Record<string, unknown>[], sheetName: string) {
-  const ws = XLSX.utils.json_to_sheet(rows)
-  // 컬럼 너비 자동 설정
-  ws['!cols'] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length * 2, 16) }))
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, sheetName)
-  return wb
-}
+// buildXlsxWorkbook은 @/lib/wellness-mail에서 가져와 사용 (서버 메일 첨부 생성과 워크북 생성 공유)
 
 /** XLSX 파일 생성 및 브라우저 다운로드 */
 function exportToExcel(rows: Record<string, unknown>[], filename: string) {
@@ -802,12 +710,6 @@ function exportToExcel(rows: Record<string, unknown>[], filename: string) {
     return
   }
   XLSX.writeFile(buildXlsxWorkbook(rows, '정산내역'), filename)
-}
-
-/** 메일 첨부용 XLSX base64 인코딩 — 다운로드와 동일한 워크북 생성 로직 재사용 */
-function buildXlsxBase64(rows: Record<string, unknown>[]): string | null {
-  if (rows.length === 0) return null
-  return XLSX.write(buildXlsxWorkbook(rows, '정산내역'), { type: 'base64', bookType: 'xlsx' }) as string
 }
 
 /** 카페포인트 엑셀 행 생성 */
@@ -869,95 +771,9 @@ function buildCafeExcelRows(
   })
 }
 
-/** 웰니스포인트 엑셀 행 생성 */
-function buildWellnessExcelRows(
-  entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }>,
-  sentMap: Record<string, boolean>,
-): Record<string, unknown>[] {
-  return entries.map(({ emp, empType, mailKey, isTransfer }) => {
-    const 구분       = empLabel(emp)
-    const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
-    const calcDate  = calcEffectiveLeaveDate(emp)
-    const 표시일    = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
-    const 기준일    = isLeaveType ? (calcDate ?? 표시일) : 표시일
-
-    let 지급예정금액 = '-'
-    let 환수예정금액 = '-'
-    let 최종처리금액 = '-'
-    let 지급환수구분 = '-'
-    let 계산기준설명 = '-'
-
-    if (isTransfer) {
-      지급환수구분 = '해당 없음'
-      계산기준설명 = '전적자는 웰니스포인트 계산 대상 아님'
-    } else if (!isLeaveType) {
-      // 입사자 / 휴직복귀자
-      if (emp.join_date) {
-        const amt = calcWellnessHire(emp.join_date)
-        지급예정금액 = `${amt.toLocaleString()}원`
-        최종처리금액 = 지급예정금액
-        지급환수구분 = '지급'
-        계산기준설명 = emp.join_reason === '휴직복귀'
-          ? `복귀일 ${표시일} 기준 입사자 계산 (월 만근 50,000원 / 12월 말 일할)`
-          : `입사일 ${표시일} 기준 입사자 계산 (월 만근 50,000원 / 12월 말 일할)`
-      } else {
-        계산기준설명 = '입사일/복귀일 미입력'
-      }
-    } else {
-      // 퇴사자 / 휴직자
-      if (!emp.join_date) {
-        계산기준설명 = '입사일 미입력'
-      } else {
-        const leaveDateForCalc = calcDate ?? emp.leave_date
-        if (leaveDateForCalc) {
-          const { prePaid, recognized, reclaim } = calcWellnessLeave(emp.join_date, leaveDateForCalc)
-          지급예정금액 = recognized > 0 ? `${recognized.toLocaleString()}원` : '-'
-          환수예정금액 = reclaim > 0 ? `${reclaim.toLocaleString()}원` : '-'
-          최종처리금액 = reclaim > 0
-            ? `환수 ${reclaim.toLocaleString()}원`
-            : `인정 ${recognized.toLocaleString()}원`
-          지급환수구분 = reclaim > 0 ? '환수' : '인정/정산'
-          계산기준설명 = emp.join_reason === '휴직'
-            ? `휴직시작일 ${emp.exit_date} / 계산기준일 ${calcDate} / 선지급 ${prePaid.toLocaleString()}원 → 인정 ${recognized.toLocaleString()}원`
-            : `퇴사일 ${표시일} 기준 / 선지급 ${prePaid.toLocaleString()}원 → 인정 ${recognized.toLocaleString()}원`
-        } else {
-          계산기준설명 = emp.join_reason === '휴직' ? '휴직시작일 미입력' : '퇴사일 미입력'
-        }
-      }
-    }
-
-    return {
-      '구분': 구분, '이름': emp.name, '이메일': '-',
-      '부서': emp.department ?? '-', '직책/직급': emp.position ?? '-',
-      '입사일': emp.join_date ?? '-',
-      '표시일': 표시일, '기준일': 기준일 ?? '-',
-      '포인트 종류': '웰니스포인트',
-      '지급/환수 구분': 지급환수구분,
-      '지급 예정 금액': 지급예정금액,
-      '환수 예정 금액': 환수예정금액,
-      '최종 처리 금액': 최종처리금액,
-      '계산 기준 설명': 계산기준설명,
-      '메일 발송 상태': sentMap[mailKey] ? '발송완료' : '미발송',
-      '비고': '',
-    }
-  })
-}
-
-/**
- * buildWellnessExcelRows가 생성한 '최종 처리 금액' 표시 문자열(예: '1,234원' / '환수 1,234원' /
- * '인정 1,234원' / '-')을 숫자로 환산. 별도 계산 로직이 아니라 엑셀에 실제 표시되는 값 자체를
- * 파싱하는 방식이라 메일 본문 합계가 항상 엑셀 내용과 정확히 일치한다.
- */
-function parseWellnessFinalAmount(text: unknown): number {
-  const s = String(text ?? '')
-  const digits = s.replace(/[^0-9]/g, '')
-  if (!digits) return 0
-  const n = parseInt(digits, 10)
-  return s.includes('환수') ? -n : n
-}
-function sumWellnessFinalAmount(rows: Record<string, unknown>[]): number {
-  return rows.reduce((sum, r) => sum + parseWellnessFinalAmount(r['최종 처리 금액']), 0)
-}
+// buildWellnessExcelRows/parseWellnessFinalAmount/sumWellnessFinalAmount는 @/lib/wellness-mail에서
+// 가져와 사용 — app/api/wellness-mail 서버 라우트가 첨부 엑셀을 생성할 때도 동일 함수를 그대로
+// 재사용해서 화면 체크 대상 = 엑셀 다운로드 대상 = 메일 첨부 엑셀 대상이 항상 일치하도록 한다.
 
 // ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────
 // 매월 15일 지급 대상자를 취합해 결제사 업로드용 엑셀을 만들기 위한 행 계산.
@@ -1932,8 +1748,8 @@ function WellnessCoinExcelModal({ included, excluded, downloading, error, onDown
  * rows는 buildWellnessExcelRows() 결과를 그대로 전달받아 다운로드 엑셀과 100% 동일한
  * 내용을 첨부한다.
  */
-function WellnessMailModal({ rows, count, totalAmount, filename, onClose }: {
-  rows: Record<string, unknown>[]; count: number; totalAmount: number; filename: string
+function WellnessMailModal({ entries, sentKeys, count, totalAmount, filename, onClose }: {
+  entries: WellnessMailEntryInput[]; sentKeys: string[]; count: number; totalAmount: number; filename: string
   onClose: () => void
 }) {
   const today = new Date()
@@ -1981,13 +1797,9 @@ function WellnessMailModal({ rows, count, totalAmount, filename, onClose }: {
   async function handleConfirmSend() {
     if (sending) return
     setSending(true); setError(null)
-    const base64 = buildXlsxBase64(rows)
-    if (!base64) {
-      setSending(false)
-      setError('첨부파일 생성에 실패했습니다. 대상자를 다시 확인해주세요.')
-      return
-    }
-    const err = await sendWellnessMailApi(to, subject, textToMailHtml(body), base64, finalFilename, cc.length ? cc : undefined)
+    // xlsx는 여기서 만들지 않는다 — entries만 서버로 보내고 서버가 동일한 buildWellnessExcelRows()로
+    // Buffer를 직접 생성한다(브라우저 xlsx base64 인코딩 경로 제거).
+    const err = await sendWellnessMailApi(to, subject, textToMailHtml(body), entries, sentKeys, finalFilename, cc.length ? cc : undefined)
     setSending(false)
     if (err) { setError(err); return }
     setSuccess(true)
@@ -2250,7 +2062,7 @@ export default function HRDashboard() {
   const [form,       setForm]       = useState<EmployeeForm>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [wellnessCoinModal, setWellnessCoinModal] = useState<{ included: WellnessCoinRow[]; excluded: WellnessCoinExcluded[] } | null>(null)
-  const [wellnessMailModal, setWellnessMailModal] = useState<{ rows: Record<string, unknown>[]; count: number; totalAmount: number; filename: string } | null>(null)
+  const [wellnessMailModal, setWellnessMailModal] = useState<{ entries: WellnessMailEntryInput[]; sentKeys: string[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
@@ -2674,10 +2486,16 @@ export default function HRDashboard() {
   }
   // 웰니스포인트 "메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessExcelRows 결과를 그대로 사용.
   // 첨부파일명은 화면 다운로드 파일명(한글)과 별개로 ASCII 영문 파일명을 사용한다(모달 내 설명 참고).
-  function openWellnessMailModal(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; mailKey: string; isTransfer: boolean }>) {
+  function openWellnessMailModal(entries: WellnessMailEntryInput[]) {
     if (entries.length === 0) { alert('메일로 보낼 대상자를 선택해주세요.'); return }
+    // 화면 표시(인원/총액)용 — 실제 첨부 엑셀은 서버가 entries로 동일 함수를 다시 호출해 생성한다.
     const rows = buildWellnessExcelRows(entries, mailSent)
-    setWellnessMailModal({ rows, count: entries.length, totalAmount: sumWellnessFinalAmount(rows), filename: wellnessMailAttachmentFilename(new Date()) })
+    const sentKeys = entries.filter(e => mailSent[e.mailKey]).map(e => e.mailKey)
+    setWellnessMailModal({
+      entries, sentKeys, count: entries.length,
+      totalAmount: sumWellnessFinalAmount(rows),
+      filename: wellnessMailAttachmentFilename(new Date()),
+    })
   }
   async function handleWellnessCoinDownload() {
     if (!wellnessCoinModal) return
@@ -2807,7 +2625,7 @@ export default function HRDashboard() {
 
       {wellnessMailModal && (
         <WellnessMailModal
-          rows={wellnessMailModal.rows} count={wellnessMailModal.count}
+          entries={wellnessMailModal.entries} sentKeys={wellnessMailModal.sentKeys} count={wellnessMailModal.count}
           totalAmount={wellnessMailModal.totalAmount} filename={wellnessMailModal.filename}
           onClose={() => setWellnessMailModal(null)} />
       )}
