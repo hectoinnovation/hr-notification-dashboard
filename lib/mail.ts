@@ -91,24 +91,37 @@ export async function sendWellnessMailWithAttachment(
   const t = createSmtpTransporter()
   if ('error' in t) return t.error
 
-  // 디버그 체크포인트: transporter.sendMail() 호출 직전 첨부파일 상태(개인정보/엑셀 내용 없이 크기만)
-  console.log('[sendWellnessMailWithAttachment] transporter.sendMail 호출 직전 →', {
-    attachmentCount: 1,
-    filename: attachment.filename,
-    byteLength: attachment.content.length,
-    contentType: attachment.contentType,
+  // transporter.sendMail()에 실제로 넘어가는 최종 mailOptions를 여기서 한 번만 구성 —
+  // 호출 직전에 그대로 로그로 남긴다(개인정보 보호를 위해 html/text 본문 내용 자체는
+  // 남기지 않고 길이만 기록. subject/to/cc/from/첨부 메타데이터는 그대로 기록).
+  const mailOptions = {
+    from: t.from, to, cc, subject, html,
+    attachments: [{
+      filename: attachment.filename,
+      content: attachment.content,
+      contentType: attachment.contentType,
+      contentDisposition: 'attachment' as const,
+    }],
+  }
+
+  console.log('[sendWellnessMailWithAttachment] transporter.sendMail() 호출 직전 mailOptions →', {
+    from: mailOptions.from,
+    to: mailOptions.to,
+    cc: mailOptions.cc,
+    subject: mailOptions.subject,
+    htmlLength: mailOptions.html.length,
+    hasText: false,
+    attachmentsIsArray: Array.isArray(mailOptions.attachments),
+    attachmentsLength: mailOptions.attachments.length,
+    attachment0Filename: mailOptions.attachments[0].filename,
+    attachment0ContentIsBuffer: Buffer.isBuffer(mailOptions.attachments[0].content),
+    attachment0ContentLength: mailOptions.attachments[0].content.length,
+    attachment0ContentType: mailOptions.attachments[0].contentType,
+    attachment0ContentDisposition: mailOptions.attachments[0].contentDisposition,
   })
 
   try {
-    const info = await t.transporter.sendMail({
-      from: t.from, to, cc, subject, html,
-      attachments: [{
-        filename: attachment.filename,
-        content: attachment.content,
-        contentType: attachment.contentType,
-        contentDisposition: 'attachment',
-      }],
-    })
+    const info = await t.transporter.sendMail(mailOptions)
     console.log('[sendWellnessMailWithAttachment] 발송 결과 →', {
       accepted: info.accepted, rejected: info.rejected, response: info.response,
     })

@@ -52,9 +52,11 @@ export async function POST(req: NextRequest) {
   }
 
   const filename = attachmentFilename.trim()
-  // 디버그 체크포인트: sendWellnessMailWithAttachment() 호출 직전 — 개인정보/엑셀 내용은 남기지 않음
+  // 디버그 체크포인트: sendWellnessMailWithAttachment() 호출 직전 — 클라이언트에서 받은 값이
+  // 그대로 전달되는지 확인(개인정보 보호를 위해 html 본문 내용 자체는 길이만 기록)
   console.log('[api/wellness-mail] sendWellnessMailWithAttachment 호출 직전 →', {
-    filename, byteLength: content.length, contentType: XLSX_CONTENT_TYPE,
+    to, cc, subject, htmlLength: html.length,
+    filename, byteLength: content.length, contentIsBuffer: Buffer.isBuffer(content), contentType: XLSX_CONTENT_TYPE,
   })
 
   const err = await sendWellnessMailWithAttachment({
