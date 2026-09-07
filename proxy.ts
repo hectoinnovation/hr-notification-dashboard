@@ -95,7 +95,13 @@ export default async function proxy(req: NextRequest) {
     }
   }
 
-  // No valid session → redirect to login
+  // No valid session
+  // API 호출은 리다이렉트가 아니라 401 JSON으로 응답 (fetch()가 처리할 수 있도록) —
+  // /admin 세션 체크(위)와 동일한 패턴. 이게 없으면 fetch()의 POST 요청이 307 리다이렉트를
+  // 그대로 POST로 따라가 /login(페이지, POST 미지원)에서 405가 발생한다.
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.json({ error: '세션이 만료되었습니다. 페이지를 새로고침한 후 다시 로그인해주세요.' }, { status: 401 })
+  }
   const url = req.nextUrl.clone()
   url.pathname = '/login'
   url.searchParams.set('next', pathname)
