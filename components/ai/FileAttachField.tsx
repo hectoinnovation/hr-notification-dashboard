@@ -2,7 +2,8 @@
 
 import { useRef, useState } from 'react'
 
-const ACCEPT = '.doc,.docx,.ppt,.pptx,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.zip,.mp4,.mov,.webm,.avi,.mkv'
+// MultiFileAttachField(결과물 다중 첨부)도 동일한 허용 목록을 쓰므로 export한다.
+export const ACCEPT = '.doc,.docx,.ppt,.pptx,.pdf,.xls,.xlsx,.png,.jpg,.jpeg,.zip,.mp4,.mov,.webm,.avi,.mkv'
 
 export type ExistingFile = { url: string; name: string }
 

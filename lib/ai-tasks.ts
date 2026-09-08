@@ -77,6 +77,10 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
   low: 3,
 }
 
+// 결과물 첨부파일 1건. result_file_url/result_file_name(레거시 단일 첨부)과 함께 쓰이며,
+// getResultFiles()가 둘을 하나의 목록으로 합쳐준다 — 화면에서는 항상 getResultFiles()를 통해서만 읽을 것.
+export type ResultFile = { url: string; name: string }
+
 export type AiTask = {
   id: string
   title: string
@@ -91,6 +95,9 @@ export type AiTask = {
   result_content?: string
   result_file_url?: string
   result_file_name?: string
+  // 결과물 여러 개 첨부 지원용 신규 컬럼 — 기존 단일 첨부(result_file_url/name)를 쓰던 과제는
+  // 이 값이 비어있으므로 getResultFiles()가 레거시 필드로 자동 대체해 보여준다.
+  result_files?: ResultFile[]
   completed_at?: string
   password_hash: string
   assignee?: string
@@ -182,14 +189,23 @@ export function hasResultLink(text: string | null | undefined): boolean {
   return (text ?? '').split('\n').some(line => /^https?:\/\/\S+$/i.test(line.trim()))
 }
 
+// 결과물 첨부파일 목록을 하나로 합쳐서 반환한다. result_files(신규, 여러 개)가 있으면 그것을,
+// 없으면 result_file_url/result_file_name(레거시 단일 첨부, 이 기능 이전에 제출된 과제)을
+// 배열 1건으로 변환해 반환한다 — 화면에서는 이 함수만 사용하고 두 컬럼을 직접 읽지 않는다.
+export function getResultFiles(t: Pick<AiTask, 'result_file_url' | 'result_file_name' | 'result_files'>): ResultFile[] {
+  if (t.result_files && t.result_files.length > 0) return t.result_files
+  if (t.result_file_url) return [{ url: t.result_file_url, name: t.result_file_name ?? '첨부파일' }]
+  return []
+}
+
 // 완료 처리 요건: 결과물 링크 또는 첨부파일 중 하나 이상이 있어야 한다 (설명 텍스트만으로는 불충분).
-export function hasTaskResult(t: Pick<AiTask, 'result_content' | 'result_file_url'>): boolean {
-  return hasResultLink(t.result_content) || !!t.result_file_url
+export function hasTaskResult(t: Pick<AiTask, 'result_content' | 'result_file_url' | 'result_file_name' | 'result_files'>): boolean {
+  return hasResultLink(t.result_content) || getResultFiles(t).length > 0
 }
 
 // status가 'done'이어도 링크/첨부파일이 전혀 없으면 화면상 "완료"로 취급하지 않는다
 // (완료 후 결과물을 모두 삭제해도 완료 배지가 남아있던 문제를 막기 위함).
-export function isEffectivelyDone(t: Pick<AiTask, 'status' | 'result_content' | 'result_file_url'>): boolean {
+export function isEffectivelyDone(t: Pick<AiTask, 'status' | 'result_content' | 'result_file_url' | 'result_file_name' | 'result_files'>): boolean {
   return t.status === 'done' && hasTaskResult(t)
 }
 

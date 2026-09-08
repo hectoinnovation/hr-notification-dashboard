@@ -5,10 +5,10 @@ import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import {
   verifyPassword, hashPassword, toggleLike, hasLikedTask, uploadTaskFile, isExampleTask,
-  hasResultLink, isEffectivelyDone, RESULT_REQUIRED_MESSAGE,
-  type AiTask, type AiComment, type ResolutionType,
+  hasResultLink, isEffectivelyDone, getResultFiles, RESULT_REQUIRED_MESSAGE,
+  type AiTask, type AiComment, type ResolutionType, type ResultFile,
 } from '@/lib/ai-tasks'
-import { FileAttachField } from '@/components/ai/FileAttachField'
+import { MultiFileAttachField } from '@/components/ai/MultiFileAttachField'
 import { StatusBadge } from '@/components/ai/StatusBadge'
 import { ResolutionBadge } from '@/components/ai/ResolutionBadge'
 import { CommentSection } from '@/components/ai/CommentSection'
@@ -73,8 +73,8 @@ export default function AiTaskDetailPage() {
   const [form, setForm] = useState<EditForm | null>(null)
   const [editAiUsageFile, setEditAiUsageFile] = useState<File | null>(null)
   const [editRemoveAiUsageFile, setEditRemoveAiUsageFile] = useState(false)
-  const [editResultFile, setEditResultFile] = useState<File | null>(null)
-  const [editRemoveResultFile, setEditRemoveResultFile] = useState(false)
+  const [editNewResultFiles, setEditNewResultFiles] = useState<File[]>([])
+  const [editKeptResultFiles, setEditKeptResultFiles] = useState<ResultFile[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [liking, setLiking] = useState(false)
@@ -109,8 +109,8 @@ export default function AiTaskDetailPage() {
       setForm(toEditForm(task))
       setEditAiUsageFile(null)
       setEditRemoveAiUsageFile(false)
-      setEditResultFile(null)
-      setEditRemoveResultFile(false)
+      setEditNewResultFiles([])
+      setEditKeptResultFiles(getResultFiles(task))
       setEditing(true)
     } else if (pending === 'delete') {
       const { error: delErr } = await supabase.from('ai_tasks').delete().eq('id', task.id)
@@ -141,17 +141,19 @@ export default function AiTaskDetailPage() {
   async function submitComplete(data: CompleteTaskData) {
     if (!task) return
     const nowIso = new Date().toISOString()
-    const fileMeta = data.result_file ? await uploadTaskFile(data.result_file) : null
-    const result_file_url = fileMeta?.url ?? task.result_file_url ?? null
-    const result_file_name = fileMeta?.name ?? task.result_file_name ?? null
-    if (!hasResultLink(data.result_content) && !result_file_url) {
+    const uploaded = await Promise.all(data.newFiles.map(f => uploadTaskFile(f)))
+    const result_files = [...data.existingFiles, ...uploaded]
+    if (!hasResultLink(data.result_content) && result_files.length === 0) {
       throw new Error(RESULT_REQUIRED_MESSAGE)
     }
     const { error: updErr } = await supabase.from('ai_tasks').update({
       status: 'done',
       completed_at: nowIso.slice(0, 10),
       result_content: data.result_content,
-      result_file_url, result_file_name,
+      result_files,
+      // 레거시 단일 첨부 컬럼도 첫 번째 파일로 함께 채워 관리자 화면 등 기존 코드와 호환을 유지한다.
+      result_file_url: result_files[0]?.url ?? null,
+      result_file_name: result_files[0]?.name ?? null,
       updated_at: nowIso,
     }).eq('id', task.id)
     if (updErr) throw new Error(updErr.message)
@@ -182,13 +184,14 @@ export default function AiTaskDetailPage() {
       const ai_usage_file_url = aiUsageFileMeta ? aiUsageFileMeta.url : (editRemoveAiUsageFile ? null : task.ai_usage_file_url ?? null)
       const ai_usage_file_name = aiUsageFileMeta ? aiUsageFileMeta.name : (editRemoveAiUsageFile ? null : task.ai_usage_file_name ?? null)
 
-      const resultFileMeta = editResultFile ? await uploadTaskFile(editResultFile) : null
-      const result_file_url = resultFileMeta ? resultFileMeta.url : (editRemoveResultFile ? null : task.result_file_url ?? null)
-      const result_file_name = resultFileMeta ? resultFileMeta.name : (editRemoveResultFile ? null : task.result_file_name ?? null)
+      const uploadedResultFiles = editNewResultFiles.length > 0
+        ? await Promise.all(editNewResultFiles.map(f => uploadTaskFile(f)))
+        : []
+      const result_files = [...editKeptResultFiles, ...uploadedResultFiles]
       const trimmedResultContent = form.result_content.trim()
 
       // 완료 상태를 유지하려면 결과물 링크 또는 첨부파일이 최소 1개는 있어야 한다.
-      if (task.status === 'done' && !hasResultLink(trimmedResultContent) && !result_file_url) {
+      if (task.status === 'done' && !hasResultLink(trimmedResultContent) && result_files.length === 0) {
         setError(RESULT_REQUIRED_MESSAGE)
         return
       }
@@ -200,7 +203,10 @@ export default function AiTaskDetailPage() {
         ai_usage: form.ai_usage.trim() || null,
         ai_usage_file_url, ai_usage_file_name,
         result_content: trimmedResultContent || null,
-        result_file_url, result_file_name,
+        result_files,
+        // 레거시 단일 첨부 컬럼도 첫 번째 파일로 함께 채워 관리자 화면 등 기존 코드와 호환을 유지한다.
+        result_file_url: result_files[0]?.url ?? null,
+        result_file_name: result_files[0]?.name ?? null,
         updated_at: new Date().toISOString(),
       }).eq('id', task.id)
       if (updErr) { setError(updErr.message); return }
@@ -259,10 +265,9 @@ export default function AiTaskDetailPage() {
               <textarea value={form.result_content} onChange={e => setForm({ ...form, result_content: e.target.value })} rows={3}
                 placeholder="예) GitHub, Notion, Figma, Google Drive, Apps Script URL 또는 결과물 설명"
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none placeholder:text-gray-300" />
-              <FileAttachField file={editResultFile} onChange={setEditResultFile}
-                existingFile={!editRemoveResultFile && task.result_file_url
-                  ? { url: task.result_file_url, name: task.result_file_name ?? '첨부파일' } : null}
-                onRemoveExisting={() => setEditRemoveResultFile(true)}
+              <MultiFileAttachField files={editNewResultFiles} onFilesChange={setEditNewResultFiles}
+                existingFiles={editKeptResultFiles}
+                onRemoveExisting={i => setEditKeptResultFiles(prev => prev.filter((_, idx) => idx !== i))}
               />
               {task.status === 'done' && (
                 <p className="text-xs text-gray-400">완료 상태를 유지하려면 결과물 링크 또는 첨부파일이 최소 1개는 있어야 합니다.</p>
@@ -324,13 +329,15 @@ export default function AiTaskDetailPage() {
             <div>
               <p className="text-xs font-semibold text-gray-500 mb-1">🔗 과제 링크 / 결과물</p>
               {task.result_content ? <ResultContentDisplay content={task.result_content} /> : null}
-              {task.result_file_url && (
-                <a href={task.result_file_url} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg mt-1.5 transition-colors">
-                  📎 {task.result_file_name ?? '첨부파일'}
-                </a>
-              )}
-              {!task.result_content && !task.result_file_url && (
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {getResultFiles(task).map((f, i) => (
+                  <a key={i} href={f.url} target="_blank" rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 px-2.5 py-1.5 rounded-lg transition-colors">
+                    📎 {f.name}
+                  </a>
+                ))}
+              </div>
+              {!task.result_content && getResultFiles(task).length === 0 && (
                 <p className="text-sm text-gray-400">아직 등록된 결과물이 없습니다.</p>
               )}
             </div>
@@ -393,6 +400,7 @@ export default function AiTaskDetailPage() {
 
       {completing && (
         <CompleteTaskModal
+          existingFiles={getResultFiles(task)}
           onClose={() => setCompleting(false)}
           onSubmit={submitComplete}
         />

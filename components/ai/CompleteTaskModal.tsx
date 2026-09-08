@@ -2,23 +2,25 @@
 
 import { useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
-import { FileAttachField } from './FileAttachField'
-import { hasResultLink, RESULT_REQUIRED_MESSAGE } from '@/lib/ai-tasks'
+import { MultiFileAttachField } from './MultiFileAttachField'
+import { hasResultLink, RESULT_REQUIRED_MESSAGE, type ResultFile } from '@/lib/ai-tasks'
 
-export type CompleteTaskData = { result_content: string; result_file: File | null }
+export type CompleteTaskData = { result_content: string; existingFiles: ResultFile[]; newFiles: File[] }
 
-export function CompleteTaskModal({ onClose, onSubmit }: {
+export function CompleteTaskModal({ existingFiles, onClose, onSubmit }: {
+  existingFiles: ResultFile[]
   onClose: () => void
   onSubmit: (data: CompleteTaskData) => Promise<void>
 }) {
   const [description, setDescription] = useState('')
   const [link, setLink] = useState('')
-  const [resultFile, setResultFile] = useState<File | null>(null)
+  const [keptFiles, setKeptFiles] = useState<ResultFile[]>(existingFiles)
+  const [newFiles, setNewFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // 완료 처리는 결과물 링크 또는 첨부파일 중 하나가 반드시 있어야 한다 — 설명만으로는 불충분하다.
-  const canSubmit = hasResultLink(link) || resultFile !== null
+  const canSubmit = hasResultLink(link) || keptFiles.length > 0 || newFiles.length > 0
 
   async function submit() {
     if (!canSubmit) return
@@ -28,7 +30,7 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
       // DB에는 기존과 동일하게 result_content 한 컬럼에 저장한다 — 설명과 링크를 줄바꿈으로 이어붙이면
       // 상세 화면의 기존 표시 로직(줄 단위 URL 자동 링크화)이 그대로 재사용된다.
       const combined = [description.trim(), link.trim()].filter(Boolean).join('\n\n')
-      await onSubmit({ result_content: combined, result_file: resultFile })
+      await onSubmit({ result_content: combined, existingFiles: keptFiles, newFiles })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       setSaving(false)
@@ -59,8 +61,9 @@ export function CompleteTaskModal({ onClose, onSubmit }: {
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">📎 결과물 첨부 (선택)</label>
-          <FileAttachField file={resultFile} onChange={setResultFile} />
-          <p className="text-xs text-gray-400">개발 산출물, 발표자료, 사용 가이드, 화면 캡처, 시연 동영상, Word·PowerPoint·PDF 등을 첨부할 수 있습니다.</p>
+          <MultiFileAttachField files={newFiles} onFilesChange={setNewFiles}
+            existingFiles={keptFiles} onRemoveExisting={i => setKeptFiles(prev => prev.filter((_, idx) => idx !== i))} />
+          <p className="text-xs text-gray-400">개발 산출물, 발표자료, 사용 가이드, 화면 캡처, 시연 동영상, Word·PowerPoint·PDF 등을 여러 개 첨부할 수 있습니다.</p>
         </div>
 
         <div className="space-y-1.5">
