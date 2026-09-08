@@ -13,3 +13,10 @@ alter table public.ai_tasks add column if not exists result_files jsonb not null
 
 comment on column public.ai_tasks.result_files is
   '결과물 첨부파일 목록 [{"url":"...", "name":"..."}, ...] — 여러 개 제출 가능. 레거시 단일 첨부(result_file_url/result_file_name)와 병행 유지되며, 화면에서는 lib/ai-tasks.ts의 getResultFiles()로 병합해서 읽는다.';
+
+-- PostgREST는 스키마 변경 사실을 보통 자동으로 감지하지만, 커넥션 풀러(Supavisor 등)를 거치는
+-- 환경에서는 이 알림이 전달되지 않아 "Could not find the 'result_files' column ... in the schema
+-- cache" 오류가 컬럼 추가 이후에도 한동안 남아있을 수 있다. 이 SQL 실행 직후에도 같은 오류가
+-- 계속되면, Supabase Dashboard > Settings > API 의 "Reload schema cache" 버튼을 눌러 강제로
+-- 캐시를 갱신해준다 (또는 아래 NOTIFY를 다시 실행).
+notify pgrst, 'reload schema';
