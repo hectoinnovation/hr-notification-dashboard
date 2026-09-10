@@ -46,12 +46,35 @@ function parseHectoCoinNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * Excel 날짜 일련번호(serial) → 'YYYY-MM-DD'. 1899-12-30을 0으로 보는 Excel epoch에서
+ * Unix epoch(1970-01-01 = serial 25569)까지의 일수 차이만큼만 이동시킨 뒤 UTC getter로
+ * 읽는다 — 중간에 로컬 Date 생성자를 전혀 거치지 않으므로 호스트 타임존과 완전히 무관하다.
+ * (1900년을 윤년으로 잘못 취급하는 Excel의 유명한 버그는 serial 60 이하에서만 영향을 주고
+ * 이 기능이 다루는 날짜 범위(2020년대 이후 입사일)에는 해당하지 않는다.)
+ */
+function excelSerialToDateStr(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial <= 0) return null
+  const utcMs = Math.round((serial - 25569) * 86400 * 1000)
+  const d = new Date(utcMs)
+  const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, '0'), day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * 입사일은 시간 개념이 없는 date-only 값이므로 타임존 변환이 절대 발생하면 안 된다.
+ * xlsx가 cellDates:true로 만드는 Date 객체는 엑셀 날짜를 "UTC 필드"에 그대로 담아두므로
+ * (호스트 타임존과 무관하게 항상 동일한 값을 보장하기 위함) 반드시 UTC getter로만 읽어야
+ * 한다 — getFullYear/getMonth/getDate 같은 로컬 getter를 쓰면 호스트 타임존에 따라
+ * 하루가 밀릴 수 있다(예: UTC보다 뒤쳐진 타임존에서 9/5 00:00 UTC를 9/4로 읽음).
+ */
 function parseHectoCoinDate(v: unknown): string | null {
   if (v === '' || v == null) return null
   if (v instanceof Date) {
-    const y = v.getFullYear(), m = String(v.getMonth() + 1).padStart(2, '0'), d = String(v.getDate()).padStart(2, '0')
+    const y = v.getUTCFullYear(), m = String(v.getUTCMonth() + 1).padStart(2, '0'), d = String(v.getUTCDate()).padStart(2, '0')
     return `${y}-${m}-${d}`
   }
+  if (typeof v === 'number') return excelSerialToDateStr(v)
   const s = String(v).trim()
   if (!s) return null
   const m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
@@ -126,12 +149,16 @@ export function parseHectoCoinExcelFile(buffer: ArrayBuffer): ParsedHectoCoinFil
  * 입사일이 있으면(해당 월 신규입사자) 입사일(포함)부터 월 말일까지 재직일수만큼
  * 일할계산한다. 반올림은 기존 웰니스/성과/근속포인트와 동일하게 최종 금액에
  * Math.round()를 한 번만 적용(lib/wellness-mail.ts calcWellnessHire와 동일 규칙).
+ *
+ * joinDate('YYYY-MM-DD')의 "일" 값은 new Date(joinDate)로 다시 파싱하지 않고 문자열에서
+ * 직접 잘라낸다 — date-only 문자열을 new Date()에 넣으면 UTC 자정으로 해석되는데, 그 뒤
+ * .getDate() 같은 로컬 getter로 읽으면 호스트 타임존에 따라 하루가 밀릴 수 있기 때문이다.
  */
 export function calcHectoCoinPayCap(settlementMonth: string, joinDate: string | null): number {
   if (!joinDate) return HECTO_COIN_MONTHLY_CAP
   const [sy, sm] = settlementMonth.split('-').map(Number)
   const dim = daysInMonth(sy, sm)
-  const joinDay = new Date(joinDate).getDate()
+  const joinDay = Number(joinDate.split('-')[2])
   const workedDays = dim - joinDay + 1
   if (workedDays <= 0) return 0
   if (workedDays >= dim) return HECTO_COIN_MONTHLY_CAP
