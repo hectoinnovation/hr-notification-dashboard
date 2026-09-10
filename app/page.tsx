@@ -13,6 +13,10 @@ import {
   buildWellnessCoinRows, wellnessCoinFilename,
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
+import {
+  parseHectoCoinExcelFile, computeHectoCoinEntries, hectoCoinFilename,
+  type HectoCoinSettlementRow, type HectoCoinEntry,
+} from '@/lib/hecto-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
 
@@ -1482,6 +1486,28 @@ function ExcelUploadBtn({ onParsed, savedFileName }: {
   )
 }
 
+// ─── 헥토코인 정산 파일 업로드 버튼 (1차/최종 공용) ────────────────────────────
+function HectoUploadButton({ label, uploading, onFile }: {
+  label: string; uploading: boolean; onFile: (file: File) => void
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) onFile(file)
+    if (ref.current) ref.current.value = ''
+  }
+  return (
+    <>
+      <button onClick={() => ref.current?.click()} disabled={uploading}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 2v8M4 7l4 4 4-4M2 12h12v2H2z"/></svg>
+        {uploading ? '처리 중…' : label}
+      </button>
+      <input ref={ref} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleChange} />
+    </>
+  )
+}
+
 // ─── 직원 폼 ──────────────────────────────────────────────────────────────────
 function FormField({ label, value, onChange, placeholder, type = 'text', required = false }: {
   label: string; value: string; onChange: (v: string) => void
@@ -2000,8 +2026,25 @@ function PagedList({ items, renderItem, limit, onMore, grid = false }: {
   )
 }
 
+// ─── 헥토코인 정산: 정산월 선택 유틸 ───────────────────────────────────────────
+function hectoMonthLabel(ym: string): string {
+  const [y, m] = ym.split('-')
+  return `${y}년 ${Number(m)}월`
+}
+/** 정산월 드롭다운 옵션 — 최근 18개월 전부터 다음 달까지(최신순) */
+function hectoMonthOptions(): string[] {
+  const [ny, nm] = todayKstDateStr().split('-').map(Number)
+  const opts: string[] = []
+  for (let i = -18; i <= 1; i++) {
+    const total = ny * 12 + (nm - 1) + i
+    const yy = Math.floor(total / 12), mm = (total % 12) + 1
+    opts.push(`${yy}-${String(mm).padStart(2, '0')}`)
+  }
+  return opts.reverse()
+}
+
 // ─── 메인 ─────────────────────────────────────────────────────────────────────
-type TabId = 'notify' | 'onboard' | 'cafe' | 'wellness' | 'performance' | 'tenure'
+type TabId = 'notify' | 'onboard' | 'cafe' | 'wellness' | 'performance' | 'tenure' | 'hecto'
 
 export default function HRDashboard() {
   const [employees,  setEmployees]  = useState<Employee[]>([])
@@ -2021,6 +2064,16 @@ export default function HRDashboard() {
   const [onboardSentAt,  setOnboardSentAt]  = useState<Record<string, string>>({})
   const [cafeExcel,         setCafeExcel]         = useState<Record<number, ExcelSheetData>>({})
   const [cafeExcelFileName, setCafeExcelFileName] = useState<string | null>(null)
+
+  // ── 헥토코인 정산 ──────────────────────────────────────────────────────────
+  const [hectoSettlementMonth, setHectoSettlementMonth] = useState<string>(() => todayKstDateStr().slice(0, 7))
+  const [hectoSettlement,      setHectoSettlement]      = useState<HectoCoinSettlementRow | null>(null)
+  const [hectoLoading,         setHectoLoading]         = useState(false)
+  const [hectoUploading,       setHectoUploading]       = useState<'first' | 'final' | null>(null)
+  const [hectoDownloading,     setHectoDownloading]     = useState<'first' | 'additional' | null>(null)
+  const [hectoError,           setHectoError]           = useState<string | null>(null)
+  const [hectoNotice,          setHectoNotice]          = useState<string | null>(null)
+  const [hectoSkipped,         setHectoSkipped]         = useState<string[]>([])
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2227,6 +2280,11 @@ export default function HRDashboard() {
     ...(showWellnessLeave ? wellnessLeaveGroup : []),
   ]
 
+  // 헥토코인 정산: 선택한 정산월의 1차/최종 원본에서 화면 표시용 결과를 매번 다시 계산
+  const hectoEntries: HectoCoinEntry[] = computeHectoCoinEntries(
+    hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
+  )
+
   const TABS = [
     { id: 'notify'   as TabId, label: '입사/퇴사 관리', count: allNotify.length },
     { id: 'onboard'  as TabId, label: '온보딩',          count: newHires.filter(e => !isOnboardingExcluded(e)).length },
@@ -2234,6 +2292,7 @@ export default function HRDashboard() {
     { id: 'wellness' as TabId, label: '웰니스포인트',     count: allWellness.length },
     { id: 'performance' as TabId, label: '성과포인트', count: allPerformanceCount },
     { id: 'tenure'      as TabId, label: '근속포인트', count: allTenureCount },
+    { id: 'hecto'        as TabId, label: '헥토코인 정산', count: hectoEntries.length },
   ]
 
   function toggleSelect(key: string, checked: boolean) {
@@ -2458,6 +2517,79 @@ export default function HRDashboard() {
     setWellnessCoinModal(null)
   }
 
+  /**
+   * 헥토코인 정산 1차/최종 파일 업로드. 같은 정산월에 재업로드하면 해당 단계(1차 또는
+   * 최종)의 원본만 새 파일로 통째로 교체된다 — hecto_coin_settlements는 "원본"만 저장하고
+   * 화면 지급액은 항상 그 원본에서 다시 계산되므로(computeHectoCoinEntries), 이전 계산값과
+   * 새 계산값이 섞일 여지가 없다. 1차를 재업로드했을 때 이미 최종이 업로드되어 있었다면
+   * 추가지급액/최종지급액도 자동으로 함께 다시 계산된다.
+   */
+  async function handleHectoUpload(file: File, stage: 'first' | 'final') {
+    setHectoUploading(stage); setHectoError(null); setHectoNotice(null); setHectoSkipped([])
+    try {
+      const buffer = await file.arrayBuffer()
+      const { rows, skippedRows } = parseHectoCoinExcelFile(buffer)
+      const nowIso = new Date().toISOString()
+      const wasReupload = stage === 'first' ? !!hectoSettlement?.first_uploaded_at : !!hectoSettlement?.final_uploaded_at
+      const hadFinalAlready = !!hectoSettlement?.final_uploaded_at
+      const payload: Record<string, unknown> = { settlement_month: hectoSettlementMonth, updated_at: nowIso }
+      if (stage === 'first') {
+        payload.first_file_name = file.name; payload.first_uploaded_at = nowIso; payload.first_rows = rows
+      } else {
+        payload.final_file_name = file.name; payload.final_uploaded_at = nowIso; payload.final_rows = rows
+      }
+      const { data, error } = await supabase
+        .from('hecto_coin_settlements')
+        .upsert(payload, { onConflict: 'settlement_month' })
+        .select('*')
+        .single()
+      if (error) { setHectoError('저장 실패: ' + error.message); return }
+      setHectoSettlement(data as HectoCoinSettlementRow)
+      setHectoSkipped(skippedRows)
+      setHectoNotice(
+        stage === 'first'
+          ? (wasReupload
+              ? (hadFinalAlready ? '1차 파일이 재업로드되어 1차·추가·최종 지급액이 모두 다시 계산되었습니다.' : '1차 파일이 재업로드되어 다시 계산되었습니다.')
+              : '1차 파일이 업로드되어 1차 지급액이 계산되었습니다.')
+          : (wasReupload ? '최종 파일이 재업로드되어 추가·최종 지급액이 다시 계산되었습니다.' : '최종 파일이 업로드되어 추가 지급액이 계산되었습니다.')
+      )
+    } catch (err) {
+      setHectoError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
+    } finally {
+      setHectoUploading(null)
+    }
+  }
+
+  /** 1차/추가 지급 엑셀 다운로드 — 중복 이름(확인 필요) 대상자는 자동 지급 대상에서 제외 */
+  async function downloadHectoCoinExcel(kind: 'first' | 'additional', entries: HectoCoinEntry[]) {
+    const rows = kind === 'first'
+      ? entries.filter(e => !e.isDuplicateName && (e.firstAmount ?? 0) > 0).map(e => ({ name: e.name, amount: e.firstAmount! }))
+      : entries.filter(e => !e.isDuplicateName && (e.additionalAmount ?? 0) > 0).map(e => ({ name: e.name, amount: e.additionalAmount! }))
+    if (rows.length === 0) { alert('다운로드할 대상자가 없습니다.'); return }
+    setHectoDownloading(kind); setHectoError(null)
+    try {
+      const res = await fetch('/api/hecto-coin-excel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows, settlementMonth: hectoSettlementMonth, kind }),
+      })
+      if (!res.ok) {
+        let errMsg = '엑셀 생성에 실패했습니다.'
+        try { const data = await res.json() as { error?: string }; errMsg = data.error ?? errMsg } catch { /* ignore */ }
+        setHectoError(errMsg); return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = hectoCoinFilename(hectoSettlementMonth, kind)
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setHectoError(err instanceof Error ? err.message : '네트워크 오류로 엑셀 생성에 실패했습니다.')
+    } finally {
+      setHectoDownloading(null)
+    }
+  }
+
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }
   function openEdit(emp: Employee) {
     setEditTarget(emp)
@@ -2553,6 +2685,25 @@ export default function HRDashboard() {
   }, [])
 
   useEffect(() => { fetchAllData() }, [])
+
+  // 헥토코인 정산 — 선택한 정산월의 1차/최종 원본 데이터를 불러온다(새로고침/재접속 후에도 유지)
+  useEffect(() => {
+    let cancelled = false
+    async function loadHectoSettlement() {
+      setHectoLoading(true); setHectoError(null)
+      const { data, error } = await supabase
+        .from('hecto_coin_settlements')
+        .select('*')
+        .eq('settlement_month', hectoSettlementMonth)
+        .maybeSingle()
+      if (cancelled) return
+      if (error) { setHectoError(error.message); setHectoSettlement(null) }
+      else setHectoSettlement(data as HectoCoinSettlementRow | null)
+      setHectoLoading(false)
+    }
+    loadHectoSettlement()
+    return () => { cancelled = true }
+  }, [hectoSettlementMonth])
 
   const hasFilter = !!search || typeF !== '전체' || sentF !== '전체'
   const pendingNotif = allNotify.filter(({ mailKey }) => !mailSent[mailKey]).length
@@ -3369,6 +3520,177 @@ export default function HRDashboard() {
                             }
                             return rows
                           })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()
+            : activeTab === 'hecto' ? (() => {
+              const firstReady      = hectoEntries.filter(e => !e.isDuplicateName && e.firstAmount != null)
+              const firstTotal      = firstReady.reduce((sum, e) => sum + (e.firstAmount ?? 0), 0)
+              const additionalReady = hectoEntries.filter(e => !e.isDuplicateName && (e.additionalAmount ?? 0) > 0)
+              const additionalTotal = additionalReady.reduce((sum, e) => sum + (e.additionalAmount ?? 0), 0)
+              const finalTotal      = firstTotal + additionalTotal
+              const warnEntries     = hectoEntries.filter(e => e.isDuplicateName || e.matchStatus === 'final_only')
+              const canDownloadFirst      = firstReady.some(e => (e.firstAmount ?? 0) > 0)
+              const canDownloadAdditional = additionalReady.length > 0
+
+              return (
+                <div className="space-y-4">
+                  {/* 정산월 선택 */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <label className="text-xs font-semibold text-gray-500">정산월</label>
+                    <select value={hectoSettlementMonth} onChange={e => setHectoSettlementMonth(e.target.value)}
+                      className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
+                      {hectoMonthOptions().map(ym => <option key={ym} value={ym}>{hectoMonthLabel(ym)}</option>)}
+                    </select>
+                    {hectoLoading && <span className="text-xs text-gray-400">불러오는 중...</span>}
+                  </div>
+
+                  {hectoError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-600">{hectoError}</div>
+                  )}
+                  {hectoNotice && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-xs text-blue-600 flex items-center justify-between">
+                      <span>{hectoNotice}</span>
+                      <button onClick={() => setHectoNotice(null)} className="text-blue-400 hover:text-blue-600 ml-3">닫기</button>
+                    </div>
+                  )}
+                  {hectoSkipped.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-700 space-y-0.5">
+                      <p className="font-semibold">다음 행은 제외되었습니다</p>
+                      {hectoSkipped.map((s, i) => <p key={i}>{s}</p>)}
+                    </div>
+                  )}
+
+                  {/* 1차/최종 파일 업로드 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">1차 파일 업로드</p>
+                        <HectoUploadButton label="엑셀 업로드" uploading={hectoUploading === 'first'}
+                          onFile={file => handleHectoUpload(file, 'first')} />
+                      </div>
+                      {hectoSettlement?.first_uploaded_at ? (
+                        <p className="text-xs text-emerald-600">
+                          ✓ {hectoSettlement.first_file_name} · {new Date(hectoSettlement.first_uploaded_at).toLocaleString('ko-KR')} 정산 완료
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
+                      )}
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">최종 파일 업로드</p>
+                        <HectoUploadButton label="엑셀 업로드" uploading={hectoUploading === 'final'}
+                          onFile={file => handleHectoUpload(file, 'final')} />
+                      </div>
+                      {hectoSettlement?.final_uploaded_at ? (
+                        <p className="text-xs text-emerald-600">
+                          ✓ {hectoSettlement.final_file_name} · {new Date(hectoSettlement.final_uploaded_at).toLocaleString('ko-KR')} 정산 완료
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 월별 요약 카드 */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    {[
+                      { label: '1차 지급 대상 인원', value: `${firstReady.length}명`,               color: 'text-blue-600'   },
+                      { label: '1차 지급 총액',       value: `${firstTotal.toLocaleString()}원`,      color: 'text-blue-600'   },
+                      { label: '추가 지급 대상 인원', value: `${additionalReady.length}명`,           color: 'text-purple-600' },
+                      { label: '추가 지급 총액',       value: `${additionalTotal.toLocaleString()}원`, color: 'text-purple-600' },
+                      { label: '월 최종 지급 총액',    value: `${finalTotal.toLocaleString()}원`,      color: 'text-orange-600' },
+                    ].map(c => (
+                      <div key={c.label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                        <p className={`text-xl font-black ${c.color}`}>{c.value}</p>
+                        <p className="text-xs font-medium text-gray-600 mt-1">{c.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 지급용 엑셀 다운로드 */}
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => downloadHectoCoinExcel('first', hectoEntries)}
+                      disabled={!canDownloadFirst || hectoDownloading !== null}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {hectoDownloading === 'first' ? '생성 중...' : '1차 지급 엑셀 다운로드'}
+                    </button>
+                    <button onClick={() => downloadHectoCoinExcel('additional', hectoEntries)}
+                      disabled={!canDownloadAdditional || hectoDownloading !== null}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {hectoDownloading === 'additional' ? '생성 중...' : '추가 지급 엑셀 다운로드'}
+                    </button>
+                  </div>
+
+                  {warnEntries.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-xs text-amber-700 space-y-0.5">
+                      <p className="font-semibold">확인이 필요한 대상자가 있습니다</p>
+                      {warnEntries.map(e => (
+                        <p key={e.key}>
+                          {e.name} — {e.isDuplicateName ? '동일한 이름이 여러 건 있어 자동으로 매칭할 수 없습니다. 직접 확인해주세요.' : '최종 파일에는 있지만 1차 파일에서 이름을 찾을 수 없습니다.'}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 개인별 정산 테이블 */}
+                  {hectoEntries.length === 0 ? (
+                    <EmptyState label={hectoLoading ? '불러오는 중...' : '업로드된 데이터가 없습니다. 1차 파일을 먼저 업로드해주세요.'} />
+                  ) : (
+                    <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 누적 걸음수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 상한</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 포인트</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 지급액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {hectoEntries.map(e => (
+                            <tr key={e.key} className="border-t border-gray-100">
+                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{e.name}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.joinDate ?? '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{e.steps != null ? e.steps.toLocaleString() : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payCap.toLocaleString()}원</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.firstPoints != null ? e.firstPoints.toLocaleString() : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-800 whitespace-nowrap">{e.firstAmount != null ? e.firstAmount.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">
+                                {e.finalPoints != null ? e.finalPoints.toLocaleString() : (e.matchStatus === 'first_only' ? '미정산' : '-')}
+                              </td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">
+                                {e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : (e.matchStatus === 'first_only' ? '미정산' : '-')}
+                              </td>
+                              <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{e.totalAmount != null ? e.totalAmount.toLocaleString() + '원' : '-'}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {e.isDuplicateName
+                                  ? <span className="text-red-600 font-semibold">중복 이름 확인필요</span>
+                                  : e.matchStatus === 'final_only'
+                                  ? <span className="text-red-600 font-semibold">1차 미매칭</span>
+                                  : e.matchStatus === 'first_only'
+                                  ? <span className="text-gray-400">최종 미정산</span>
+                                  : <span className="text-emerald-600 font-semibold">정산 완료</span>}
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
