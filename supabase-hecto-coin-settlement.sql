@@ -12,10 +12,11 @@
 -- 처음부터 다시 계산하므로 항상 하나의 정답만 존재한다.
 --
 -- first_rows / final_rows 배열의 각 원소 형태 (lib/hecto-coin.ts HectoCoinRawRow):
---   { name, company, position, steps, points, joinDate }
+--   { name, company, position, steps, points }
 --   steps  = 월 누적 걸음수 (참고용, 지급액 계산에는 사용하지 않음)
 --   points = 월 누적 포인트 (실제 지급액 계산 기준)
---   joinDate = 해당 월 신규입사자만 값이 있고, 기존 재직자는 null
+-- 입사/퇴사/휴직/복귀 날짜는 이 JSONB가 아니라 employees 테이블이 source of truth다
+-- (아래 supabase-hecto-coin-roster.sql 하단에서 이 컬럼 comment를 최신 구조로 갱신한다).
 create table if not exists public.hecto_coin_settlements (
   settlement_month   text primary key,  -- 'YYYY-MM' (예: '2026-09')
   first_file_name    text,

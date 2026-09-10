@@ -14,8 +14,8 @@ import {
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
 import {
-  parseHectoCoinExcelFile, computeHectoCoinEntries, hectoCoinFilename,
-  type HectoCoinSettlementRow, type HectoCoinEntry,
+  parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
+  type HectoCoinSettlementRow, type HectoCoinRosterRow, type HectoCoinEntry,
 } from '@/lib/hecto-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
@@ -2074,6 +2074,13 @@ export default function HRDashboard() {
   const [hectoError,           setHectoError]           = useState<string | null>(null)
   const [hectoNotice,          setHectoNotice]          = useState<string | null>(null)
   const [hectoSkipped,         setHectoSkipped]         = useState<string[]>([])
+  // 사원리스트(고객아이디 매핑) — 정산월과 무관한 전역 1행(hecto_coin_roster, id='singleton')
+  const [hectoRoster,          setHectoRoster]          = useState<HectoCoinRosterRow | null>(null)
+  const [hectoRosterLoading,   setHectoRosterLoading]   = useState(false)
+  const [hectoRosterUploading, setHectoRosterUploading] = useState(false)
+  const [hectoRosterError,     setHectoRosterError]     = useState<string | null>(null)
+  const [hectoRosterNotice,    setHectoRosterNotice]    = useState<string | null>(null)
+  const [hectoRosterSkipped,   setHectoRosterSkipped]   = useState<string[]>([])
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2280,9 +2287,11 @@ export default function HRDashboard() {
     ...(showWellnessLeave ? wellnessLeaveGroup : []),
   ]
 
-  // 헥토코인 정산: 선택한 정산월의 1차/최종 원본에서 화면 표시용 결과를 매번 다시 계산
+  // 헥토코인 정산: 선택한 정산월의 1차/최종 원본 + employees(입/퇴사·휴직·복귀 source of truth)
+  // + 사원리스트(고객아이디 매핑)에서 화면 표시용 결과를 매번 다시 계산
   const hectoEntries: HectoCoinEntry[] = computeHectoCoinEntries(
     hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
+    employees, hectoRoster?.entries ?? [],
   )
 
   const TABS = [
@@ -2560,11 +2569,20 @@ export default function HRDashboard() {
     }
   }
 
-  /** 1차/추가 지급 엑셀 다운로드 — 중복 이름(확인 필요) 대상자는 자동 지급 대상에서 제외 */
+  /**
+   * 1차/추가 지급 엑셀 다운로드 대상 — 포인트파일 내 중복이름/직원정보 미매칭/동명이인/
+   * 지급대상 일수 없음(excludeReason 존재) 및 고객아이디 미매칭·중복확정불가는 전부 제외.
+   * 추가 지급 엑셀은 추가지급액이 0원인 사람도 추가로 제외한다.
+   */
+  function hectoExcelEligible(e: HectoCoinEntry, kind: 'first' | 'additional'): boolean {
+    if (e.excludeReason || e.customerIdMatch !== 'matched' || !e.customerId) return false
+    const amount = kind === 'first' ? e.firstAmount : e.additionalAmount
+    return (amount ?? 0) > 0
+  }
   async function downloadHectoCoinExcel(kind: 'first' | 'additional', entries: HectoCoinEntry[]) {
-    const rows = kind === 'first'
-      ? entries.filter(e => !e.isDuplicateName && (e.firstAmount ?? 0) > 0).map(e => ({ name: e.name, amount: e.firstAmount! }))
-      : entries.filter(e => !e.isDuplicateName && (e.additionalAmount ?? 0) > 0).map(e => ({ name: e.name, amount: e.additionalAmount! }))
+    const rows = entries
+      .filter(e => hectoExcelEligible(e, kind))
+      .map(e => ({ name: e.name, customerId: e.customerId!, amount: (kind === 'first' ? e.firstAmount : e.additionalAmount)! }))
     if (rows.length === 0) { alert('다운로드할 대상자가 없습니다.'); return }
     setHectoDownloading(kind); setHectoError(null)
     try {
@@ -2587,6 +2605,34 @@ export default function HRDashboard() {
       setHectoError(err instanceof Error ? err.message : '네트워크 오류로 엑셀 생성에 실패했습니다.')
     } finally {
       setHectoDownloading(null)
+    }
+  }
+
+  /**
+   * 사원리스트(이름→고객아이디) 업로드/재업로드. hecto_coin_roster는 정산월과 무관한
+   * 전역 1행(id='singleton')이라 매번 통째로 교체한다 — 헥토코인 지급액 자체는 건드리지
+   * 않고 고객아이디 매칭 결과(및 지급 엑셀 다운로드 가능 여부)만 다시 계산된다.
+   */
+  async function handleHectoRosterUpload(file: File) {
+    setHectoRosterUploading(true); setHectoRosterError(null); setHectoRosterNotice(null); setHectoRosterSkipped([])
+    try {
+      const buffer = await file.arrayBuffer()
+      const { entries, skippedRows } = parseHectoCoinRosterFile(buffer)
+      const wasReupload = !!hectoRoster?.uploaded_at
+      const nowIso = new Date().toISOString()
+      const { data, error } = await supabase
+        .from('hecto_coin_roster')
+        .upsert({ id: 'singleton', file_name: file.name, uploaded_at: nowIso, entries, updated_at: nowIso }, { onConflict: 'id' })
+        .select('*')
+        .single()
+      if (error) { setHectoRosterError('저장 실패: ' + error.message); return }
+      setHectoRoster(data as HectoCoinRosterRow)
+      setHectoRosterSkipped(skippedRows)
+      setHectoRosterNotice(wasReupload ? '사원리스트가 재업로드되어 고객아이디 매칭이 다시 계산되었습니다.' : '사원리스트가 업로드되어 고객아이디 매칭에 사용됩니다.')
+    } catch (err) {
+      setHectoRosterError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
+    } finally {
+      setHectoRosterUploading(false)
     }
   }
 
@@ -2704,6 +2750,25 @@ export default function HRDashboard() {
     loadHectoSettlement()
     return () => { cancelled = true }
   }, [hectoSettlementMonth])
+
+  // 헥토코인 정산 — 사원리스트(고객아이디 매핑)는 정산월과 무관한 전역 1행이라 최초 1회만 불러온다
+  useEffect(() => {
+    let cancelled = false
+    async function loadHectoRoster() {
+      setHectoRosterLoading(true); setHectoRosterError(null)
+      const { data, error } = await supabase
+        .from('hecto_coin_roster')
+        .select('*')
+        .eq('id', 'singleton')
+        .maybeSingle()
+      if (cancelled) return
+      if (error) { setHectoRosterError(error.message); setHectoRoster(null) }
+      else setHectoRoster(data as HectoCoinRosterRow | null)
+      setHectoRosterLoading(false)
+    }
+    loadHectoRoster()
+    return () => { cancelled = true }
+  }, [])
 
   const hasFilter = !!search || typeF !== '전체' || sentF !== '전체'
   const pendingNotif = allNotify.filter(({ mailKey }) => !mailSent[mailKey]).length
@@ -3528,14 +3593,18 @@ export default function HRDashboard() {
               )
             })()
             : activeTab === 'hecto' ? (() => {
-              const firstReady      = hectoEntries.filter(e => !e.isDuplicateName && e.firstAmount != null)
+              const firstReady      = hectoEntries.filter(e => !e.excludeReason && e.firstAmount != null)
               const firstTotal      = firstReady.reduce((sum, e) => sum + (e.firstAmount ?? 0), 0)
-              const additionalReady = hectoEntries.filter(e => !e.isDuplicateName && (e.additionalAmount ?? 0) > 0)
+              const additionalReady = hectoEntries.filter(e => !e.excludeReason && (e.additionalAmount ?? 0) > 0)
               const additionalTotal = additionalReady.reduce((sum, e) => sum + (e.additionalAmount ?? 0), 0)
               const finalTotal      = firstTotal + additionalTotal
-              const warnEntries     = hectoEntries.filter(e => e.isDuplicateName || e.matchStatus === 'final_only')
-              const canDownloadFirst      = firstReady.some(e => (e.firstAmount ?? 0) > 0)
-              const canDownloadAdditional = additionalReady.length > 0
+              // 화면 표시용 경고: 직원 매칭/포인트파일 중복/지급대상 없음 등 지급 계산 자체가
+              // 불가능한 사유(excludeReason) + 최종파일에만 있어 1차와 매칭 안 되는 경우
+              const warnEntries = hectoEntries.filter(e => e.excludeReason || e.pointsMatchStatus === 'final_only')
+              const customerIdMatchedCount   = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch === 'matched').length
+              const customerIdUnmatchedCount = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch !== 'matched').length
+              const canDownloadFirst      = hectoEntries.some(e => hectoExcelEligible(e, 'first'))
+              const canDownloadAdditional = hectoEntries.some(e => hectoExcelEligible(e, 'additional'))
 
               return (
                 <div className="space-y-4">
@@ -3565,8 +3634,8 @@ export default function HRDashboard() {
                     </div>
                   )}
 
-                  {/* 1차/최종 파일 업로드 */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* 1차/최종 파일 업로드 + 사원리스트 업로드 */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-semibold text-gray-800">1차 파일 업로드</p>
@@ -3595,6 +3664,27 @@ export default function HRDashboard() {
                         <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
                       )}
                     </div>
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">사원리스트 업로드</p>
+                        <HectoUploadButton label="엑셀 업로드" uploading={hectoRosterUploading}
+                          onFile={file => handleHectoRosterUpload(file)} />
+                      </div>
+                      {hectoRoster?.uploaded_at ? (
+                        <p className="text-xs text-emerald-600">
+                          ✓ {hectoRoster.file_name} · {new Date(hectoRoster.uploaded_at).toLocaleString('ko-KR')} · {hectoRoster.entries?.length ?? 0}명
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400">{hectoRosterLoading ? '불러오는 중...' : '아직 업로드되지 않았습니다. (지급용 고객아이디 매칭에 사용)'}</p>
+                      )}
+                      {hectoRosterError && <p className="text-xs text-red-500">{hectoRosterError}</p>}
+                      {hectoRosterNotice && <p className="text-xs text-blue-600">{hectoRosterNotice}</p>}
+                      {hectoRosterSkipped.length > 0 && (
+                        <div className="text-xs text-amber-600 space-y-0.5">
+                          {hectoRosterSkipped.map((s, i) => <p key={i}>{s}</p>)}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* 월별 요약 카드 */}
@@ -3611,6 +3701,16 @@ export default function HRDashboard() {
                         <p className="text-xs font-medium text-gray-600 mt-1">{c.label}</p>
                       </div>
                     ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                      <p className="text-xl font-black text-emerald-600">{customerIdMatchedCount}명</p>
+                      <p className="text-xs font-medium text-gray-600 mt-1">고객아이디 매칭 완료 인원</p>
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+                      <p className="text-xl font-black text-red-500">{customerIdUnmatchedCount}명</p>
+                      <p className="text-xs font-medium text-gray-600 mt-1">고객아이디 미매칭 인원</p>
+                    </div>
                   </div>
 
                   {/* 지급용 엑셀 다운로드 */}
@@ -3638,7 +3738,7 @@ export default function HRDashboard() {
                       <p className="font-semibold">확인이 필요한 대상자가 있습니다</p>
                       {warnEntries.map(e => (
                         <p key={e.key}>
-                          {e.name} — {e.isDuplicateName ? '동일한 이름이 여러 건 있어 자동으로 매칭할 수 없습니다. 직접 확인해주세요.' : '최종 파일에는 있지만 1차 파일에서 이름을 찾을 수 없습니다.'}
+                          {e.name} — {e.excludeReason ?? '최종 파일에는 있지만 1차 파일에서 이름을 찾을 수 없습니다.'}
                         </p>
                       ))}
                     </div>
@@ -3654,13 +3754,18 @@ export default function HRDashboard() {
                           <tr>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">휴직일</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">복귀일</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 누적 걸음수</th>
+                            <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급대상 일수</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 상한</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 포인트</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 지급액</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">고객아이디</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
                           </tr>
                         </thead>
@@ -3668,26 +3773,37 @@ export default function HRDashboard() {
                           {hectoEntries.map(e => (
                             <tr key={e.key} className="border-t border-gray-100">
                               <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{e.name}</td>
-                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.joinDate ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayJoinDate ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayExitDate ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayLeaveDate ?? '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayReturnDate ?? '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{e.steps != null ? e.steps.toLocaleString() : '-'}</td>
-                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payCap.toLocaleString()}원</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payableDays != null ? `${e.payableDays}일` : '-'}</td>
+                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payCap != null ? e.payCap.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.firstPoints != null ? e.firstPoints.toLocaleString() : '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-800 whitespace-nowrap">{e.firstAmount != null ? e.firstAmount.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">
-                                {e.finalPoints != null ? e.finalPoints.toLocaleString() : (e.matchStatus === 'first_only' ? '미정산' : '-')}
+                                {e.finalPoints != null ? e.finalPoints.toLocaleString() : (e.pointsMatchStatus === 'first_only' ? '미정산' : '-')}
                               </td>
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">
-                                {e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : (e.matchStatus === 'first_only' ? '미정산' : '-')}
+                                {e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : (e.pointsMatchStatus === 'first_only' ? '미정산' : '-')}
                               </td>
                               <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{e.totalAmount != null ? e.totalAmount.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 whitespace-nowrap">
-                                {e.isDuplicateName
-                                  ? <span className="text-red-600 font-semibold">중복 이름 확인필요</span>
-                                  : e.matchStatus === 'final_only'
+                                {e.customerIdMatch === 'matched'
+                                  ? <span className="text-gray-700">{e.customerId}</span>
+                                  : e.customerIdMatch === 'duplicate'
+                                  ? <span className="text-red-600 font-semibold">매칭 확인 필요</span>
+                                  : <span className="text-gray-400">미매칭</span>}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {e.excludeReason
+                                  ? <span className="text-red-600 font-semibold">{e.excludeReason}</span>
+                                  : e.pointsMatchStatus === 'final_only'
                                   ? <span className="text-red-600 font-semibold">1차 미매칭</span>
-                                  : e.matchStatus === 'first_only'
-                                  ? <span className="text-gray-400">최종 미정산</span>
-                                  : <span className="text-emerald-600 font-semibold">정산 완료</span>}
+                                  : e.pointsMatchStatus === 'first_only'
+                                  ? <span className="text-gray-400">{e.statusLabel} · 최종 미정산</span>
+                                  : <span className="text-emerald-600 font-semibold">{e.statusLabel}</span>}
                               </td>
                             </tr>
                           ))}

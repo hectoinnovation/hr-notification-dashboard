@@ -1,17 +1,17 @@
 import * as XLSX from 'xlsx'
-import ExcelJS from 'exceljs'
-import path from 'path'
+import type { Employee } from './supabase'
 import { daysInMonth } from './wellness-mail'
 
 // ─── 헥토코인 정산(걸음수/포인트 기반 월 지급) ────────────────────────────────────
-// "헥토코인 정산" 탭(app/page.tsx activeTab === 'hecto') 전용 계산/파싱/엑셀 로직.
-// 웰니스포인트/카페포인트와 달리 employees 테이블과 무관하게, 매달 업로드하는
-// 걸음수/포인트 엑셀(1차·최종) 자체가 유일한 데이터 소스다.
+// "헥토코인 정산" 탭(app/page.tsx activeTab === 'hecto') 전용 계산/파싱 로직.
 //
-// 저장 방식: 계산 결과가 아니라 "업로드 파일을 파싱한 원본"만 hecto_coin_settlements에
-// 저장하고(first_rows/final_rows), 화면에 보이는 지급액은 항상 computeHectoCoinEntries()가
-// 그 원본에서 매번 다시 계산한다. 재업로드 시 이전 계산값과 새 계산값이 섞이는 것을 막기
-// 위한 설계 — 원본 두 개만 최신 상태로 유지하면 결과는 항상 하나로 정해진다.
+// 입사/퇴사/휴직/복귀 날짜의 source of truth는 employees 테이블이다(엑셀 업로드 파일의
+// 입사일 컬럼은 더 이상 쓰지 않는다) — 매달 업로드하는 걸음수/포인트 엑셀은 오직
+// "이름 + 월 누적 걸음수(참고용) + 월 누적 포인트(지급 기준)"만 제공한다.
+//
+// 저장 방식은 기존과 동일: 계산 결과가 아니라 "업로드 파일을 파싱한 원본"만
+// hecto_coin_settlements에 저장하고(first_rows/final_rows), 화면에 보이는 지급액은
+// 항상 computeHectoCoinEntries()가 그 원본 + employees 현재 상태에서 매번 다시 계산한다.
 
 export const HECTO_COIN_MONTHLY_CAP = 200000
 
@@ -21,7 +21,6 @@ export type HectoCoinRawRow = {
   position: string | null   // 직책/부서
   steps: number | null      // 월 누적 걸음수 (참고용)
   points: number | null     // 월 누적 포인트 (지급액 계산 기준)
-  joinDate: string | null   // 'YYYY-MM-DD' — 해당 월 신규입사자만 값 있음
 }
 
 export type HectoCoinSettlementRow = {
@@ -34,7 +33,29 @@ export type HectoCoinSettlementRow = {
   final_rows: HectoCoinRawRow[] | null
 }
 
-// ─── 엑셀 업로드 파싱 ───────────────────────────────────────────────────────────
+// ─── 사원리스트(고객아이디 매핑) ────────────────────────────────────────────────
+// 정산월과 무관하게 유지되는 전역 매핑 — cafe_excel_data와 동일한 "singleton 1행"
+// 패턴으로 hecto_coin_roster 테이블에 저장한다(app/page.tsx handleHectoRosterUpload 참고).
+export type HectoCoinRosterEntry = { name: string; customerId: string }
+export type HectoCoinRosterRow = {
+  id: string
+  file_name: string | null
+  uploaded_at: string | null
+  entries: HectoCoinRosterEntry[] | null
+}
+
+// ─── 이름 정규화 ────────────────────────────────────────────────────────────────
+/**
+ * 헥토코인 걸음수 앱이 내보내는 원본 이름에는 영문 알파벳이 붙어 있을 수 있다
+ * (예: "안소정ABCE" / "안소정 ABC" / "A안소정"). 영문(A-Z/a-z)만 제거하고 양끝 공백을
+ * 정리한다 — 한글 이름 자체는 손대지 않는다. 이 정규화된 이름을 직원 DB 매칭,
+ * 사원리스트 매칭, 지급 엑셀 B열(고객명) 모두에 동일하게 사용한다.
+ */
+export function stripEnglishFromName(raw: string): string {
+  return raw.replace(/[A-Za-z]+/g, '').replace(/\s+/g, ' ').trim()
+}
+
+// ─── 걸음수/포인트 업로드 엑셀 파싱 ─────────────────────────────────────────────
 function normalizeHeader(s: unknown): string {
   return String(s ?? '').replace(/\s+/g, '').replace(/[()（）[\]]/g, '')
 }
@@ -46,69 +67,33 @@ function parseHectoCoinNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-/**
- * Excel 날짜 일련번호(serial) → 'YYYY-MM-DD'. 1899-12-30을 0으로 보는 Excel epoch에서
- * Unix epoch(1970-01-01 = serial 25569)까지의 일수 차이만큼만 이동시킨 뒤 UTC getter로
- * 읽는다 — 중간에 로컬 Date 생성자를 전혀 거치지 않으므로 호스트 타임존과 완전히 무관하다.
- * (1900년을 윤년으로 잘못 취급하는 Excel의 유명한 버그는 serial 60 이하에서만 영향을 주고
- * 이 기능이 다루는 날짜 범위(2020년대 이후 입사일)에는 해당하지 않는다.)
- */
-function excelSerialToDateStr(serial: number): string | null {
-  if (!Number.isFinite(serial) || serial <= 0) return null
-  const utcMs = Math.round((serial - 25569) * 86400 * 1000)
-  const d = new Date(utcMs)
-  const y = d.getUTCFullYear(), m = String(d.getUTCMonth() + 1).padStart(2, '0'), day = String(d.getUTCDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-/**
- * 입사일은 시간 개념이 없는 date-only 값이므로 타임존 변환이 절대 발생하면 안 된다.
- * xlsx가 cellDates:true로 만드는 Date 객체는 엑셀 날짜를 "UTC 필드"에 그대로 담아두므로
- * (호스트 타임존과 무관하게 항상 동일한 값을 보장하기 위함) 반드시 UTC getter로만 읽어야
- * 한다 — getFullYear/getMonth/getDate 같은 로컬 getter를 쓰면 호스트 타임존에 따라
- * 하루가 밀릴 수 있다(예: UTC보다 뒤쳐진 타임존에서 9/5 00:00 UTC를 9/4로 읽음).
- */
-function parseHectoCoinDate(v: unknown): string | null {
-  if (v === '' || v == null) return null
-  if (v instanceof Date) {
-    const y = v.getUTCFullYear(), m = String(v.getUTCMonth() + 1).padStart(2, '0'), d = String(v.getUTCDate()).padStart(2, '0')
-    return `${y}-${m}-${d}`
-  }
-  if (typeof v === 'number') return excelSerialToDateStr(v)
-  const s = String(v).trim()
-  if (!s) return null
-  const m = s.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
-  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null
-}
-
 export type ParsedHectoCoinFile = {
   rows: HectoCoinRawRow[]
   skippedRows: string[]   // 포인트 값이 비어있거나 숫자로 변환할 수 없어 제외된 행 안내
 }
 
 /**
- * 걸음수/포인트 업로드 엑셀 파싱. 필수 컬럼(이름/월 누적 걸음수/월 누적 포인트/입사일)이
- * 없으면 사용자가 이해할 수 있는 메시지로 예외를 던진다. 회사/직책·부서는 참고용이라
- * 없어도 파싱은 계속 진행한다.
+ * 걸음수/포인트 업로드 엑셀 파싱. 필수 컬럼(이름/월 누적 걸음수/월 누적 포인트)이 없으면
+ * 사용자가 이해할 수 있는 메시지로 예외를 던진다. 회사/직책·부서는 참고용이라 없어도
+ * 파싱은 계속 진행하고, 입사일 컬럼은 더 이상 사용하지 않는다(직원 DB가 source of truth).
  */
 export function parseHectoCoinExcelFile(buffer: ArrayBuffer): ParsedHectoCoinFile {
-  const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
+  const wb = XLSX.read(buffer, { type: 'array' })
   const ws = wb.Sheets[wb.SheetNames[0]]
   if (!ws) throw new Error('엑셀 시트를 찾을 수 없습니다.')
   const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
   let headerRow = -1
-  let col = { name: -1, points: -1, steps: -1, joinDate: -1, company: -1, position: -1 }
+  let col = { name: -1, points: -1, steps: -1, company: -1, position: -1 }
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     const row = rows[r] as unknown[]
-    const found = { name: -1, points: -1, steps: -1, joinDate: -1, company: -1, position: -1 }
+    const found = { name: -1, points: -1, steps: -1, company: -1, position: -1 }
     row.forEach((cell, c) => {
       const norm = normalizeHeader(cell)
       if (!norm) return
       if (found.name === -1 && norm === '이름') found.name = c
       if (found.points === -1 && norm.includes('포인트')) found.points = c
       if (found.steps === -1 && norm.includes('걸음수')) found.steps = c
-      if (found.joinDate === -1 && norm.includes('입사일')) found.joinDate = c
       if (found.company === -1 && norm === '회사') found.company = c
       if (found.position === -1 && (norm.includes('직책') || norm.includes('부서'))) found.position = c
     })
@@ -117,7 +102,6 @@ export function parseHectoCoinExcelFile(buffer: ArrayBuffer): ParsedHectoCoinFil
   if (headerRow === -1 || col.name === -1) throw new Error('이름 컬럼을 찾을 수 없습니다.')
   if (col.points === -1) throw new Error('월 누적 포인트 컬럼을 찾을 수 없습니다.')
   if (col.steps === -1) throw new Error('월 누적 걸음수 컬럼을 찾을 수 없습니다.')
-  if (col.joinDate === -1) throw new Error('입사일 컬럼을 찾을 수 없습니다.')
 
   const parsedRows: HectoCoinRawRow[] = []
   const skippedRows: string[] = []
@@ -136,59 +120,258 @@ export function parseHectoCoinExcelFile(buffer: ArrayBuffer): ParsedHectoCoinFil
       position: col.position !== -1 ? (String(row[col.position] ?? '').trim() || null) : null,
       steps: parseHectoCoinNumber(row[col.steps]),
       points,
-      joinDate: parseHectoCoinDate(row[col.joinDate]),
     })
   }
   if (parsedRows.length === 0) throw new Error('업로드할 수 있는 데이터가 없습니다.')
   return { rows: parsedRows, skippedRows }
 }
 
-// ─── 지급액 계산 ────────────────────────────────────────────────────────────────
+// ─── 사원리스트 엑셀 파싱 ───────────────────────────────────────────────────────
+const ROSTER_ID_HEADERS = ['고객아이디', '아이디', 'id', '이메일', 'email']
+const ROSTER_NAME_HEADERS = ['이름', '성명', '고객명']
+
 /**
- * 개인별 월 지급 상한. 입사일이 없으면(기존 재직자) 월 일반 상한 그대로,
- * 입사일이 있으면(해당 월 신규입사자) 입사일(포함)부터 월 말일까지 재직일수만큼
- * 일할계산한다. 반올림은 기존 웰니스/성과/근속포인트와 동일하게 최종 금액에
- * Math.round()를 한 번만 적용(lib/wellness-mail.ts calcWellnessHire와 동일 규칙).
- *
- * joinDate('YYYY-MM-DD')의 "일" 값은 new Date(joinDate)로 다시 파싱하지 않고 문자열에서
- * 직접 잘라낸다 — date-only 문자열을 new Date()에 넣으면 UTC 자정으로 해석되는데, 그 뒤
- * .getDate() 같은 로컬 getter로 읽으면 호스트 타임존에 따라 하루가 밀릴 수 있기 때문이다.
+ * 사원리스트(이름 + 고객아이디 매핑) 엑셀 파싱. 실제 헤더명이 회사마다 다를 수 있어
+ * 자주 쓰이는 헤더 후보군으로 유연하게 인식한다. 이름은 stripEnglishFromName으로
+ * 정규화해서 저장 — 헥토코인 원본 파일의 정규화된 이름과 동일 기준으로 매칭된다.
  */
-export function calcHectoCoinPayCap(settlementMonth: string, joinDate: string | null): number {
-  if (!joinDate) return HECTO_COIN_MONTHLY_CAP
-  const [sy, sm] = settlementMonth.split('-').map(Number)
-  const dim = daysInMonth(sy, sm)
-  const joinDay = Number(joinDate.split('-')[2])
-  const workedDays = dim - joinDay + 1
-  if (workedDays <= 0) return 0
-  if (workedDays >= dim) return HECTO_COIN_MONTHLY_CAP
-  return Math.round(HECTO_COIN_MONTHLY_CAP * workedDays / dim)
+export function parseHectoCoinRosterFile(buffer: ArrayBuffer): { entries: HectoCoinRosterEntry[]; skippedRows: string[] } {
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  if (!ws) throw new Error('엑셀 시트를 찾을 수 없습니다.')
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
+
+  let headerRow = -1
+  let col = { name: -1, customerId: -1 }
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const row = rows[r] as unknown[]
+    const found = { name: -1, customerId: -1 }
+    row.forEach((cell, c) => {
+      const norm = normalizeHeader(cell)
+      if (!norm) return
+      if (found.name === -1 && ROSTER_NAME_HEADERS.includes(norm)) found.name = c
+      if (found.customerId === -1 && ROSTER_ID_HEADERS.some(h => h.toLowerCase() === norm.toLowerCase())) found.customerId = c
+    })
+    if (found.name !== -1 && found.customerId !== -1) { headerRow = r; col = found; break }
+  }
+  if (headerRow === -1 || col.name === -1) throw new Error('이름(성명/고객명) 컬럼을 찾을 수 없습니다.')
+  if (col.customerId === -1) throw new Error('고객아이디(아이디/ID/이메일) 컬럼을 찾을 수 없습니다.')
+
+  const entries: HectoCoinRosterEntry[] = []
+  const skippedRows: string[] = []
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = rows[r] as unknown[]
+    const rawName = String(row[col.name] ?? '').trim()
+    const customerId = String(row[col.customerId] ?? '').trim()
+    if (!rawName && !customerId) continue
+    const name = stripEnglishFromName(rawName)
+    if (!name || !customerId) {
+      skippedRows.push(`${r + 1}행 — 이름 또는 고객아이디를 확인할 수 없어 제외되었습니다.`)
+      continue
+    }
+    entries.push({ name, customerId })
+  }
+  if (entries.length === 0) throw new Error('업로드할 수 있는 사원 데이터가 없습니다.')
+  return { entries, skippedRows }
 }
 
-export type HectoCoinMatchStatus = 'first_only' | 'final_only' | 'matched'
+// ─── 직원 DB 기반 일할계산 ──────────────────────────────────────────────────────
+// 날짜는 전부 'YYYY-MM-DD' 문자열 그대로 비교/연산한다(사전순 비교 = 날짜순 비교와 동일).
+// Date 객체 파싱을 전혀 거치지 않으므로 호스트 타임존에 영향을 받지 않는다.
+
+function ymdMonthBounds(settlementMonth: string): { start: string; end: string; dim: number } {
+  const [sy, sm] = settlementMonth.split('-').map(Number)
+  const dim = daysInMonth(sy, sm)
+  const mm = String(sm).padStart(2, '0')
+  return { start: `${sy}-${mm}-01`, end: `${sy}-${mm}-${String(dim).padStart(2, '0')}`, dim }
+}
+
+function dayOfMonth(dateStr: string): number {
+  return Number(dateStr.slice(8, 10))
+}
+
+/** dateStr(YYYY-MM-DD)에 delta일을 더한 날짜 문자열. Date.UTC로만 연산하고 UTC getter로만
+ *  읽어 호스트 타임존과 무관하다(월/연도 경계를 넘어갈 수 있는 휴직시작일-1일 계산용). */
+function addDaysToDateStr(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d) + delta * 86400000)
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`
+}
+
+export type HectoCoinDbCalc = {
+  payableDays: number
+  payCap: number
+  statusLabel: string
+  excludeReason: string | null
+  displayJoinDate: string | null    // 입사일 (휴직복귀 상태가 아닐 때만)
+  displayReturnDate: string | null  // 복귀일 (join_reason === '휴직복귀'일 때만)
+  displayLeaveDate: string | null   // 휴직 시작일 (현재 휴직 중일 때만)
+  displayExitDate: string | null    // 퇴사일 (퇴사자일 때만)
+}
+
+/**
+ * 직원 1명의 현재 DB 상태(employees)만으로 해당 정산월의 "실제 지급대상 일수"와
+ * 지급상한을 계산한다. 날짜 인정 기준(요청 사양 그대로):
+ *   입사일 = 포함, 퇴사일 = 포함, 휴직 시작일 = 제외, 복귀일 = 포함
+ *
+ * 이 테이블은 사람별 "현재 상태" 1행만 보관하고 별도 휴직 이력 테이블이 없다
+ * (실제 운영 데이터로 확인: 현재 휴직복귀 상태인 직원 전원이 exit_date=null —
+ * 복귀 처리 시점에 이전 휴직 시작일이 사라진다). 따라서 "같은 정산월 안에서
+ * 휴직과 복귀가 모두 일어난" 복합 케이스는 이 함수가 재현할 수 없고, 실제로는
+ * "정산월 이전부터 이어진 휴직 후 이번 달 복귀"와 DB상 구분이 불가능하다 —
+ * 이 경우도 그냥 복귀일 기준으로 계산되며(가장 흔한 케이스에서는 정확), 상태 라벨에
+ * "휴직복귀"로만 표시되어 담당자가 필요 시 육안으로 확인할 수 있게 한다.
+ */
+export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string): HectoCoinDbCalc {
+  const { start: monthStart, end: monthEnd, dim } = ymdMonthBounds(settlementMonth)
+
+  const isReturnee = emp.status === 'active' && emp.join_reason === '휴직복귀'
+  const isOnLeave = emp.status === 'active' && emp.join_reason === '휴직'
+  const isResigned = emp.status === 'resigned'
+
+  const displayJoinDate   = !isReturnee ? (emp.join_date ?? null) : null
+  const displayReturnDate = isReturnee ? (emp.join_date ?? null) : null
+  const displayLeaveDate  = isOnLeave ? (emp.exit_date ?? null) : null
+  const displayExitDate   = isResigned ? (emp.exit_date ?? null) : null
+  const baseDisplay = { displayJoinDate, displayReturnDate, displayLeaveDate, displayExitDate }
+
+  let rawStart: string | null = null
+  let rawEnd: string | null = null
+
+  if (isResigned) {
+    rawStart = emp.join_date ?? null
+    if (!emp.exit_date) {
+      return { payableDays: 0, payCap: 0, statusLabel: '퇴사일 미입력', excludeReason: '퇴사일이 입력되지 않아 계산할 수 없습니다.', ...baseDisplay }
+    }
+    rawEnd = emp.exit_date
+  } else if (isOnLeave) {
+    rawStart = emp.join_date ?? null
+    if (!emp.exit_date) {
+      return { payableDays: 0, payCap: 0, statusLabel: '휴직시작일 미입력', excludeReason: '휴직 시작일이 입력되지 않아 계산할 수 없습니다.', ...baseDisplay }
+    }
+    rawEnd = addDaysToDateStr(emp.exit_date, -1)   // 휴직 시작일 자체는 제외
+  } else {
+    // 휴직복귀(join_date=복귀일) / 입사 / 전적 / 인턴 등 — join_date부터 월말까지
+    rawStart = emp.join_date ?? null
+    rawEnd = null
+  }
+
+  const clampedStart = rawStart && rawStart > monthStart ? rawStart : monthStart
+  const clampedEnd = rawEnd && rawEnd < monthEnd ? rawEnd : monthEnd
+
+  if (clampedStart > clampedEnd) {
+    let reason = '해당 월 지급대상 일수가 없습니다.'
+    if (isOnLeave) reason = '월 전체 휴직'
+    else if (isResigned && emp.exit_date && emp.exit_date < monthStart) reason = '정산월 이전 퇴사'
+    else if (rawStart && rawStart > monthEnd) reason = '정산월 이후 입사'
+    return { payableDays: 0, payCap: 0, statusLabel: reason, excludeReason: reason, ...baseDisplay }
+  }
+
+  const payableDays = dayOfMonth(clampedEnd) - dayOfMonth(clampedStart) + 1
+  const payCap = payableDays >= dim ? HECTO_COIN_MONTHLY_CAP : Math.round(HECTO_COIN_MONTHLY_CAP * payableDays / dim)
+
+  const joinedMid  = !isReturnee && !!rawStart && rawStart >= monthStart && rawStart <= monthEnd
+  const returnedMid = isReturnee && !!rawStart && rawStart >= monthStart && rawStart <= monthEnd
+  const leaveMid   = isOnLeave && !!emp.exit_date && emp.exit_date >= monthStart && emp.exit_date <= monthEnd
+  const exitMid    = isResigned && !!emp.exit_date && emp.exit_date >= monthStart && emp.exit_date <= monthEnd
+
+  const parts: string[] = []
+  if (joinedMid) parts.push('중도입사')
+  if (returnedMid) parts.push('휴직복귀')
+  if (leaveMid) parts.push('휴직')
+  if (exitMid) parts.push('중도퇴사')
+  const statusLabel = parts.length > 0 ? parts.join(' + ') : '정상재직'
+
+  return { payableDays, payCap, statusLabel, excludeReason: null, ...baseDisplay }
+}
+
+// ─── 직원/고객아이디 매칭 ───────────────────────────────────────────────────────
+export type HectoCoinEmployeeMatch =
+  | { kind: 'matched'; emp: Employee }
+  | { kind: 'not_found' }
+  | { kind: 'duplicate' }
+
+/**
+ * 정규화된 이름으로 employees를 매칭한다. 직원 DB에 동일 이름이 2명 이상이면
+ * 임의로 고르지 않고 'duplicate'로 반환 — 호출부에서 "동명이인 확인 필요"로 표시하고
+ * 지급 계산/고객아이디 매칭 모두에서 제외한다.
+ */
+export function matchEmployeeByName(normalizedName: string, employees: Employee[]): HectoCoinEmployeeMatch {
+  const matches = employees.filter(e => e.name.trim() === normalizedName)
+  if (matches.length === 0) return { kind: 'not_found' }
+  if (matches.length > 1) return { kind: 'duplicate' }
+  return { kind: 'matched', emp: matches[0] }
+}
+
+export type HectoCoinCustomerIdMatch =
+  | { kind: 'matched'; customerId: string }
+  | { kind: 'not_found' }
+  | { kind: 'duplicate' }
+
+/**
+ * 고객아이디 매칭 우선순위: 1) 업로드된 사원리스트, 2) 직원 DB에 이미 있는
+ * employees.customer_id(웰니스코인용으로 이미 입력돼 있을 수 있음) 순으로 활용한다.
+ * 사원리스트에 동일 정규화 이름이 서로 다른 고객아이디로 2건 이상 있으면 임의로
+ * 고르지 않고 'duplicate' 반환(같은 아이디로 중복 등록된 경우는 모호하지 않으므로 허용).
+ */
+export function matchCustomerId(
+  normalizedName: string,
+  roster: HectoCoinRosterEntry[],
+  employeeMatch: HectoCoinEmployeeMatch,
+): HectoCoinCustomerIdMatch {
+  const rosterMatches = roster.filter(r => r.name === normalizedName && r.customerId.trim())
+  if (rosterMatches.length > 0) {
+    const distinctIds = new Set(rosterMatches.map(r => r.customerId.trim()))
+    if (distinctIds.size > 1) return { kind: 'duplicate' }
+    return { kind: 'matched', customerId: rosterMatches[0].customerId.trim() }
+  }
+  if (employeeMatch.kind === 'matched' && employeeMatch.emp.customer_id?.trim()) {
+    return { kind: 'matched', customerId: employeeMatch.emp.customer_id.trim() }
+  }
+  return { kind: 'not_found' }
+}
+
+// ─── 화면 표시용 개인별 정산 결과 ───────────────────────────────────────────────
+export type HectoCoinPointsMatchStatus = 'first_only' | 'final_only' | 'matched'
 
 export type HectoCoinEntry = {
   key: string
-  name: string
+  rawName: string    // 업로드 원본 이름(영문 제거 전)
+  name: string        // 정규화된 이름(영문 제거) — 매칭/표시/지급 엑셀 B열에 사용
   company: string | null
   position: string | null
-  joinDate: string | null
   steps: number | null
-  payCap: number
+
+  displayJoinDate: string | null
+  displayReturnDate: string | null
+  displayLeaveDate: string | null
+  displayExitDate: string | null
+  payableDays: number | null
+  payCap: number | null
+
   firstPoints: number | null
   firstAmount: number | null
   finalPoints: number | null
   finalAmount: number | null
   additionalAmount: number | null
   totalAmount: number | null
-  matchStatus: HectoCoinMatchStatus
-  isDuplicateName: boolean
+
+  pointsMatchStatus: HectoCoinPointsMatchStatus
+  isDuplicateInPointsFile: boolean   // 같은 업로드 파일 안에 동일 이름이 2건 이상
+
+  employeeMatch: 'matched' | 'not_found' | 'duplicate'
+  customerId: string | null
+  customerIdMatch: 'matched' | 'not_found' | 'duplicate'
+
+  statusLabel: string
+  excludeReason: string | null   // null이면 지급액 계산 가능한 정상 대상
 }
 
-function groupByName(rows: HectoCoinRawRow[]): Map<string, HectoCoinRawRow[]> {
+function groupByNormalizedName(rows: HectoCoinRawRow[]): Map<string, HectoCoinRawRow[]> {
   const m = new Map<string, HectoCoinRawRow[]>()
   for (const r of rows) {
-    const k = r.name.trim()
+    const k = stripEnglishFromName(r.name)
+    if (!k) continue
     if (!m.has(k)) m.set(k, [])
     m.get(k)!.push(r)
   }
@@ -196,83 +379,101 @@ function groupByName(rows: HectoCoinRawRow[]): Map<string, HectoCoinRawRow[]> {
 }
 
 function buildEntry(
-  settlementMonth: string, key: string, name: string,
-  first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, isDuplicateName: boolean,
+  settlementMonth: string, key: string, name: string, rawName: string,
+  first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, isDuplicateInPointsFile: boolean,
+  employees: Employee[], roster: HectoCoinRosterEntry[],
 ): HectoCoinEntry {
-  const src = final ?? first!
-  const payCap = calcHectoCoinPayCap(settlementMonth, src.joinDate)
+  const src = (final ?? first)!
+  const pointsMatchStatus: HectoCoinPointsMatchStatus = first && final ? 'matched' : first ? 'first_only' : 'final_only'
+
+  // 포인트 파일 내 중복 이름이면 어느 행을 기준으로 직원을 매칭해야 할지도 불분명하므로
+  // 직원 매칭 자체를 시도하지 않는다(어차피 지급 대상에서 제외됨).
+  const employeeMatch: HectoCoinEmployeeMatch = isDuplicateInPointsFile ? { kind: 'not_found' } : matchEmployeeByName(name, employees)
+  const customerIdMatch = matchCustomerId(name, roster, employeeMatch)
+
+  let statusLabel: string
+  let excludeReason: string | null
+  let payCap: number | null = null
+  let payableDays: number | null = null
+  let displayJoinDate: string | null = null
+  let displayReturnDate: string | null = null
+  let displayLeaveDate: string | null = null
+  let displayExitDate: string | null = null
+
+  if (isDuplicateInPointsFile) {
+    statusLabel = '중복 이름 확인필요'
+    excludeReason = statusLabel
+  } else if (employeeMatch.kind === 'duplicate') {
+    statusLabel = '동명이인 확인 필요'
+    excludeReason = statusLabel
+  } else if (employeeMatch.kind === 'not_found') {
+    statusLabel = '직원정보 미매칭'
+    excludeReason = statusLabel
+  } else {
+    const dbCalc = calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth)
+    statusLabel = dbCalc.statusLabel
+    excludeReason = dbCalc.excludeReason
+    payCap = dbCalc.payCap
+    payableDays = dbCalc.payableDays
+    displayJoinDate = dbCalc.displayJoinDate
+    displayReturnDate = dbCalc.displayReturnDate
+    displayLeaveDate = dbCalc.displayLeaveDate
+    displayExitDate = dbCalc.displayExitDate
+  }
+
   const firstPoints = first?.points ?? null
-  const firstAmount = firstPoints != null ? Math.min(firstPoints, payCap) : null
+  const firstAmount = (payCap != null && firstPoints != null) ? Math.min(firstPoints, payCap) : null
   const finalPoints = final?.points ?? null
-  const finalAmount = finalPoints != null ? Math.min(finalPoints, payCap) : null
+  const finalAmount = (payCap != null && finalPoints != null) ? Math.min(finalPoints, payCap) : null
   const additionalAmount = (firstAmount != null && finalAmount != null) ? Math.max(finalAmount - firstAmount, 0) : null
   const totalAmount = firstAmount != null ? firstAmount + (additionalAmount ?? 0) : null
+
   return {
-    key, name, company: src.company, position: src.position, joinDate: src.joinDate, steps: src.steps,
-    payCap, firstPoints, firstAmount, finalPoints, finalAmount, additionalAmount, totalAmount,
-    matchStatus: first && final ? 'matched' : first ? 'first_only' : 'final_only',
-    isDuplicateName,
+    key, rawName, name, company: src.company, position: src.position, steps: src.steps,
+    displayJoinDate, displayReturnDate, displayLeaveDate, displayExitDate,
+    payableDays, payCap,
+    firstPoints, firstAmount, finalPoints, finalAmount, additionalAmount, totalAmount,
+    pointsMatchStatus, isDuplicateInPointsFile,
+    employeeMatch: employeeMatch.kind,
+    customerId: customerIdMatch.kind === 'matched' ? customerIdMatch.customerId : null,
+    customerIdMatch: customerIdMatch.kind,
+    statusLabel, excludeReason,
   }
 }
 
 /**
- * 1차/최종 원본 데이터에서 화면에 표시할 개인별 정산 결과를 매번 새로 계산한다.
- * 이름이 1차·최종 파일 어느 한쪽에만 있으면 matchStatus로 표시(미매칭 경고는 화면에서
- * final_only 처리), 같은 파일 안에 동일 이름이 2건 이상이면 자동으로 짝을 맞추지 않고
- * 각 건을 개별 항목(isDuplicateName=true)으로 남겨 사용자가 직접 확인하게 한다.
+ * 1차/최종 원본 + employees(현재 상태) + 사원리스트에서 화면에 표시할 개인별 정산
+ * 결과를 매번 새로 계산한다. 이름은 stripEnglishFromName으로 정규화한 뒤 비교하므로
+ * 헥토코인 원본 파일의 "안소정ABCE" 같은 표기도 직원 DB/사원리스트의 "안소정"과
+ * 동일 인물로 매칭된다. 같은 업로드 파일 안에 동일 정규화 이름이 2건 이상이면 자동으로
+ * 짝을 맞추지 않고 각 건을 개별 항목으로 남겨 사용자가 직접 확인하게 한다.
  */
 export function computeHectoCoinEntries(
   settlementMonth: string,
   firstRows: HectoCoinRawRow[],
   finalRows: HectoCoinRawRow[],
+  employees: Employee[],
+  roster: HectoCoinRosterEntry[],
 ): HectoCoinEntry[] {
-  const firstByName = groupByName(firstRows)
-  const finalByName = groupByName(finalRows)
+  const firstByName = groupByNormalizedName(firstRows)
+  const finalByName = groupByNormalizedName(finalRows)
   const names = new Set<string>([...firstByName.keys(), ...finalByName.keys()])
   const entries: HectoCoinEntry[] = []
+
   for (const name of names) {
     const firsts = firstByName.get(name) ?? []
     const finals = finalByName.get(name) ?? []
     if (firsts.length > 1 || finals.length > 1) {
-      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r, null, true)))
-      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, null, r, true)))
+      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster)))
+      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster)))
       continue
     }
-    entries.push(buildEntry(settlementMonth, name, name, firsts[0] ?? null, finals[0] ?? null, false))
+    const first = firsts[0] ?? null
+    const final = finals[0] ?? null
+    const rawName = (final ?? first)!.name
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster))
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-}
-
-// ─── 지급용 엑셀(선불 관리자 거래 요청 양식) ─────────────────────────────────────
-// 웰니스코인과 완전히 동일한 고정 템플릿을 그대로 재사용한다(lib/wellness-coin.ts
-// fillWellnessCoinTemplate 참고 — 상단 도움말/병합셀/스타일/열너비/행높이 모두 동일).
-// 다만 헥토코인 정산은 B(고객명)·E(금액)만 채우고 A(고객 구분값)/C(고객아이디)/
-// D(휴대폰번호)는 요청대로 빈 값으로 둔다 — fillWellnessCoinTemplate을 수정하지 않고
-// 별도 함수로 둔 이유이기도 하다(웰니스코인 쪽 A/C 채우는 로직과 절대 섞이면 안 됨).
-const TEMPLATE_PATH = path.join(process.cwd(), 'lib/templates/wellness-coin-template.xlsx')
-
-export type HectoCoinPayoutRow = { name: string; amount: number }
-
-export async function fillHectoCoinTemplate(rows: HectoCoinPayoutRow[]): Promise<Buffer> {
-  if (rows.length === 0) throw new Error('다운로드할 대상자가 없습니다.')
-  const invalid = rows.find(r => !r.name?.trim() || typeof r.amount !== 'number' || !Number.isFinite(r.amount) || r.amount <= 0)
-  if (invalid) throw new Error('이름과 지급금액이 모두 유효해야 합니다.')
-  if (rows.length > 1000) throw new Error('한 번에 최대 1,000명까지 처리할 수 있습니다.')
-
-  const workbook = new ExcelJS.Workbook()
-  await workbook.xlsx.readFile(TEMPLATE_PATH)
-  const sheet = workbook.worksheets[0]
-
-  rows.forEach((r, i) => {
-    const rowNum = 3 + i
-    sheet.getCell(`B${rowNum}`).value = r.name.trim()
-    const amountCell = sheet.getCell(`E${rowNum}`)
-    amountCell.value = r.amount
-    amountCell.numFmt = '#,##0'
-  })
-
-  const raw = await workbook.xlsx.writeBuffer()
-  return Buffer.isBuffer(raw) ? raw : Buffer.from(raw as ArrayBuffer)
 }
 
 export function hectoCoinFilename(settlementMonth: string, kind: 'first' | 'additional'): string {
