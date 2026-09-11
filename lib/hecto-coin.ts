@@ -316,20 +316,66 @@ export type HectoCoinEmployeeMatch =
   | { kind: 'not_found' }
   | { kind: 'duplicate' }
 
+// employees.select('*')는 updated_at도 함께 내려오지만 공용 Employee 타입(lib/supabase.ts,
+// 다른 기능들이 널리 참조)에는 선언돼 있지 않다 — 헥토코인 정산 전용 동명이인 판별에만
+// 필요하므로 공용 타입을 건드리지 않고 이 파일 안에서만 느슨하게 읽는다.
+type EmployeeWithUpdatedAt = Employee & { updated_at?: string }
+
+/**
+ * 동일 이름 레코드가 여러 건일 때 "실제로 운영 중인 유효 레코드"를 점수로 골라낸다.
+ * 높은 점수를 주는 조건:
+ *   - 고객아이디(customer_id)가 채워져 있다 — 실제 지급에 쓰이고 있다는 뚜렷한 신호
+ *   - 현재 상태(퇴사/휴직/휴직복귀)에 맞는 예외 이벤트 날짜가 실제로 채워져 있다
+ *     (예: 퇴사자인데 exit_date가 있다 = 이 레코드가 그 퇴사 처리를 담당) — 반대로
+ *     "입사" 상태에 exit_date/customer_id도 없는 밋밋한 레코드는 과거에 만들어졌다가
+ *     방치된 중복일 가능성이 높다.
+ * 최고 점수 레코드가 유일하면 그걸 쓰고, 동점이면 최근 수정일(updated_at)로 한 번 더
+ * 가른다. 그래도 갈리지 않으면(완전히 동일한 정보의 레코드가 2건 이상) 그때만 임의로
+ * 고르지 않고 null을 반환해 호출부가 'duplicate'로 처리하게 한다.
+ */
+function pickValidEmployeeRecord(matches: Employee[]): Employee | null {
+  const score = (e: Employee): number => {
+    let s = 0
+    if (e.customer_id?.trim()) s += 3
+    if (e.status === 'resigned' && e.exit_date) s += 2
+    if (e.status === 'active' && e.join_reason === '휴직' && e.exit_date) s += 2
+    if (e.status === 'active' && e.join_reason === '휴직복귀' && e.join_date) s += 2
+    return s
+  }
+  const scored = matches.map(e => ({ e, score: score(e) }))
+  const maxScore = Math.max(...scored.map(s => s.score))
+  const topByScore = scored.filter(s => s.score === maxScore)
+  if (topByScore.length === 1) return topByScore[0].e
+
+  const withUpdatedAt = topByScore
+    .map(s => ({ ...s, updatedAt: (s.e as EmployeeWithUpdatedAt).updated_at ?? null }))
+    .filter(s => s.updatedAt)
+  if (withUpdatedAt.length > 0) {
+    const maxUpdatedAt = withUpdatedAt.reduce((max, s) => (s.updatedAt! > max ? s.updatedAt! : max), withUpdatedAt[0].updatedAt!)
+    const topByRecency = withUpdatedAt.filter(s => s.updatedAt === maxUpdatedAt)
+    if (topByRecency.length === 1) return topByRecency[0].e
+  }
+  return null
+}
+
 /**
  * 정규화된 이름으로 employees를 매칭한다. employees는 전 직원 마스터가 아니라
  * "정산월 일할계산에 영향을 주는 입/퇴사·휴직·복귀 이벤트가 있는 사람만" 등록되어
  * 있으므로, 매칭 결과가 없어도(not_found) 오류가 아니다 — 호출부(buildEntry)가
- * "일할계산할 예외 정보 없음 = 정상재직"으로 취급한다. 동일 이름이 2명 이상이면
- * 어느 쪽 이벤트를 적용해야 할지 알 수 없으므로 임의로 고르지 않고 'duplicate'로
- * 반환 — 호출부가 이 경우도 이벤트 정보 없음(정상재직)으로 기본 처리하되, 화면에
- * 확인 필요 표시를 남긴다(지급 자체를 막지는 않는다 — 그건 사원리스트/고객아이디의 몫).
+ * "일할계산할 예외 정보 없음 = 정상재직"으로 취급한다.
+ *
+ * 동일 이름이 2명 이상이면 곧바로 duplicate 처리하지 않고 먼저 pickValidEmployeeRecord로
+ * "실제로 운영 중인 유효 레코드"를 식별한다. 그렇게도 하나로 확정할 수 없는 진짜 동명이인만
+ * 'duplicate'로 반환 — 호출부가 이 경우도 이벤트 정보 없음(정상재직)으로 기본 처리하되,
+ * 화면에 확인 필요 표시를 남긴다(지급 자체를 막지는 않는다 — 그건 사원리스트/고객아이디의 몫).
  */
 export function matchEmployeeByName(normalizedName: string, employees: Employee[]): HectoCoinEmployeeMatch {
   const matches = employees.filter(e => e.name.trim() === normalizedName)
   if (matches.length === 0) return { kind: 'not_found' }
-  if (matches.length > 1) return { kind: 'duplicate' }
-  return { kind: 'matched', emp: matches[0] }
+  if (matches.length === 1) return { kind: 'matched', emp: matches[0] }
+  const valid = pickValidEmployeeRecord(matches)
+  if (valid) return { kind: 'matched', emp: valid }
+  return { kind: 'duplicate' }
 }
 
 export type HectoCoinCustomerIdMatch =
