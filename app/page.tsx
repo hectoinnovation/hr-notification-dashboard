@@ -2570,9 +2570,11 @@ export default function HRDashboard() {
   }
 
   /**
-   * 1차/추가 지급 엑셀 다운로드 대상 — 포인트파일 내 중복이름/직원정보 미매칭/동명이인/
-   * 지급대상 일수 없음(excludeReason 존재) 및 고객아이디 미매칭·중복확정불가는 전부 제외.
-   * 추가 지급 엑셀은 추가지급액이 0원인 사람도 추가로 제외한다.
+   * 1차/추가 지급 엑셀 다운로드 대상 — 포인트파일 내 중복이름/지급대상 일수 없음
+   * (excludeReason 존재) 및 고객아이디 미매칭·중복확정불가는 전부 제외한다.
+   * employees에 기록이 없는 것 자체는 제외 사유가 아니다(정상재직 기본 처리) —
+   * 실제 지급 대상 여부는 사원리스트/고객아이디 매칭이 결정한다. 추가 지급 엑셀은
+   * 추가지급액이 0원인 사람도 추가로 제외한다.
    */
   function hectoExcelEligible(e: HectoCoinEntry, kind: 'first' | 'additional'): boolean {
     if (e.excludeReason || e.customerIdMatch !== 'matched' || !e.customerId) return false
@@ -3598,9 +3600,11 @@ export default function HRDashboard() {
               const additionalReady = hectoEntries.filter(e => !e.excludeReason && (e.additionalAmount ?? 0) > 0)
               const additionalTotal = additionalReady.reduce((sum, e) => sum + (e.additionalAmount ?? 0), 0)
               const finalTotal      = firstTotal + additionalTotal
-              // 화면 표시용 경고: 직원 매칭/포인트파일 중복/지급대상 없음 등 지급 계산 자체가
-              // 불가능한 사유(excludeReason) + 최종파일에만 있어 1차와 매칭 안 되는 경우
-              const warnEntries = hectoEntries.filter(e => e.excludeReason || e.pointsMatchStatus === 'final_only')
+              // 화면 표시용 경고: 포인트파일 중복이름/지급대상 없음 등 지급 계산 자체가
+              // 불가능한 사유(excludeReason) + 최종파일에만 있어 1차와 매칭 안 되는 경우 +
+              // employees에 동명이인이 있어 일할계산 이벤트를 확정할 수 없는 경우(정상재직
+              // 기본값으로 계산은 되지만 실제로 예외가 있을 수 있어 담당자 확인 필요)
+              const warnEntries = hectoEntries.filter(e => e.excludeReason || e.pointsMatchStatus === 'final_only' || e.employeeMatch === 'duplicate')
               const customerIdMatchedCount   = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch === 'matched').length
               const customerIdUnmatchedCount = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch !== 'matched').length
               const canDownloadFirst      = hectoEntries.some(e => hectoExcelEligible(e, 'first'))
@@ -3738,7 +3742,9 @@ export default function HRDashboard() {
                       <p className="font-semibold">확인이 필요한 대상자가 있습니다</p>
                       {warnEntries.map(e => (
                         <p key={e.key}>
-                          {e.name} — {e.excludeReason ?? '최종 파일에는 있지만 1차 파일에서 이름을 찾을 수 없습니다.'}
+                          {e.name} — {e.excludeReason
+                            ?? (e.pointsMatchStatus === 'final_only' ? '최종 파일에는 있지만 1차 파일에서 이름을 찾을 수 없습니다.' : null)
+                            ?? '직원 DB에 동명이인이 있어 입사/퇴사/휴직 이벤트를 확정할 수 없습니다. 정상재직(월 상한 전액)으로 계산했으니 확인해주세요.'}
                         </p>
                       ))}
                     </div>
@@ -3753,6 +3759,7 @@ export default function HRDashboard() {
                         <thead className="bg-gray-50">
                           <tr>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
+                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">고객아이디</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">휴직일</th>
@@ -3765,7 +3772,6 @@ export default function HRDashboard() {
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
                             <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
-                            <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">고객아이디</th>
                             <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
                           </tr>
                         </thead>
@@ -3773,6 +3779,13 @@ export default function HRDashboard() {
                           {hectoEntries.map(e => (
                             <tr key={e.key} className="border-t border-gray-100">
                               <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{e.name}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {e.customerIdMatch === 'matched'
+                                  ? <span className="text-gray-700">{e.customerId}</span>
+                                  : e.customerIdMatch === 'duplicate'
+                                  ? <span className="text-red-600 font-semibold">동명이인으로 고객아이디 확정 불가</span>
+                                  : <span className="text-gray-400">고객아이디 미매칭</span>}
+                              </td>
                               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayJoinDate ?? '-'}</td>
                               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayExitDate ?? '-'}</td>
                               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayLeaveDate ?? '-'}</td>
@@ -3790,20 +3803,20 @@ export default function HRDashboard() {
                               </td>
                               <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{e.totalAmount != null ? e.totalAmount.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 whitespace-nowrap">
-                                {e.customerIdMatch === 'matched'
-                                  ? <span className="text-gray-700">{e.customerId}</span>
-                                  : e.customerIdMatch === 'duplicate'
-                                  ? <span className="text-red-600 font-semibold">매칭 확인 필요</span>
-                                  : <span className="text-gray-400">미매칭</span>}
-                              </td>
-                              <td className="px-3 py-2 whitespace-nowrap">
                                 {e.excludeReason
                                   ? <span className="text-red-600 font-semibold">{e.excludeReason}</span>
                                   : e.pointsMatchStatus === 'final_only'
                                   ? <span className="text-red-600 font-semibold">1차 미매칭</span>
-                                  : e.pointsMatchStatus === 'first_only'
-                                  ? <span className="text-gray-400">{e.statusLabel} · 최종 미정산</span>
-                                  : <span className="text-emerald-600 font-semibold">{e.statusLabel}</span>}
+                                  : (
+                                    <>
+                                      {e.pointsMatchStatus === 'first_only'
+                                        ? <span className="text-gray-400">{e.statusLabel} · 최종 미정산</span>
+                                        : <span className="text-emerald-600 font-semibold">{e.statusLabel}</span>}
+                                      {e.employeeMatch === 'duplicate' && (
+                                        <span className="text-amber-600 font-semibold"> · 직원DB 동명이인 확인필요</span>
+                                      )}
+                                    </>
+                                  )}
                               </td>
                             </tr>
                           ))}

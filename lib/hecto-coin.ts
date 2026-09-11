@@ -285,6 +285,20 @@ export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string
   return { payableDays, payCap, statusLabel, excludeReason: null, ...baseDisplay }
 }
 
+/**
+ * employees에 해당 인물의 이벤트 기록이 아예 없거나(정상적인 경우 — employees는
+ * "일할계산 예외 정보"만 담는 테이블이라 대부분의 정상 재직자는 여기 없다) 동명이인이라
+ * 어느 기록을 적용해야 할지 알 수 없을 때 쓰는 기본값. "정산월 안에서 알려진 예외 이벤트가
+ * 없다 = 이번 달 내내 정상재직"으로 간주해 월 전체 상한을 그대로 적용한다.
+ */
+function fullMonthCalc(settlementMonth: string): HectoCoinDbCalc {
+  const { dim } = ymdMonthBounds(settlementMonth)
+  return {
+    payableDays: dim, payCap: HECTO_COIN_MONTHLY_CAP, statusLabel: '정상재직', excludeReason: null,
+    displayJoinDate: null, displayReturnDate: null, displayLeaveDate: null, displayExitDate: null,
+  }
+}
+
 // ─── 직원/고객아이디 매칭 ───────────────────────────────────────────────────────
 export type HectoCoinEmployeeMatch =
   | { kind: 'matched'; emp: Employee }
@@ -292,9 +306,13 @@ export type HectoCoinEmployeeMatch =
   | { kind: 'duplicate' }
 
 /**
- * 정규화된 이름으로 employees를 매칭한다. 직원 DB에 동일 이름이 2명 이상이면
- * 임의로 고르지 않고 'duplicate'로 반환 — 호출부에서 "동명이인 확인 필요"로 표시하고
- * 지급 계산/고객아이디 매칭 모두에서 제외한다.
+ * 정규화된 이름으로 employees를 매칭한다. employees는 전 직원 마스터가 아니라
+ * "정산월 일할계산에 영향을 주는 입/퇴사·휴직·복귀 이벤트가 있는 사람만" 등록되어
+ * 있으므로, 매칭 결과가 없어도(not_found) 오류가 아니다 — 호출부(buildEntry)가
+ * "일할계산할 예외 정보 없음 = 정상재직"으로 취급한다. 동일 이름이 2명 이상이면
+ * 어느 쪽 이벤트를 적용해야 할지 알 수 없으므로 임의로 고르지 않고 'duplicate'로
+ * 반환 — 호출부가 이 경우도 이벤트 정보 없음(정상재직)으로 기본 처리하되, 화면에
+ * 확인 필요 표시를 남긴다(지급 자체를 막지는 않는다 — 그건 사원리스트/고객아이디의 몫).
  */
 export function matchEmployeeByName(normalizedName: string, employees: Employee[]): HectoCoinEmployeeMatch {
   const matches = employees.filter(e => e.name.trim() === normalizedName)
@@ -401,16 +419,19 @@ function buildEntry(
   let displayExitDate: string | null = null
 
   if (isDuplicateInPointsFile) {
+    // 같은 업로드 파일 안에 동일 이름이 2건 이상 — 어느 포인트 값이 누구 것인지 알 수
+    // 없으므로 이 케이스만 지급 계산 자체를 하지 않는다(employees/사원리스트와는 무관).
     statusLabel = '중복 이름 확인필요'
     excludeReason = statusLabel
-  } else if (employeeMatch.kind === 'duplicate') {
-    statusLabel = '동명이인 확인 필요'
-    excludeReason = statusLabel
-  } else if (employeeMatch.kind === 'not_found') {
-    statusLabel = '직원정보 미매칭'
-    excludeReason = statusLabel
   } else {
-    const dbCalc = calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth)
+    // employees는 전 직원 마스터가 아니라 "일할계산 예외 이벤트"만 담는 테이블이므로,
+    // 매칭되면 그 이벤트를 반영하고 / 매칭 안 되거나(not_found) 동명이인이라 어느 기록을
+    // 적용할지 알 수 없으면(duplicate) "이번 달 알려진 예외 없음 = 정상재직"을 기본값으로
+    // 쓴다 — 둘 다 지급 계산 자체를 막지 않는다(실제 지급 대상 여부는 사원리스트/고객아이디
+    // 매칭이 결정한다).
+    const dbCalc = employeeMatch.kind === 'matched'
+      ? calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth)
+      : fullMonthCalc(settlementMonth)
     statusLabel = dbCalc.statusLabel
     excludeReason = dbCalc.excludeReason
     payCap = dbCalc.payCap
