@@ -19,7 +19,7 @@ import {
   mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry,
   toHectoCoinDetailRow, hectoCoinDetailFilename,
   type HectoCoinSettlementRow, type HectoCoinRosterRow, type HectoCoinEntry, type HectoCoinPaymentOverrides,
-  type HectoCoinDataOverrides, type HectoCoinDetailSummary,
+  type HectoCoinDataOverrides, type HectoCoinDetailSummary, type HectoCoinExcludedEmployees,
 } from '@/lib/hecto-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
@@ -2320,6 +2320,11 @@ export default function HRDashboard() {
   // 고객아이디 화면 직접 입력/수정
   const [hectoCustomerIdSavingKey, setHectoCustomerIdSavingKey] = useState<string | null>(null)
   const [hectoCustomerIdError,     setHectoCustomerIdError]     = useState<string | null>(null)
+  // 정산 대상 제외/복원 — employees/사원리스트/원본 포인트 파일은 그대로 두고 "이번
+  // 정산월의 화면 목록에서만" 빼는 플래그(hectoSettlement.excluded_employees)
+  const [hectoExcludeSavingKey,  setHectoExcludeSavingKey]  = useState<string | null>(null)
+  const [hectoExcludeError,      setHectoExcludeError]      = useState<string | null>(null)
+  const [hectoExcludedPanelOpen, setHectoExcludedPanelOpen] = useState(false)
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2528,11 +2533,14 @@ export default function HRDashboard() {
 
   // 헥토코인 정산: 선택한 정산월의 1차/최종 원본 + employees(입/퇴사·휴직·복귀 source of truth)
   // + 사원리스트(고객아이디 매핑)에서 화면 표시용 결과를 매번 다시 계산
+  const hectoExcludedEmployees: HectoCoinExcludedEmployees = hectoSettlement?.excluded_employees ?? {}
+  const hectoExcludedNames = Object.keys(hectoExcludedEmployees)
   const hectoEntries: HectoCoinEntry[] = computeHectoCoinEntries(
     hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
     employees, hectoRoster?.entries ?? [],
     hectoSettlement?.first_payment_overrides ?? {}, hectoSettlement?.additional_payment_overrides ?? {},
     hectoSettlement?.first_data_overrides ?? {}, hectoSettlement?.additional_data_overrides ?? {},
+    hectoExcludedEmployees,
   )
   // 요약 카드/상세 엑셀 공용 — 둘이 서로 다른 계산식을 쓰면 화면 총액과 엑셀 총액이
   // 어긋날 수 있으므로 반드시 같은 변수를 그대로 재사용한다(hecto 탭 렌더 블록과
@@ -2885,6 +2893,7 @@ export default function HRDashboard() {
       finalTotal: hectoFinalTotal,
       customerIdMatchedCount: hectoCustomerIdMatchedCount,
       customerIdUnmatchedCount: hectoCustomerIdUnmatchedCount,
+      excludedCount: hectoExcludedNames.length,
     }
     const rows = hectoEntries.map(toHectoCoinDetailRow)
     setHectoDetailDownloading(true); setHectoError(null)
@@ -3056,6 +3065,48 @@ export default function HRDashboard() {
     setHectoCustomerIdSavingKey(null)
     if (error) { setHectoCustomerIdError('저장 실패: ' + error.message); return }
     setHectoRoster(data as HectoCoinRosterRow)
+  }
+
+  /**
+   * 정산 대상 제외 — employees/사원리스트/원본 포인트 파일(first_rows/final_rows)은
+   * 전혀 건드리지 않고, hecto_coin_settlements.excluded_employees(정산월별)에
+   * "정규화된이름: true" 플래그만 추가한다. 이미 제외된 사람을 다시 눌러도(중복 방지)
+   * 같은 키를 덮어쓸 뿐이라 안전하다.
+   */
+  async function excludeHectoEmployee(name: string) {
+    if (!hectoSettlement) return
+    if (hectoExcludedEmployees[name]) return
+    if (!confirm(`${name}님을 ${hectoMonthLabel(hectoSettlementMonth)} 헥토코인 정산 대상에서 제외하시겠습니까?\n직원 DB나 사원리스트에서는 삭제되지 않습니다.`)) return
+    const updated: HectoCoinExcludedEmployees = { ...hectoExcludedEmployees, [name]: true }
+    setHectoExcludeSavingKey(name); setHectoExcludeError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .update({ excluded_employees: updated, updated_at: new Date().toISOString() })
+      .eq('settlement_month', hectoSettlementMonth)
+      .select('*')
+      .single()
+    setHectoExcludeSavingKey(null)
+    if (error) { setHectoExcludeError('제외 처리 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
+  }
+
+  /** 정산 대상 복원 — excluded_employees에서 해당 이름만 제거한다. 원본 데이터(포인트
+   *  파일/employees/사원리스트/수동입력값/override)는 손대지 않으므로 지급액도 자동으로
+   *  기존 값 그대로 다시 계산되어 나타난다. */
+  async function restoreHectoEmployee(name: string) {
+    if (!hectoSettlement) return
+    const updated = { ...hectoExcludedEmployees }
+    delete updated[name]
+    setHectoExcludeSavingKey(name); setHectoExcludeError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .update({ excluded_employees: updated, updated_at: new Date().toISOString() })
+      .eq('settlement_month', hectoSettlementMonth)
+      .select('*')
+      .single()
+    setHectoExcludeSavingKey(null)
+    if (error) { setHectoExcludeError('복원 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
   }
 
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }
@@ -4065,6 +4116,12 @@ export default function HRDashboard() {
                       <button onClick={() => setHectoCustomerIdError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
                     </div>
                   )}
+                  {hectoExcludeError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-600 flex items-center justify-between">
+                      <span>{hectoExcludeError}</span>
+                      <button onClick={() => setHectoExcludeError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
+                    </div>
+                  )}
                   {hectoNotice && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-xs text-blue-600 flex items-center justify-between">
                       <span>{hectoNotice}</span>
@@ -4157,6 +4214,32 @@ export default function HRDashboard() {
                     </div>
                   </div>
 
+                  {/* 정산 대상 제외/복원 */}
+                  {hectoExcludedNames.length > 0 && (
+                    <div className="bg-white rounded-xl border border-gray-200 p-3">
+                      <button onClick={() => setHectoExcludedPanelOpen(v => !v)}
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-800">
+                        <svg className={`w-3.5 h-3.5 transition-transform ${hectoExcludedPanelOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        제외된 인원 {hectoExcludedNames.length}명
+                      </button>
+                      {hectoExcludedPanelOpen && (
+                        <div className="mt-2 space-y-1.5 border-t border-gray-100 pt-2">
+                          {hectoExcludedNames.map(name => (
+                            <div key={name} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-1.5">
+                              <span className="text-gray-700">{name}</span>
+                              <button onClick={() => restoreHectoEmployee(name)} disabled={hectoExcludeSavingKey === name}
+                                className="text-blue-600 hover:text-blue-800 font-semibold disabled:opacity-40">
+                                {hectoExcludeSavingKey === name ? '복원 중...' : '복원'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* 지급용 엑셀 다운로드 */}
                   <div className="flex justify-end gap-2">
                     <button onClick={() => downloadHectoCoinExcel('first', hectoEntries)}
@@ -4228,7 +4311,18 @@ export default function HRDashboard() {
                         <tbody>
                           {hectoEntries.map(e => (
                             <tr key={e.key} className="border-t border-gray-100">
-                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{e.name}</td>
+                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">
+                                <div className="flex items-center gap-1.5">
+                                  <span>{e.name}</span>
+                                  <button onClick={() => excludeHectoEmployee(e.name)} disabled={hectoExcludeSavingKey === e.name}
+                                    title="이번 정산월 대상에서만 제외(직원 DB/사원리스트는 삭제되지 않음)"
+                                    className="text-gray-300 hover:text-red-500 disabled:opacity-40 transition-colors">
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </td>
                               <td className="px-3 py-2 whitespace-nowrap">
                                 <HectoEditableCustomerIdCell
                                   customerId={e.customerId} isManual={e.customerIdMatch === 'matched' && !!hectoRoster?.entries?.find(r => r.name === e.name && r.source === 'manual')}

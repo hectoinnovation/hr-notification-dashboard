@@ -35,6 +35,7 @@ export type HectoCoinSettlementRow = {
   additional_payment_overrides: HectoCoinPaymentOverrides | null
   first_data_overrides: HectoCoinDataOverrides | null
   additional_data_overrides: HectoCoinDataOverrides | null
+  excluded_employees: HectoCoinExcludedEmployees | null
 }
 
 /**
@@ -97,6 +98,16 @@ export function validateHectoCoinDataOverride(
   }
   return { ok: true, entry: { steps, points } }
 }
+
+/**
+ * 정산 대상 제외 — { 정규화된이름: true }. employees/사원리스트/원본 포인트 파일 등
+ * 원본 데이터는 전혀 건드리지 않고, "선택한 정산월의 헥토코인 정산 목록에서만" 해당
+ * 직원을 빼는 플래그다. computeHectoCoinEntries가 UNION으로 전체 대상자 목록을 만든
+ * 뒤 마지막 단계에서 이 목록에 있는 이름만 걸러낸다 — 재업로드/재계산으로 UNION이
+ * 다시 만들어져도 이 플래그가 없어지지 않는 한 계속 제외된 채로 유지된다. 정산월별로
+ * hecto_coin_settlements 행에 저장되므로 다른 달에는 영향이 없다.
+ */
+export type HectoCoinExcludedEmployees = Record<string, true>
 
 // ─── 사원리스트(고객아이디 매핑) ────────────────────────────────────────────────
 // 정산월과 무관하게 유지되는 전역 매핑 — cafe_excel_data와 동일한 "singleton 1행"
@@ -746,6 +757,7 @@ export function computeHectoCoinEntries(
   additionalOverrides: HectoCoinPaymentOverrides = {},
   firstDataOverrides: HectoCoinDataOverrides = {},
   additionalDataOverrides: HectoCoinDataOverrides = {},
+  excludedEmployees: HectoCoinExcludedEmployees = {},
 ): HectoCoinEntry[] {
   const firstByName = groupByNormalizedName(firstRows)
   const finalByName = groupByNormalizedName(finalRows)
@@ -785,7 +797,11 @@ export function computeHectoCoinEntries(
     entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
   }
 
-  return entries.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  // 정산 대상 제외 — 항상 UNION(포인트 파일 ∪ employees 이벤트)이 전부 만들어진 뒤
+  // 마지막에 적용한다. 그래야 재업로드/재계산으로 UNION이 다시 만들어져도 제외 플래그가
+  // 있는 사람은 다시 나타나지 않는다(요청 사양의 순서: UNION → excluded 제거 → 최종 목록).
+  const visible = entries.filter(e => !excludedEmployees[e.name])
+  return visible.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 
 export function hectoCoinFilename(settlementMonth: string, kind: 'first' | 'additional'): string {
@@ -869,6 +885,7 @@ export type HectoCoinDetailSummary = {
   finalTotal: number
   customerIdMatchedCount: number
   customerIdUnmatchedCount: number
+  excludedCount: number   // 정산 대상에서 제외된 인원 — 상세 엑셀 정산요약 시트에만 표시(제외자 행 자체는 상세 엑셀에 넣지 않음)
 }
 
 export function hectoCoinDetailFilename(settlementMonth: string): string {

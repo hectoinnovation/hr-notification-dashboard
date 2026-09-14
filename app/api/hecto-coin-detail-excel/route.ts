@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
     ['월 최종 지급 총액', summary.finalTotal],
     ['고객아이디 매칭 완료 인원', summary.customerIdMatchedCount],
     ['고객아이디 미매칭 인원', summary.customerIdUnmatchedCount],
+    ['정산 제외 인원', summary.excludedCount],
   ]
   summaryRows.forEach(([label, value], i) => {
     const r = i + 3
