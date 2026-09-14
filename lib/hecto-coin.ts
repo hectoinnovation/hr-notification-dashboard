@@ -400,7 +400,10 @@ function pickValidEmployeeRecord(matches: Employee[]): Employee | null {
  * 화면에 확인 필요 표시를 남긴다(지급 자체를 막지는 않는다 — 그건 사원리스트/고객아이디의 몫).
  */
 export function matchEmployeeByName(normalizedName: string, employees: Employee[]): HectoCoinEmployeeMatch {
-  const matches = employees.filter(e => e.name.trim() === normalizedName)
+  // employees.name도 헥토코인/사원리스트 쪽과 동일하게 내부 연속 공백을 하나로 정리한 뒤
+  // 비교한다(양끝 공백만 지우는 trim()과 달리, 직원 DB에 실수로 들어간 이중 공백 등으로
+  // 매칭이 조용히 실패하는 것을 막기 위함 — 영문 제거는 employees.name에는 적용하지 않는다).
+  const matches = employees.filter(e => e.name.replace(/\s+/g, ' ').trim() === normalizedName)
   if (matches.length === 0) return { kind: 'not_found' }
   if (matches.length === 1) return { kind: 'matched', emp: matches[0] }
   const valid = pickValidEmployeeRecord(matches)
