@@ -31,6 +31,36 @@ export type HectoCoinSettlementRow = {
   final_file_name: string | null
   final_uploaded_at: string | null
   final_rows: HectoCoinRawRow[] | null
+  first_payment_overrides: HectoCoinPaymentOverrides | null
+  additional_payment_overrides: HectoCoinPaymentOverrides | null
+}
+
+/**
+ * 지급금액 수동 수정값 — { 정규화된이름: 금액 }. 자동 계산값을 대체하는 게 아니라
+ * "있으면 자동계산값보다 우선 적용"할 뿐이라, 값이 없는 사람은 항상 자동 계산값을 쓴다.
+ * 키는 employees/사원리스트/포인트파일 매칭에 이미 쓰이는 정규화된 이름과 동일 기준
+ * (stripEnglishFromName 결과) — 고객아이디는 사원리스트 업로드 전엔 null일 수 있어
+ * override 키로 쓰기엔 불안정하므로 쓰지 않는다.
+ */
+export type HectoCoinPaymentOverrides = Record<string, number>
+
+/**
+ * 수동 지급액 입력값 검증. 정수·0 이상만 허용(쉼표는 제거하고 처리), 지급상한을
+ * 넘으면 저장을 막는다. 1차 지급액은 otherAppliedAmount=0으로 호출해 "이 금액 자체가
+ * 상한을 넘지 않는지"만 보고, 추가 지급액은 otherAppliedAmount에 적용된 1차 지급액을
+ * 넘겨 "적용된 1차 + 이 추가 금액"의 합이 상한을 넘지 않는지 함께 검증한다.
+ */
+export function validateHectoCoinOverrideAmount(
+  raw: string, payCap: number | null, otherAppliedAmount: number,
+): { ok: true; amount: number } | { ok: false; error: string } {
+  const cleaned = raw.replace(/,/g, '').trim()
+  if (!/^\d+$/.test(cleaned)) return { ok: false, error: '0 이상의 정수만 입력할 수 있습니다.' }
+  const amount = Number(cleaned)
+  if (!Number.isFinite(amount) || amount < 0) return { ok: false, error: '0 이상의 정수만 입력할 수 있습니다.' }
+  if (payCap != null && otherAppliedAmount + amount > payCap) {
+    return { ok: false, error: `지급상한 ${payCap.toLocaleString()}원을 초과할 수 없습니다.` }
+  }
+  return { ok: true, amount }
 }
 
 // ─── 사원리스트(고객아이디 매핑) ────────────────────────────────────────────────
@@ -425,11 +455,15 @@ export type HectoCoinEntry = {
   payCap: number | null
 
   firstPoints: number | null
-  firstAmount: number | null
+  firstAutoAmount: number | null       // 자동 계산값(항상 보존 — 수동 수정과 비교용)
+  firstOverrideAmount: number | null   // 수동 수정값(없으면 null)
+  firstAmount: number | null           // 최종 적용값 = firstOverrideAmount ?? firstAutoAmount
   finalPoints: number | null
-  finalAmount: number | null
-  additionalAmount: number | null
-  totalAmount: number | null
+  finalAmount: number | null           // MIN(최종포인트, 지급상한) — 수동수정 대상 아님(내부 계산용)
+  additionalAutoAmount: number | null  // 자동 계산값 = MAX(finalAmount - 적용된 1차 지급액, 0)
+  additionalOverrideAmount: number | null
+  additionalAmount: number | null      // 최종 적용값 = additionalOverrideAmount ?? additionalAutoAmount
+  totalAmount: number | null           // 적용된 1차 + 적용된 추가
 
   pointsMatchStatus: HectoCoinPointsMatchStatus
   isDuplicateInPointsFile: boolean   // 같은 업로드 파일 안에 동일 이름이 2건 이상
@@ -457,6 +491,7 @@ function buildEntry(
   settlementMonth: string, key: string, name: string, rawName: string,
   first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, isDuplicateInPointsFile: boolean,
   employees: Employee[], roster: HectoCoinRosterEntry[],
+  firstOverrides: HectoCoinPaymentOverrides, additionalOverrides: HectoCoinPaymentOverrides,
 ): HectoCoinEntry {
   const src = (final ?? first)!
   const pointsMatchStatus: HectoCoinPointsMatchStatus = first && final ? 'matched' : first ? 'first_only' : 'final_only'
@@ -499,18 +534,32 @@ function buildEntry(
     displayExitDate = dbCalc.displayExitDate
   }
 
+  const validOverride = (v: unknown): number | null =>
+    (typeof v === 'number' && Number.isFinite(v) && v >= 0) ? v : null
+
   const firstPoints = first?.points ?? null
-  const firstAmount = (payCap != null && firstPoints != null) ? Math.min(firstPoints, payCap) : null
+  const firstAutoAmount = (payCap != null && firstPoints != null) ? Math.min(firstPoints, payCap) : null
+  // 수동 수정은 "자동 계산값이 존재하는(=실제 지급 계산이 가능한) 사람"에게만 의미가
+  // 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 override를 적용하지
+  // 않는다(어차피 화면에서도 편집 UI를 노출하지 않는다).
+  const firstOverrideAmount = firstAutoAmount != null ? validOverride(firstOverrides[name]) : null
+  const firstAmount = firstOverrideAmount ?? firstAutoAmount
+
   const finalPoints = final?.points ?? null
   const finalAmount = (payCap != null && finalPoints != null) ? Math.min(finalPoints, payCap) : null
-  const additionalAmount = (firstAmount != null && finalAmount != null) ? Math.max(finalAmount - firstAmount, 0) : null
+  // 추가 지급액 자동 계산은 "적용된(수동 수정 반영된) 1차 지급액" 기준으로 다시 계산한다 —
+  // 1차를 수동 수정하면 추가 지급 자동계산도 함께 갱신되어야 하기 때문.
+  const additionalAutoAmount = (finalAmount != null && firstAmount != null) ? Math.max(finalAmount - firstAmount, 0) : null
+  const additionalOverrideAmount = additionalAutoAmount != null ? validOverride(additionalOverrides[name]) : null
+  const additionalAmount = additionalOverrideAmount ?? additionalAutoAmount
   const totalAmount = firstAmount != null ? firstAmount + (additionalAmount ?? 0) : null
 
   return {
     key, rawName, name, company: src.company, position: src.position, steps: src.steps,
     displayJoinDate, displayReturnDate, displayLeaveDate, displayExitDate,
     payableDays, payCap,
-    firstPoints, firstAmount, finalPoints, finalAmount, additionalAmount, totalAmount,
+    firstPoints, firstAutoAmount, firstOverrideAmount, firstAmount,
+    finalPoints, finalAmount, additionalAutoAmount, additionalOverrideAmount, additionalAmount, totalAmount,
     pointsMatchStatus, isDuplicateInPointsFile,
     employeeMatch: employeeMatch.kind,
     customerId: customerIdMatch.kind === 'matched' ? customerIdMatch.customerId : null,
@@ -532,6 +581,8 @@ export function computeHectoCoinEntries(
   finalRows: HectoCoinRawRow[],
   employees: Employee[],
   roster: HectoCoinRosterEntry[],
+  firstOverrides: HectoCoinPaymentOverrides = {},
+  additionalOverrides: HectoCoinPaymentOverrides = {},
 ): HectoCoinEntry[] {
   const firstByName = groupByNormalizedName(firstRows)
   const finalByName = groupByNormalizedName(finalRows)
@@ -542,14 +593,14 @@ export function computeHectoCoinEntries(
     const firsts = firstByName.get(name) ?? []
     const finals = finalByName.get(name) ?? []
     if (firsts.length > 1 || finals.length > 1) {
-      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster)))
-      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster)))
+      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides)))
+      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides)))
       continue
     }
     const first = firsts[0] ?? null
     const final = finals[0] ?? null
     const rawName = (final ?? first)!.name
-    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster))
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides))
   }
   return entries.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
