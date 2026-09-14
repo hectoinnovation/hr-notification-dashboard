@@ -609,3 +609,77 @@ export function hectoCoinFilename(settlementMonth: string, kind: 'first' | 'addi
   const [y, m] = settlementMonth.split('-')
   return `헥토코인_${kind === 'first' ? '1차지급' : '추가지급'}_${y}년_${m}월.xlsx`
 }
+
+// ─── 정산 상세 엑셀(검토/보관용 — 실제 지급 업로드용 엑셀과 완전히 별개) ────────────
+// 화면 "정산 상세 엑셀 다운로드"용. 지급용 엑셀(1차/추가)은 고객아이디 매칭된 지급
+// 대상자만 담지만, 이 파일은 화면에 보이는 전체 행(고객아이디 미매칭/동명이인/휴직 등
+// 포함)을 그대로 담아 월 전체 정산 내역을 검토·보관할 수 있게 한다. ExcelJS로 새
+// workbook을 만드는 부분(스타일/시트 구성)은 exceljs가 Node 전용이라 이 파일이 아니라
+// app/api/hecto-coin-detail-excel/route.ts(서버 전용)에 둔다 — lib/hecto-coin.ts는
+// 클라이언트(app/page.tsx)에서도 import하므로 exceljs 의존성을 여기 들이지 않는다.
+
+/** 화면 "상태" 컬럼 + "고객아이디" 컬럼이 보여주는 상태/사유 정보를 한 문자열로 합친다
+ *  — 상세 엑셀 O열에 그대로 쓰기 위함(화면에 흩어진 정보를 검토용 문서 한 칸에 정리). */
+export function hectoCoinStatusText(e: HectoCoinEntry): string {
+  const parts: string[] = [e.excludeReason ?? e.statusLabel]
+  if (e.pointsMatchStatus === 'final_only') parts.push('1차 미매칭')
+  else if (e.pointsMatchStatus === 'first_only') parts.push('최종 미정산')
+  if (e.employeeMatch === 'duplicate') parts.push('직원DB 동명이인 확인필요')
+  if (e.customerIdMatch === 'duplicate') parts.push('고객아이디 동명이인 확인필요')
+  else if (e.customerIdMatch === 'not_found') parts.push('고객아이디 미매칭')
+  return parts.join(' · ')
+}
+
+export type HectoCoinDetailRow = {
+  name: string
+  customerId: string | null
+  displayJoinDate: string | null
+  displayExitDate: string | null
+  displayLeaveDate: string | null
+  displayReturnDate: string | null
+  steps: number | null
+  payableDays: number | null
+  payCap: number | null
+  firstPoints: number | null
+  firstAmount: number | null
+  finalPoints: number | null
+  additionalAmount: number | null
+  totalAmount: number | null
+  statusText: string
+  pointsMatchStatus: HectoCoinPointsMatchStatus
+  firstOverrideAmount: number | null
+  firstAutoAmount: number | null
+  additionalOverrideAmount: number | null
+  additionalAutoAmount: number | null
+}
+
+/** HectoCoinEntry(화면에 쓰이는 전체 계산 결과) → 상세 엑셀 전송용 단순 row.
+ *  화면과 값이 반드시 같아야 하므로 화면이 쓰는 필드를 그대로 옮겨 담기만 한다. */
+export function toHectoCoinDetailRow(e: HectoCoinEntry): HectoCoinDetailRow {
+  return {
+    name: e.name, customerId: e.customerId,
+    displayJoinDate: e.displayJoinDate, displayExitDate: e.displayExitDate,
+    displayLeaveDate: e.displayLeaveDate, displayReturnDate: e.displayReturnDate,
+    steps: e.steps, payableDays: e.payableDays, payCap: e.payCap,
+    firstPoints: e.firstPoints, firstAmount: e.firstAmount,
+    finalPoints: e.finalPoints, additionalAmount: e.additionalAmount, totalAmount: e.totalAmount,
+    statusText: hectoCoinStatusText(e), pointsMatchStatus: e.pointsMatchStatus,
+    firstOverrideAmount: e.firstOverrideAmount, firstAutoAmount: e.firstAutoAmount,
+    additionalOverrideAmount: e.additionalOverrideAmount, additionalAutoAmount: e.additionalAutoAmount,
+  }
+}
+
+export type HectoCoinDetailSummary = {
+  settlementMonth: string
+  firstCount: number
+  firstTotal: number
+  additionalCount: number
+  additionalTotal: number
+  finalTotal: number
+  customerIdMatchedCount: number
+  customerIdUnmatchedCount: number
+}
+
+export function hectoCoinDetailFilename(settlementMonth: string): string {
+  return `헥토코인_정산상세_${settlementMonth}.xlsx`
+}
