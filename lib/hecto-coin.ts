@@ -239,6 +239,10 @@ export type HectoCoinDbCalc = {
   displayReturnDate: string | null  // 복귀일 (join_reason === '휴직복귀'이면서 정산월 안의 복귀일일 때만)
   displayLeaveDate: string | null   // 휴직 시작일 (현재 휴직 중이면서 정산월 안의 휴직시작일일 때만)
   displayExitDate: string | null    // 퇴사일 (퇴사자이면서 정산월 안의 퇴사일일 때만)
+  // 정산월 안에서 실제로 발생한 입사/퇴사/휴직/복귀 이벤트가 하나라도 있는지 —
+  // 헥토코인 포인트 파일에는 없는 직원이라도 이 값이 true면 정산 목록에 새로 추가한다
+  // (computeHectoCoinEntries의 employees UNION 로직에서 사용).
+  hasMonthEvent: boolean
 }
 
 /**
@@ -278,6 +282,7 @@ export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string
     displayReturnDate: returnedMid ? emp.join_date! : null,
     displayLeaveDate: leaveMid ? emp.exit_date! : null,
     displayExitDate: exitMid ? emp.exit_date! : null,
+    hasMonthEvent: joinedMid || returnedMid || leaveMid || exitMid,
   }
 
   let rawStart: string | null = null
@@ -337,6 +342,7 @@ function fullMonthCalc(settlementMonth: string): HectoCoinDbCalc {
   return {
     payableDays: dim, payCap: HECTO_COIN_MONTHLY_CAP, statusLabel: '정상재직', excludeReason: null,
     displayJoinDate: null, displayReturnDate: null, displayLeaveDate: null, displayExitDate: null,
+    hasMonthEvent: false,
   }
 }
 
@@ -440,7 +446,10 @@ export function matchCustomerId(
 }
 
 // ─── 화면 표시용 개인별 정산 결과 ───────────────────────────────────────────────
-export type HectoCoinPointsMatchStatus = 'first_only' | 'final_only' | 'matched'
+// 'no_points_file' = 헥토코인 포인트 파일(1차/최종 어느 쪽에도)에는 이름이 없지만,
+// employees에 이번 정산월 이벤트가 있어 정산 목록에 추가된 행(포인트 파일과 무관하게
+// 직원 DB 이벤트만으로 생성됨).
+export type HectoCoinPointsMatchStatus = 'first_only' | 'final_only' | 'matched' | 'no_points_file'
 
 export type HectoCoinEntry = {
   key: string
@@ -495,9 +504,14 @@ function buildEntry(
   first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, isDuplicateInPointsFile: boolean,
   employees: Employee[], roster: HectoCoinRosterEntry[],
   firstOverrides: HectoCoinPaymentOverrides, additionalOverrides: HectoCoinPaymentOverrides,
+  finalFileUploaded: boolean,
 ): HectoCoinEntry {
-  const src = (final ?? first)!
-  const pointsMatchStatus: HectoCoinPointsMatchStatus = first && final ? 'matched' : first ? 'first_only' : 'final_only'
+  // first/final 둘 다 null일 수 있다 — 헥토코인 포인트 파일에는 없지만 employees 이벤트만
+  // 있어 새로 추가된 행(no_points_file). 이 경우 company/position/steps는 포인트 파일에서
+  // 가져올 데이터가 없으므로 전부 null로 둔다.
+  const src = final ?? first ?? { name: rawName, company: null, position: null, steps: null, points: null }
+  const pointsMatchStatus: HectoCoinPointsMatchStatus =
+    first && final ? 'matched' : first ? 'first_only' : final ? 'final_only' : 'no_points_file'
 
   // 포인트 파일 내 중복 이름이면 어느 행을 기준으로 직원을 매칭해야 할지도 불분명하므로
   // 직원 매칭 자체를 시도하지 않는다(어차피 지급 대상에서 제외됨).
@@ -541,7 +555,13 @@ function buildEntry(
     (typeof v === 'number' && Number.isFinite(v) && v >= 0) ? v : null
 
   const firstPoints = first?.points ?? null
-  const firstAutoAmount = (payCap != null && firstPoints != null) ? Math.min(firstPoints, payCap) : null
+  // no_points_file(포인트 파일 어디에도 없는 직원DB 전용 행)은 1차 파일이 이미 확정
+  // 업로드된 상태에서 "그 안에 이 사람이 없다"는 사실 자체가 확정 정보이므로, 포인트를
+  // 모른다(null)가 아니라 1차 지급액을 0으로 확정한다 — 화면 표시는 걸음수/포인트 칸을
+  // '-'로 비워 "데이터 없음"을 보여주되, 지급액 칸은 명확히 0원으로 보여준다.
+  const firstAutoAmount = payCap == null ? null
+    : firstPoints != null ? Math.min(firstPoints, payCap)
+    : pointsMatchStatus === 'no_points_file' ? 0 : null
   // 수동 수정은 "자동 계산값이 존재하는(=실제 지급 계산이 가능한) 사람"에게만 의미가
   // 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 override를 적용하지
   // 않는다(어차피 화면에서도 편집 UI를 노출하지 않는다).
@@ -549,7 +569,13 @@ function buildEntry(
   const firstAmount = firstOverrideAmount ?? firstAutoAmount
 
   const finalPoints = final?.points ?? null
-  const finalAmount = (payCap != null && finalPoints != null) ? Math.min(finalPoints, payCap) : null
+  // 최종 쪽은 1차와 달리 "최종 파일이 이번 정산월에 아직 한 번도 업로드되지 않았다면"
+  // 여전히 미확정(null → 화면 '미정산')으로 남겨둔다 — 최종 파일이 실제로 업로드된 뒤에도
+  // 이 사람이 여전히 없을 때만 0으로 확정한다(1차처럼 "이미 끝난 파일에 없다"는 확정 사실이
+  // 되기 때문). finalFileUploaded는 이번 정산월에 최종 파일이 한 번이라도 올라왔는지를 뜻한다.
+  const finalAmount = payCap == null ? null
+    : finalPoints != null ? Math.min(finalPoints, payCap)
+    : (pointsMatchStatus === 'no_points_file' && finalFileUploaded) ? 0 : null
   // 추가 지급액 자동 계산은 "적용된(수동 수정 반영된) 1차 지급액" 기준으로 다시 계산한다 —
   // 1차를 수동 수정하면 추가 지급 자동계산도 함께 갱신되어야 하기 때문.
   const additionalAutoAmount = (finalAmount != null && firstAmount != null) ? Math.max(finalAmount - firstAmount, 0) : null
@@ -590,21 +616,41 @@ export function computeHectoCoinEntries(
   const firstByName = groupByNormalizedName(firstRows)
   const finalByName = groupByNormalizedName(finalRows)
   const names = new Set<string>([...firstByName.keys(), ...finalByName.keys()])
+  const finalFileUploaded = finalRows.length > 0
   const entries: HectoCoinEntry[] = []
 
   for (const name of names) {
     const firsts = firstByName.get(name) ?? []
     const finals = finalByName.get(name) ?? []
     if (firsts.length > 1 || finals.length > 1) {
-      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides)))
-      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides)))
+      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded)))
+      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded)))
       continue
     }
     const first = firsts[0] ?? null
     const final = finals[0] ?? null
     const rawName = (final ?? first)!.name
-    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides))
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded))
   }
+
+  // 헥토코인 포인트 파일에는 이름이 없지만, employees에 이번 정산월 입사/퇴사/휴직/복귀
+  // 이벤트가 있는 직원도 UNION으로 추가한다(요청 사양: 대상자 목록 = 포인트 파일 직원
+  // ∪ 정산월 employees 이벤트 직원). 정규화 이름 기준으로 포인트 파일에 이미 있는 이름은
+  // 건너뛰고, employees 안의 중복 이름도 한 번만 처리한다. 동명이인이라 어느 레코드의
+  // 이벤트를 적용할지 확정할 수 없는 경우(matchEmployeeByName이 duplicate 반환)는 임의로
+  // 행을 만들지 않는다 — 이 사람은 나중에 헥토코인 포인트 파일에 등장하면 그때 정상적으로
+  // 처리된다. 정산월과 무관한 과거 이벤트만 있는 직원(hasMonthEvent=false)도 추가하지 않는다.
+  const seenEmployeeOnlyNames = new Set<string>()
+  for (const emp of employees) {
+    const empName = emp.name.replace(/\s+/g, ' ').trim()
+    if (!empName || names.has(empName) || seenEmployeeOnlyNames.has(empName)) continue
+    seenEmployeeOnlyNames.add(empName)
+    const employeeMatch = matchEmployeeByName(empName, employees)
+    if (employeeMatch.kind !== 'matched') continue
+    if (!calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth).hasMonthEvent) continue
+    entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded))
+  }
+
   return entries.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 
@@ -627,6 +673,7 @@ export function hectoCoinStatusText(e: HectoCoinEntry): string {
   const parts: string[] = [e.excludeReason ?? e.statusLabel]
   if (e.pointsMatchStatus === 'final_only') parts.push('1차 미매칭')
   else if (e.pointsMatchStatus === 'first_only') parts.push('최종 미정산')
+  else if (e.pointsMatchStatus === 'no_points_file') parts.push('포인트 파일 미제출(직원DB 이벤트로 추가됨)')
   if (e.employeeMatch === 'duplicate') parts.push('직원DB 동명이인 확인필요')
   if (e.customerIdMatch === 'duplicate') parts.push('고객아이디 동명이인 확인필요')
   else if (e.customerIdMatch === 'not_found') parts.push('고객아이디 미매칭')
