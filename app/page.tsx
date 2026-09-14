@@ -15,9 +15,11 @@ import {
 } from '@/lib/wellness-coin'
 import {
   parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
-  validateHectoCoinOverrideAmount, toHectoCoinDetailRow, hectoCoinDetailFilename,
+  validateHectoCoinOverrideAmount, validateHectoCoinDataOverride, validateHectoCoinCustomerId,
+  mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry,
+  toHectoCoinDetailRow, hectoCoinDetailFilename,
   type HectoCoinSettlementRow, type HectoCoinRosterRow, type HectoCoinEntry, type HectoCoinPaymentOverrides,
-  type HectoCoinDetailSummary,
+  type HectoCoinDataOverrides, type HectoCoinDetailSummary,
 } from '@/lib/hecto-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
@@ -1586,6 +1588,154 @@ function HectoEditableAmountCell({
   )
 }
 
+/**
+ * 헥토코인 1차/최종 "포인트" 셀 — "지급액 수동 수정"과는 별개로, 걸음수/포인트 원천
+ * 데이터 자체를 보정하는 UI. 연필을 누르면 걸음수(선택)·포인트(필수) 두 칸이 함께
+ * 열리고(요청 사양: 두 값을 한 번에 입력), 저장하면 지급상한 적용부터 다시 계산된다.
+ * disabled면(포인트파일 중복/동명이인 등 애초에 지급 계산 자체가 안 되는 행) 편집 UI
+ * 없이 숫자만 보여준다.
+ */
+function HectoEditableDataCell({
+  points, steps, isManual, filePoints, inPointsFile, saving, onSave, onRestore, disabled,
+}: {
+  points: number | null
+  steps: number | null
+  isManual: boolean
+  filePoints: number | null
+  inPointsFile: boolean
+  saving: boolean
+  onSave: (entry: { steps: number | null; points: number }) => void
+  onRestore: () => void
+  disabled: boolean
+}) {
+  const [editing, setEditing] = useState(false)
+  const [stepsDraft, setStepsDraft] = useState('')
+  const [pointsDraft, setPointsDraft] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  if (disabled) return <span className="text-gray-600">{points != null ? points.toLocaleString() : '-'}</span>
+
+  function startEdit() {
+    setStepsDraft(steps != null ? String(steps) : '')
+    setPointsDraft(points != null ? String(points) : '')
+    setErr(null)
+    setEditing(true)
+  }
+  function handleSave() {
+    const v = validateHectoCoinDataOverride(stepsDraft, pointsDraft)
+    if (!v.ok) { setErr(v.error); return }
+    onSave(v.entry)
+    setEditing(false)
+  }
+  function handleCancel() { setEditing(false); setErr(null) }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <div className="flex items-center gap-1 justify-end">
+          <span className="text-[10px] text-gray-400 whitespace-nowrap">걸음수</span>
+          <input autoFocus value={stepsDraft} disabled={saving} placeholder="선택"
+            onChange={e => { setStepsDraft(e.target.value); setErr(null) }}
+            onKeyDown={e => { if (e.key === 'Escape') handleCancel() }}
+            className="w-20 text-right text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+        </div>
+        <div className="flex items-center gap-1 justify-end">
+          <span className="text-[10px] text-gray-400 whitespace-nowrap">포인트</span>
+          <input value={pointsDraft} disabled={saving}
+            onChange={e => { setPointsDraft(e.target.value); setErr(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel() }}
+            className="w-20 text-right text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={handleSave} disabled={saving} className="text-emerald-600 text-xs font-semibold hover:underline disabled:opacity-50">
+            {saving ? '저장 중…' : '저장'}
+          </button>
+          <button onClick={handleCancel} disabled={saving} className="text-gray-400 text-xs hover:underline disabled:opacity-50">취소</button>
+        </div>
+        {err && <span className="text-red-500 text-[10px] text-right">{err}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <div className="flex items-center gap-1">
+        <span className={isManual ? 'text-orange-700 font-semibold' : 'text-gray-600'}>
+          {points != null ? points.toLocaleString() : '-'}
+        </span>
+        <button onClick={startEdit} disabled={saving} className="text-gray-400 hover:text-orange-500 disabled:opacity-50" title="입력/수정">✎</button>
+      </div>
+      {!inPointsFile && !isManual && <span className="text-[10px] text-red-500 whitespace-nowrap">포인트 파일 미포함</span>}
+      {isManual && (
+        <div className="text-[10px] text-amber-600 whitespace-nowrap">
+          수동입력{filePoints != null ? ` · 파일값 ${filePoints.toLocaleString()}` : ''}
+          <button onClick={onRestore} disabled={saving} className="ml-1 underline hover:text-amber-800 disabled:opacity-50">
+            {saving ? '복원 중…' : '파일값으로 복원'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 헥토코인 "고객아이디" 셀 — 사원리스트 재업로드 없이 화면에서 직접 입력/수정할 수
+ * 있게 한다. 저장하면 hecto_coin_roster에 source='manual'로 반영되어 즉시 매칭
+ * 완료 상태로 바뀌고 지급 엑셀 대상에도 포함될 수 있다.
+ */
+function HectoEditableCustomerIdCell({
+  customerId, isManual, matchKind, saving, onSave,
+}: {
+  customerId: string | null
+  isManual: boolean
+  matchKind: 'matched' | 'not_found' | 'duplicate'
+  saving: boolean
+  onSave: (customerId: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  function startEdit() { setDraft(customerId ?? ''); setErr(null); setEditing(true) }
+  function handleSave() {
+    const v = validateHectoCoinCustomerId(draft)
+    if (!v.ok) { setErr(v.error); return }
+    onSave(v.customerId)
+    setEditing(false)
+  }
+  function handleCancel() { setEditing(false); setErr(null) }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <input autoFocus value={draft} disabled={saving} placeholder="예) hts1234@hecto.co.kr"
+            onChange={e => { setDraft(e.target.value); setErr(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel() }}
+            className="w-40 text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+          <button onClick={handleSave} disabled={saving} className="text-emerald-600 text-xs font-semibold hover:underline disabled:opacity-50">
+            {saving ? '저장 중…' : '저장'}
+          </button>
+          <button onClick={handleCancel} disabled={saving} className="text-gray-400 text-xs hover:underline disabled:opacity-50">취소</button>
+        </div>
+        {err && <span className="text-red-500 text-[10px]">{err}</span>}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      {matchKind === 'matched'
+        ? <span className={isManual ? 'text-orange-700 font-semibold' : 'text-gray-700'}>{customerId}</span>
+        : matchKind === 'duplicate'
+        ? <span className="text-red-600 font-semibold">동명이인으로 고객아이디 확정 불가</span>
+        : <span className="text-gray-400">고객아이디 미매칭</span>}
+      <button onClick={startEdit} disabled={saving} className="text-gray-400 hover:text-orange-500 disabled:opacity-50" title="입력/수정">✎</button>
+      {isManual && <span className="text-[10px] text-amber-600 whitespace-nowrap">수동입력</span>}
+    </div>
+  )
+}
+
 // ─── 직원 폼 ──────────────────────────────────────────────────────────────────
 function FormField({ label, value, onChange, placeholder, type = 'text', required = false }: {
   label: string; value: string; onChange: (v: string) => void
@@ -2164,6 +2314,12 @@ export default function HRDashboard() {
   // 저장 실패 메시지만 로컬 state로 두고, override 값 자체는 hectoSettlement(DB)가 갖는다.
   const [hectoOverrideSavingKey, setHectoOverrideSavingKey] = useState<string | null>(null)
   const [hectoOverrideError,     setHectoOverrideError]     = useState<string | null>(null)
+  // 걸음수/포인트 원천 데이터 수동 보정(data override) — 지급액 수동 수정과는 별개 기능
+  const [hectoDataOverrideSavingKey, setHectoDataOverrideSavingKey] = useState<string | null>(null)
+  const [hectoDataOverrideError,     setHectoDataOverrideError]     = useState<string | null>(null)
+  // 고객아이디 화면 직접 입력/수정
+  const [hectoCustomerIdSavingKey, setHectoCustomerIdSavingKey] = useState<string | null>(null)
+  const [hectoCustomerIdError,     setHectoCustomerIdError]     = useState<string | null>(null)
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2376,6 +2532,7 @@ export default function HRDashboard() {
     hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
     employees, hectoRoster?.entries ?? [],
     hectoSettlement?.first_payment_overrides ?? {}, hectoSettlement?.additional_payment_overrides ?? {},
+    hectoSettlement?.first_data_overrides ?? {}, hectoSettlement?.additional_data_overrides ?? {},
   )
   // 요약 카드/상세 엑셀 공용 — 둘이 서로 다른 계산식을 쓰면 화면 총액과 엑셀 총액이
   // 어긋날 수 있으므로 반드시 같은 변수를 그대로 재사용한다(hecto 탭 렌더 블록과
@@ -2756,8 +2913,10 @@ export default function HRDashboard() {
 
   /**
    * 사원리스트(이름→고객아이디) 업로드/재업로드. hecto_coin_roster는 정산월과 무관한
-   * 전역 1행(id='singleton')이라 매번 통째로 교체한다 — 헥토코인 지급액 자체는 건드리지
-   * 않고 고객아이디 매칭 결과(및 지급 엑셀 다운로드 가능 여부)만 다시 계산된다.
+   * 전역 1행(id='singleton')이지만, 화면에서 직접 입력한 고객아이디(source==='manual')는
+   * mergeHectoCoinRosterOnUpload가 보존한다 — 업로드된 항목만 통째로 교체되고 수동 입력
+   * 항목은 조용히 사라지지 않는다. 헥토코인 지급액 자체는 건드리지 않고 고객아이디 매칭
+   * 결과(및 지급 엑셀 다운로드 가능 여부)만 다시 계산된다.
    */
   async function handleHectoRosterUpload(file: File) {
     setHectoRosterUploading(true); setHectoRosterError(null); setHectoRosterNotice(null); setHectoRosterSkipped([])
@@ -2765,16 +2924,24 @@ export default function HRDashboard() {
       const buffer = await file.arrayBuffer()
       const { entries, skippedRows } = parseHectoCoinRosterFile(buffer)
       const wasReupload = !!hectoRoster?.uploaded_at
+      const existingManualCount = (hectoRoster?.entries ?? []).filter(e => e.source === 'manual').length
+      const mergedEntries = mergeHectoCoinRosterOnUpload(hectoRoster?.entries ?? [], entries)
       const nowIso = new Date().toISOString()
       const { data, error } = await supabase
         .from('hecto_coin_roster')
-        .upsert({ id: 'singleton', file_name: file.name, uploaded_at: nowIso, entries, updated_at: nowIso }, { onConflict: 'id' })
+        .upsert({ id: 'singleton', file_name: file.name, uploaded_at: nowIso, entries: mergedEntries, updated_at: nowIso }, { onConflict: 'id' })
         .select('*')
         .single()
       if (error) { setHectoRosterError('저장 실패: ' + error.message); return }
       setHectoRoster(data as HectoCoinRosterRow)
       setHectoRosterSkipped(skippedRows)
-      setHectoRosterNotice(wasReupload ? '사원리스트가 재업로드되어 고객아이디 매칭이 다시 계산되었습니다.' : '사원리스트가 업로드되어 고객아이디 매칭에 사용됩니다.')
+      setHectoRosterNotice(
+        wasReupload
+          ? (existingManualCount > 0
+              ? `사원리스트가 재업로드되어 고객아이디 매칭이 다시 계산되었습니다. 화면에서 직접 입력한 고객아이디 ${existingManualCount}건은 그대로 유지됩니다.`
+              : '사원리스트가 재업로드되어 고객아이디 매칭이 다시 계산되었습니다.')
+          : '사원리스트가 업로드되어 고객아이디 매칭에 사용됩니다.'
+      )
     } catch (err) {
       setHectoRosterError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
     } finally {
@@ -2822,6 +2989,73 @@ export default function HRDashboard() {
     setHectoOverrideSavingKey(null)
     if (error) { setHectoOverrideError('복원 실패: ' + error.message); return }
     setHectoSettlement(data as HectoCoinSettlementRow)
+  }
+
+  /**
+   * 걸음수/포인트 원천 데이터 수동 보정 저장 — "지급액 수동 수정"과는 완전히 별개인
+   * first_data_overrides/additional_data_overrides 컬럼에 저장한다. 헥토코인 포인트
+   * 파일에 없는 직원(employees 이벤트로만 추가된 행)의 걸음수/포인트를 관리자가 직접
+   * 입력할 때 쓴다 — 저장되면 지급상한 적용/1차·최종·추가 지급액이 그 값 기준으로 다시
+   * 계산된다.
+   */
+  async function saveHectoDataOverride(kind: 'first' | 'additional', name: string, entry: { steps: number | null; points: number }) {
+    if (!hectoSettlement) return
+    const column = kind === 'first' ? 'first_data_overrides' : 'additional_data_overrides'
+    const current: HectoCoinDataOverrides = (kind === 'first' ? hectoSettlement.first_data_overrides : hectoSettlement.additional_data_overrides) ?? {}
+    const updated: HectoCoinDataOverrides = { ...current, [name]: entry }
+    setHectoDataOverrideSavingKey(`${kind}:${name}`); setHectoDataOverrideError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .update({ [column]: updated, updated_at: new Date().toISOString() })
+      .eq('settlement_month', hectoSettlementMonth)
+      .select('*')
+      .single()
+    setHectoDataOverrideSavingKey(null)
+    if (error) { setHectoDataOverrideError('저장 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
+  }
+
+  /** 걸음수/포인트 수동 보정값 삭제("파일값으로 복원") — DB에서도 해당 항목만 제거한다. */
+  async function clearHectoDataOverride(kind: 'first' | 'additional', name: string) {
+    if (!hectoSettlement) return
+    const column = kind === 'first' ? 'first_data_overrides' : 'additional_data_overrides'
+    const current: HectoCoinDataOverrides = (kind === 'first' ? hectoSettlement.first_data_overrides : hectoSettlement.additional_data_overrides) ?? {}
+    const updated = { ...current }
+    delete updated[name]
+    setHectoDataOverrideSavingKey(`${kind}:${name}`); setHectoDataOverrideError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .update({ [column]: updated, updated_at: new Date().toISOString() })
+      .eq('settlement_month', hectoSettlementMonth)
+      .select('*')
+      .single()
+    setHectoDataOverrideSavingKey(null)
+    if (error) { setHectoDataOverrideError('복원 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
+  }
+
+  /**
+   * 고객아이디 화면 직접 입력/수정 — hecto_coin_roster에 source='manual'로 저장한다
+   * (upsertHectoCoinRosterManualEntry가 같은 이름의 기존 항목을 교체). 사원리스트를
+   * 재업로드해도 이 값은 mergeHectoCoinRosterOnUpload가 보존한다.
+   */
+  async function saveHectoCustomerId(name: string, customerId: string) {
+    const updatedEntries = upsertHectoCoinRosterManualEntry(hectoRoster?.entries ?? [], name, customerId)
+    setHectoCustomerIdSavingKey(name); setHectoCustomerIdError(null)
+    const nowIso = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('hecto_coin_roster')
+      .upsert({
+        id: 'singleton', entries: updatedEntries, updated_at: nowIso,
+        // 사원리스트가 한 번도 업로드된 적 없는 상태에서 고객아이디를 먼저 입력할 수도
+        // 있으므로, file_name/uploaded_at은 기존 값을 그대로 유지한다(없으면 null).
+        file_name: hectoRoster?.file_name ?? null, uploaded_at: hectoRoster?.uploaded_at ?? null,
+      }, { onConflict: 'id' })
+      .select('*')
+      .single()
+    setHectoCustomerIdSavingKey(null)
+    if (error) { setHectoCustomerIdError('저장 실패: ' + error.message); return }
+    setHectoRoster(data as HectoCoinRosterRow)
   }
 
   function openAdd() { setEditTarget(null); setForm(EMPTY_FORM); setShowForm(true) }
@@ -3819,6 +4053,18 @@ export default function HRDashboard() {
                       <button onClick={() => setHectoOverrideError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
                     </div>
                   )}
+                  {hectoDataOverrideError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-600 flex items-center justify-between">
+                      <span>{hectoDataOverrideError}</span>
+                      <button onClick={() => setHectoDataOverrideError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
+                    </div>
+                  )}
+                  {hectoCustomerIdError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-600 flex items-center justify-between">
+                      <span>{hectoCustomerIdError}</span>
+                      <button onClick={() => setHectoCustomerIdError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
+                    </div>
+                  )}
                   {hectoNotice && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-xs text-blue-600 flex items-center justify-between">
                       <span>{hectoNotice}</span>
@@ -3984,11 +4230,11 @@ export default function HRDashboard() {
                             <tr key={e.key} className="border-t border-gray-100">
                               <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{e.name}</td>
                               <td className="px-3 py-2 whitespace-nowrap">
-                                {e.customerIdMatch === 'matched'
-                                  ? <span className="text-gray-700">{e.customerId}</span>
-                                  : e.customerIdMatch === 'duplicate'
-                                  ? <span className="text-red-600 font-semibold">동명이인으로 고객아이디 확정 불가</span>
-                                  : <span className="text-gray-400">고객아이디 미매칭</span>}
+                                <HectoEditableCustomerIdCell
+                                  customerId={e.customerId} isManual={e.customerIdMatch === 'matched' && !!hectoRoster?.entries?.find(r => r.name === e.name && r.source === 'manual')}
+                                  matchKind={e.customerIdMatch}
+                                  saving={hectoCustomerIdSavingKey === e.name}
+                                  onSave={cid => saveHectoCustomerId(e.name, cid)} />
                               </td>
                               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayJoinDate ?? '-'}</td>
                               <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{e.displayExitDate ?? '-'}</td>
@@ -3997,7 +4243,15 @@ export default function HRDashboard() {
                               <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{e.steps != null ? e.steps.toLocaleString() : '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payableDays != null ? `${e.payableDays}일` : '-'}</td>
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payCap != null ? e.payCap.toLocaleString() + '원' : '-'}</td>
-                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.firstPoints != null ? e.firstPoints.toLocaleString() : '-'}</td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                <HectoEditableDataCell
+                                  points={e.firstPoints} steps={e.firstStepsManual ?? e.firstStepsFile} isManual={e.firstDataIsManual}
+                                  filePoints={e.firstPointsFile} inPointsFile={e.firstInPointsFile}
+                                  disabled={!!e.excludeReason || e.isDuplicateInPointsFile}
+                                  saving={hectoDataOverrideSavingKey === `first:${e.name}`}
+                                  onSave={entry => saveHectoDataOverride('first', e.name, entry)}
+                                  onRestore={() => clearHectoDataOverride('first', e.name)} />
+                              </td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
                                 {(e.excludeReason || e.isDuplicateInPointsFile)
                                   ? <span className="text-gray-800">{e.firstAmount != null ? e.firstAmount.toLocaleString() + '원' : '-'}</span>
@@ -4008,13 +4262,17 @@ export default function HRDashboard() {
                                       onSave={amt => saveHectoOverride('first', e.name, amt)}
                                       onRestore={() => clearHectoOverride('first', e.name)} />}
                               </td>
-                              <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">
-                                {e.finalPoints != null ? e.finalPoints.toLocaleString() : (e.pointsMatchStatus === 'first_only' ? '미정산' : '-')}
+                              <td className="px-3 py-2 text-right whitespace-nowrap">
+                                <HectoEditableDataCell
+                                  points={e.finalPoints} steps={e.finalStepsManual ?? e.finalStepsFile} isManual={e.finalDataIsManual}
+                                  filePoints={e.finalPointsFile} inPointsFile={e.finalInPointsFile}
+                                  disabled={!!e.excludeReason || e.isDuplicateInPointsFile}
+                                  saving={hectoDataOverrideSavingKey === `additional:${e.name}`}
+                                  onSave={entry => saveHectoDataOverride('additional', e.name, entry)}
+                                  onRestore={() => clearHectoDataOverride('additional', e.name)} />
                               </td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
-                                {e.pointsMatchStatus === 'first_only'
-                                  ? <span className="text-gray-400">미정산</span>
-                                  : (e.excludeReason || e.isDuplicateInPointsFile)
+                                {(e.excludeReason || e.isDuplicateInPointsFile)
                                   ? <span className="text-gray-600">{e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : '-'}</span>
                                   : <HectoEditableAmountCell
                                       appliedAmount={e.additionalAmount} autoAmount={e.additionalAutoAmount} overrideAmount={e.additionalOverrideAmount}
@@ -4033,6 +4291,13 @@ export default function HRDashboard() {
                                     <>
                                       {e.pointsMatchStatus === 'first_only'
                                         ? <span className="text-gray-400">{e.statusLabel} · 최종 미정산</span>
+                                        : e.pointsMatchStatus === 'no_points_file'
+                                        ? (
+                                          <span className="text-emerald-600 font-semibold">
+                                            {e.statusLabel}
+                                            <span className="text-amber-600 font-semibold"> · {e.firstDataIsManual ? '1차 수동입력' : '1차 포인트 파일 미포함'}</span>
+                                          </span>
+                                        )
                                         : <span className="text-emerald-600 font-semibold">{e.statusLabel}</span>}
                                       {e.employeeMatch === 'duplicate' && (
                                         <span className="text-amber-600 font-semibold"> · 직원DB 동명이인 확인필요</span>

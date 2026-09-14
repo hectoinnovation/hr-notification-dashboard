@@ -20,8 +20,9 @@ const DETAIL_HEADERS = [
   '이름', '고객아이디', '입사일', '퇴사일', '휴직일', '복귀일', '월 누적 걸음수', '지급대상 일수',
   '지급 상한', '1차 포인트', '1차 지급액', '최종 포인트', '추가 지급액', '월 최종 지급액', '상태',
   '1차 지급 수동수정 여부', '1차 자동 계산액', '추가 지급 수동수정 여부', '추가 자동 계산액',
+  '1차 데이터 수동입력 여부', '최종 데이터 수동입력 여부',
 ] as const
-const DETAIL_COL_WIDTHS = [12, 24, 12, 12, 12, 12, 14, 12, 12, 12, 12, 12, 12, 14, 30, 18, 14, 18, 14]
+const DETAIL_COL_WIDTHS = [12, 24, 12, 12, 12, 12, 14, 12, 12, 12, 12, 12, 12, 14, 30, 18, 14, 18, 14, 18, 18]
 // 천 단위 쉼표(#,##0)를 적용할 컬럼 번호(1-based) — 월누적걸음수/지급대상일수/지급상한/
 // 1차포인트/1차지급액/최종포인트/추가지급액/월최종지급액/1차자동계산액/추가자동계산액
 const NUMERIC_COLS = [7, 8, 9, 10, 11, 12, 13, 14, 17, 19]
@@ -116,6 +117,8 @@ export async function POST(req: NextRequest) {
     row.getCell(17).value = numOrDash(r.firstAutoAmount)
     row.getCell(18).value = r.additionalOverrideAmount != null ? 'Y' : 'N'
     row.getCell(19).value = numOrDash(r.additionalAutoAmount)
+    row.getCell(20).value = r.firstDataIsManual ? 'Y' : 'N'
+    row.getCell(21).value = r.finalDataIsManual ? 'Y' : 'N'
     NUMERIC_COLS.forEach(c => {
       const cell = row.getCell(c)
       if (typeof cell.value === 'number') cell.numFmt = NUM_FMT

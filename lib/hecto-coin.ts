@@ -33,6 +33,8 @@ export type HectoCoinSettlementRow = {
   final_rows: HectoCoinRawRow[] | null
   first_payment_overrides: HectoCoinPaymentOverrides | null
   additional_payment_overrides: HectoCoinPaymentOverrides | null
+  first_data_overrides: HectoCoinDataOverrides | null
+  additional_data_overrides: HectoCoinDataOverrides | null
 }
 
 /**
@@ -63,15 +65,97 @@ export function validateHectoCoinOverrideAmount(
   return { ok: true, amount }
 }
 
+/**
+ * 걸음수/포인트 수동 보정값 — { 정규화된이름: {steps, points} }. "지급액 수동 수정
+ * (HectoCoinPaymentOverrides)"과는 완전히 다른 개념이다 — 이건 계산의 "원천 데이터"
+ * (헥토코인 포인트 파일에 없는 사람의 걸음수/포인트)를 보정하는 것이고, 지급액 override는
+ * 그렇게 계산된 지급액 자체를 관리자가 최종 보정하는 것이다. 우선순위: 수동 보정값 >
+ * 업로드된 포인트 파일 값 > 데이터 없음. points는 실제 지급 계산에 쓰이므로 필수이고,
+ * steps는 참고용이라 선택 입력(모르면 null로 둘 수 있다).
+ */
+export type HectoCoinDataOverrideEntry = { steps: number | null; points: number }
+export type HectoCoinDataOverrides = Record<string, HectoCoinDataOverrideEntry>
+
+/**
+ * 수동 걸음수/포인트 입력값 검증. steps는 비어있으면 null(참고용이라 선택)로 허용하고,
+ * points는 0 이상 정수 필수(쉼표 제거 후 처리) — 지급 계산 기준이므로 반드시 있어야 한다.
+ */
+export function validateHectoCoinDataOverride(
+  rawSteps: string, rawPoints: string,
+): { ok: true; entry: HectoCoinDataOverrideEntry } | { ok: false; error: string } {
+  const cleanedPoints = rawPoints.replace(/,/g, '').trim()
+  if (!/^\d+$/.test(cleanedPoints)) return { ok: false, error: '월 누적 포인트는 0 이상의 정수로 입력해주세요.' }
+  const points = Number(cleanedPoints)
+  if (!Number.isFinite(points) || points < 0) return { ok: false, error: '월 누적 포인트는 0 이상의 정수로 입력해주세요.' }
+
+  const cleanedSteps = rawSteps.replace(/,/g, '').trim()
+  let steps: number | null = null
+  if (cleanedSteps) {
+    if (!/^\d+$/.test(cleanedSteps)) return { ok: false, error: '월 누적 걸음수는 0 이상의 정수로 입력해주세요(비워두면 참고용 값 없이 저장됩니다).' }
+    steps = Number(cleanedSteps)
+    if (!Number.isFinite(steps) || steps < 0) return { ok: false, error: '월 누적 걸음수는 0 이상의 정수로 입력해주세요.' }
+  }
+  return { ok: true, entry: { steps, points } }
+}
+
 // ─── 사원리스트(고객아이디 매핑) ────────────────────────────────────────────────
 // 정산월과 무관하게 유지되는 전역 매핑 — cafe_excel_data와 동일한 "singleton 1행"
 // 패턴으로 hecto_coin_roster 테이블에 저장한다(app/page.tsx handleHectoRosterUpload 참고).
-export type HectoCoinRosterEntry = { name: string; customerId: string }
+// source: 'upload'(사원리스트 엑셀 업로드로 채워짐) | 'manual'(헥토코인 정산 화면에서
+// 관리자가 직접 입력) — 재업로드 시 'manual' 항목은 보존하고 'upload' 항목만 교체하기
+// 위한 구분이다(mergeHectoCoinRosterOnUpload 참고). 기존에 저장된 데이터는 이 필드가
+// 없을 수 있어 optional — 없으면 'upload'로 취급한다.
+export type HectoCoinRosterEntry = { name: string; customerId: string; source?: 'upload' | 'manual' }
 export type HectoCoinRosterRow = {
   id: string
   file_name: string | null
   uploaded_at: string | null
   entries: HectoCoinRosterEntry[] | null
+}
+
+const HECTO_CUSTOMER_ID_DOMAIN = '@hecto.co.kr'
+
+/**
+ * 고객아이디(메일주소) 수동 입력값 검증. 실제 사원리스트/employees.customer_id 데이터를
+ * 확인한 결과(214건 전수 확인) 전부 '@hecto.co.kr' 도메인이라 이 도메인을 강제한다 —
+ * 임의로 만든 규칙이 아니라 실제 운영 데이터를 그대로 반영한 것이다.
+ */
+export function validateHectoCoinCustomerId(raw: string): { ok: true; customerId: string } | { ok: false; error: string } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { ok: false, error: '고객아이디를 입력해주세요.' }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return { ok: false, error: '올바른 이메일 형식이 아닙니다.' }
+  if (!trimmed.toLowerCase().endsWith(HECTO_CUSTOMER_ID_DOMAIN)) {
+    return { ok: false, error: `고객아이디는 ${HECTO_CUSTOMER_ID_DOMAIN} 형식이어야 합니다.` }
+  }
+  return { ok: true, customerId: trimmed }
+}
+
+/**
+ * 사원리스트를 재업로드할 때, 화면에서 직접 입력한(source==='manual') 매핑은 조용히
+ * 사라지면 안 된다. 새로 업로드된 항목은 전부 source='upload'로 표시하고, 기존 'manual'
+ * 항목은 이름이 겹치더라도(관리자가 의도적으로 고친 값이므로) 그대로 덮어써서 살려둔다.
+ */
+export function mergeHectoCoinRosterOnUpload(
+  existingEntries: HectoCoinRosterEntry[], uploadedEntries: HectoCoinRosterEntry[],
+): HectoCoinRosterEntry[] {
+  const merged: HectoCoinRosterEntry[] = uploadedEntries.map(e => ({ name: e.name, customerId: e.customerId, source: 'upload' }))
+  for (const manual of existingEntries.filter(e => e.source === 'manual')) {
+    const idx = merged.findIndex(e => e.name === manual.name)
+    if (idx >= 0) merged[idx] = manual
+    else merged.push(manual)
+  }
+  return merged
+}
+
+/**
+ * 헥토코인 정산 화면에서 직접 입력/수정한 고객아이디 1건을 사원리스트 매핑에 반영한다
+ * (같은 이름의 기존 항목은 출처와 무관하게 교체 — 관리자가 지금 확정한 값이 우선).
+ */
+export function upsertHectoCoinRosterManualEntry(
+  existingEntries: HectoCoinRosterEntry[], name: string, customerId: string,
+): HectoCoinRosterEntry[] {
+  const filtered = existingEntries.filter(e => e.name !== name)
+  return [...filtered, { name, customerId, source: 'manual' }]
 }
 
 // ─── 이름 정규화 ────────────────────────────────────────────────────────────────
@@ -423,10 +507,14 @@ export type HectoCoinCustomerIdMatch =
   | { kind: 'duplicate' }
 
 /**
- * 고객아이디 매칭 우선순위: 1) 업로드된 사원리스트, 2) 직원 DB에 이미 있는
- * employees.customer_id(웰니스코인용으로 이미 입력돼 있을 수 있음) 순으로 활용한다.
- * 사원리스트에 동일 정규화 이름이 서로 다른 고객아이디로 2건 이상 있으면 임의로
- * 고르지 않고 'duplicate' 반환(같은 아이디로 중복 등록된 경우는 모호하지 않으므로 허용).
+ * 고객아이디 매칭 우선순위: 1) 화면에서 직접 입력/수정한 사원리스트 매핑
+ * (source==='manual') 2) 업로드된 사원리스트(source==='upload') 3) employees.customer_id
+ * fallback. roster 배열 자체가 이름당 최대 1건만 유지하도록 저장 시점에 이미 정리되므로
+ * (mergeHectoCoinRosterOnUpload/upsertHectoCoinRosterManualEntry 참고 — manual 항목이
+ * 항상 upload 항목을 대체), 여기서는 source를 다시 따질 필요 없이 roster에서 찾은 값을
+ * 그대로 최우선으로 쓰면 된다. 사원리스트에 동일 정규화 이름이 서로 다른 고객아이디로
+ * 2건 이상 있으면(정상 상태라면 발생하지 않지만 방어적으로) 임의로 고르지 않고
+ * 'duplicate' 반환.
  */
 export function matchCustomerId(
   normalizedName: string,
@@ -457,7 +545,7 @@ export type HectoCoinEntry = {
   name: string        // 정규화된 이름(영문 제거) — 매칭/표시/지급 엑셀 B열에 사용
   company: string | null
   position: string | null
-  steps: number | null
+  steps: number | null   // 화면 단일 참고 컬럼(최종 적용 걸음수 우선, 없으면 1차 적용 걸음수)
 
   displayJoinDate: string | null
   displayReturnDate: string | null
@@ -466,12 +554,27 @@ export type HectoCoinEntry = {
   payableDays: number | null
   payCap: number | null
 
-  firstPoints: number | null
-  firstAutoAmount: number | null       // 자동 계산값(항상 보존 — 수동 수정과 비교용)
-  firstOverrideAmount: number | null   // 수동 수정값(없으면 null)
-  firstAmount: number | null           // 최종 적용값 = firstOverrideAmount ?? firstAutoAmount
-  finalPoints: number | null
-  finalAmount: number | null           // MIN(최종포인트, 지급상한) — 수동수정 대상 아님(내부 계산용)
+  // 1차 단계 — "지급액 수동 수정"(firstOverrideAmount)과는 별개인 "원천 데이터 수동 보정"
+  firstStepsFile: number | null     // 1차 포인트 파일 원본 걸음수(파일에 없으면 null)
+  firstPointsFile: number | null    // 1차 포인트 파일 원본 포인트(파일에 없으면 null)
+  firstInPointsFile: boolean        // 1차 포인트 파일에 이 사람이 실제로 있었는지(보정값 여부와 무관)
+  firstStepsManual: number | null   // 관리자가 직접 입력한 1차 걸음수(없으면 null)
+  firstPointsManual: number | null  // 관리자가 직접 입력한 1차 포인트(없으면 null)
+  firstDataIsManual: boolean        // 1차 데이터가 수동 보정값으로 적용되고 있는지
+  firstPoints: number | null        // 적용된 1차 포인트 = firstPointsManual ?? firstPointsFile
+  firstAutoAmount: number | null       // 자동 계산값(항상 보존 — 지급액 수동 수정과 비교용)
+  firstOverrideAmount: number | null   // 지급액 수동 수정값(없으면 null)
+  firstAmount: number | null           // 최종 적용 지급액 = firstOverrideAmount ?? firstAutoAmount
+
+  // 최종 단계 — 위와 동일한 구조
+  finalStepsFile: number | null
+  finalPointsFile: number | null
+  finalInPointsFile: boolean
+  finalStepsManual: number | null
+  finalPointsManual: number | null
+  finalDataIsManual: boolean
+  finalPoints: number | null        // 적용된 최종 포인트 = finalPointsManual ?? finalPointsFile
+  finalAmount: number | null           // MIN(적용된 최종포인트, 지급상한) — 내부 계산용(지급액 수동수정 대상 아님)
   additionalAutoAmount: number | null  // 자동 계산값 = MAX(finalAmount - 적용된 1차 지급액, 0)
   additionalOverrideAmount: number | null
   additionalAmount: number | null      // 최종 적용값 = additionalOverrideAmount ?? additionalAutoAmount
@@ -505,6 +608,7 @@ function buildEntry(
   employees: Employee[], roster: HectoCoinRosterEntry[],
   firstOverrides: HectoCoinPaymentOverrides, additionalOverrides: HectoCoinPaymentOverrides,
   finalFileUploaded: boolean,
+  firstDataOverrides: HectoCoinDataOverrides, additionalDataOverrides: HectoCoinDataOverrides,
 ): HectoCoinEntry {
   // first/final 둘 다 null일 수 있다 — 헥토코인 포인트 파일에는 없지만 employees 이벤트만
   // 있어 새로 추가된 행(no_points_file). 이 경우 company/position/steps는 포인트 파일에서
@@ -554,25 +658,47 @@ function buildEntry(
   const validOverride = (v: unknown): number | null =>
     (typeof v === 'number' && Number.isFinite(v) && v >= 0) ? v : null
 
-  const firstPoints = first?.points ?? null
+  // ── 1차 단계: 걸음수/포인트 원천 데이터 우선순위 = 수동 보정값 > 업로드된 포인트
+  // 파일 값. "지급액 수동 수정"(firstOverrides)과는 완전히 별개 — 이건 계산에 들어가는
+  // 원재료(걸음수/포인트) 자체를 보정하는 것이다.
+  const firstStepsFile = first?.steps ?? null
+  const firstPointsFile = first?.points ?? null
+  const firstInPointsFile = first != null
+  const firstManualEntry = firstDataOverrides[name]
+  const firstPointsManual = firstManualEntry ? validOverride(firstManualEntry.points) : null
+  const firstStepsManual = firstManualEntry ? validOverride(firstManualEntry.steps) : null
+  const firstDataIsManual = firstPointsManual != null
+  const firstPoints = firstPointsManual ?? firstPointsFile
+
   // no_points_file(포인트 파일 어디에도 없는 직원DB 전용 행)은 1차 파일이 이미 확정
-  // 업로드된 상태에서 "그 안에 이 사람이 없다"는 사실 자체가 확정 정보이므로, 포인트를
-  // 모른다(null)가 아니라 1차 지급액을 0으로 확정한다 — 화면 표시는 걸음수/포인트 칸을
-  // '-'로 비워 "데이터 없음"을 보여주되, 지급액 칸은 명확히 0원으로 보여준다.
+  // 업로드된 상태에서 "그 안에 이 사람이 없다"는 사실 자체가 확정 정보이므로, 수동
+  // 보정값도 없다면 1차 지급액을 0으로 확정한다(포인트/걸음수 칸은 '-'로 남기되 지급액은
+  // 명확히 0원) — 관리자가 직접 걸음수/포인트를 입력하면 위 firstPoints가 그 값을 쓰므로
+  // 이 0-fallback 이전에 이미 정상적으로 MIN(입력포인트, 지급상한)으로 계산된다.
   const firstAutoAmount = payCap == null ? null
     : firstPoints != null ? Math.min(firstPoints, payCap)
     : pointsMatchStatus === 'no_points_file' ? 0 : null
-  // 수동 수정은 "자동 계산값이 존재하는(=실제 지급 계산이 가능한) 사람"에게만 의미가
-  // 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 override를 적용하지
+  // 지급액 수동 수정은 "자동 계산값이 존재하는(=실제 지급 계산이 가능한) 사람"에게만
+  // 의미가 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 적용하지
   // 않는다(어차피 화면에서도 편집 UI를 노출하지 않는다).
   const firstOverrideAmount = firstAutoAmount != null ? validOverride(firstOverrides[name]) : null
   const firstAmount = firstOverrideAmount ?? firstAutoAmount
 
-  const finalPoints = final?.points ?? null
+  // ── 최종 단계 — 1차와 동일한 구조 ──
+  const finalStepsFile = final?.steps ?? null
+  const finalPointsFile = final?.points ?? null
+  const finalInPointsFile = final != null
+  const finalManualEntry = additionalDataOverrides[name]
+  const finalPointsManual = finalManualEntry ? validOverride(finalManualEntry.points) : null
+  const finalStepsManual = finalManualEntry ? validOverride(finalManualEntry.steps) : null
+  const finalDataIsManual = finalPointsManual != null
+  const finalPoints = finalPointsManual ?? finalPointsFile
+
   // 최종 쪽은 1차와 달리 "최종 파일이 이번 정산월에 아직 한 번도 업로드되지 않았다면"
   // 여전히 미확정(null → 화면 '미정산')으로 남겨둔다 — 최종 파일이 실제로 업로드된 뒤에도
-  // 이 사람이 여전히 없을 때만 0으로 확정한다(1차처럼 "이미 끝난 파일에 없다"는 확정 사실이
-  // 되기 때문). finalFileUploaded는 이번 정산월에 최종 파일이 한 번이라도 올라왔는지를 뜻한다.
+  // 이 사람이 여전히 없을 때만(그리고 수동 보정값도 없을 때만) 0으로 확정한다(1차처럼
+  // "이미 끝난 파일에 없다"는 확정 사실이 되기 때문). finalFileUploaded는 이번 정산월에
+  // 최종 파일이 한 번이라도 올라왔는지를 뜻한다.
   const finalAmount = payCap == null ? null
     : finalPoints != null ? Math.min(finalPoints, payCap)
     : (pointsMatchStatus === 'no_points_file' && finalFileUploaded) ? 0 : null
@@ -583,11 +709,17 @@ function buildEntry(
   const additionalAmount = additionalOverrideAmount ?? additionalAutoAmount
   const totalAmount = firstAmount != null ? firstAmount + (additionalAmount ?? 0) : null
 
+  // 화면 "월 누적 걸음수" 단일 참고 컬럼 — 최종 적용 걸음수 우선, 없으면 1차 적용 걸음수
+  // (기존 "final ?? first" 우선순위를 적용된 값 기준으로 그대로 유지).
+  const steps = (finalStepsManual ?? finalStepsFile) ?? (firstStepsManual ?? firstStepsFile)
+
   return {
-    key, rawName, name, company: src.company, position: src.position, steps: src.steps,
+    key, rawName, name, company: src.company, position: src.position, steps,
     displayJoinDate, displayReturnDate, displayLeaveDate, displayExitDate,
     payableDays, payCap,
+    firstStepsFile, firstPointsFile, firstInPointsFile, firstStepsManual, firstPointsManual, firstDataIsManual,
     firstPoints, firstAutoAmount, firstOverrideAmount, firstAmount,
+    finalStepsFile, finalPointsFile, finalInPointsFile, finalStepsManual, finalPointsManual, finalDataIsManual,
     finalPoints, finalAmount, additionalAutoAmount, additionalOverrideAmount, additionalAmount, totalAmount,
     pointsMatchStatus, isDuplicateInPointsFile,
     employeeMatch: employeeMatch.kind,
@@ -612,6 +744,8 @@ export function computeHectoCoinEntries(
   roster: HectoCoinRosterEntry[],
   firstOverrides: HectoCoinPaymentOverrides = {},
   additionalOverrides: HectoCoinPaymentOverrides = {},
+  firstDataOverrides: HectoCoinDataOverrides = {},
+  additionalDataOverrides: HectoCoinDataOverrides = {},
 ): HectoCoinEntry[] {
   const firstByName = groupByNormalizedName(firstRows)
   const finalByName = groupByNormalizedName(finalRows)
@@ -623,14 +757,14 @@ export function computeHectoCoinEntries(
     const firsts = firstByName.get(name) ?? []
     const finals = finalByName.get(name) ?? []
     if (firsts.length > 1 || finals.length > 1) {
-      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded)))
-      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded)))
+      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides)))
+      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides)))
       continue
     }
     const first = firsts[0] ?? null
     const final = finals[0] ?? null
     const rawName = (final ?? first)!.name
-    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded))
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
   }
 
   // 헥토코인 포인트 파일에는 이름이 없지만, employees에 이번 정산월 입사/퇴사/휴직/복귀
@@ -648,7 +782,7 @@ export function computeHectoCoinEntries(
     const employeeMatch = matchEmployeeByName(empName, employees)
     if (employeeMatch.kind !== 'matched') continue
     if (!calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth).hasMonthEvent) continue
-    entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded))
+    entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
   }
 
   return entries.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
@@ -673,7 +807,11 @@ export function hectoCoinStatusText(e: HectoCoinEntry): string {
   const parts: string[] = [e.excludeReason ?? e.statusLabel]
   if (e.pointsMatchStatus === 'final_only') parts.push('1차 미매칭')
   else if (e.pointsMatchStatus === 'first_only') parts.push('최종 미정산')
-  else if (e.pointsMatchStatus === 'no_points_file') parts.push('포인트 파일 미제출(직원DB 이벤트로 추가됨)')
+  else if (e.pointsMatchStatus === 'no_points_file') {
+    parts.push(e.firstDataIsManual ? '포인트 파일 미포함(수동입력 적용)' : '포인트 파일 미포함')
+  }
+  if (e.firstDataIsManual) parts.push('1차 데이터 수동입력')
+  if (e.finalDataIsManual) parts.push('최종 데이터 수동입력')
   if (e.employeeMatch === 'duplicate') parts.push('직원DB 동명이인 확인필요')
   if (e.customerIdMatch === 'duplicate') parts.push('고객아이디 동명이인 확인필요')
   else if (e.customerIdMatch === 'not_found') parts.push('고객아이디 미매칭')
@@ -701,6 +839,8 @@ export type HectoCoinDetailRow = {
   firstAutoAmount: number | null
   additionalOverrideAmount: number | null
   additionalAutoAmount: number | null
+  firstDataIsManual: boolean       // 1차 걸음수/포인트 수동입력 여부(Y/N)
+  finalDataIsManual: boolean       // 최종 걸음수/포인트 수동입력 여부(Y/N)
 }
 
 /** HectoCoinEntry(화면에 쓰이는 전체 계산 결과) → 상세 엑셀 전송용 단순 row.
@@ -716,6 +856,7 @@ export function toHectoCoinDetailRow(e: HectoCoinEntry): HectoCoinDetailRow {
     statusText: hectoCoinStatusText(e), pointsMatchStatus: e.pointsMatchStatus,
     firstOverrideAmount: e.firstOverrideAmount, firstAutoAmount: e.firstAutoAmount,
     additionalOverrideAmount: e.additionalOverrideAmount, additionalAutoAmount: e.additionalAutoAmount,
+    firstDataIsManual: e.firstDataIsManual, finalDataIsManual: e.finalDataIsManual,
   }
 }
 
