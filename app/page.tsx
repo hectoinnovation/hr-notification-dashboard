@@ -4287,30 +4287,40 @@ export default function HRDashboard() {
                   {hectoEntries.length === 0 ? (
                     <EmptyState label={hectoLoading ? '불러오는 중...' : '업로드된 데이터가 없습니다. 1차 파일을 먼저 업로드해주세요.'} />
                   ) : (
-                    <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                    <div className="overflow-auto max-h-[70vh] border border-gray-200 rounded-xl">
                       <table className="w-full text-xs">
-                        {/* 상단 헤더(header, h-14 + border-b 1px = 57px)에 가리지 않도록 그 바로 아래에
-                            sticky 처리. thead가 아니라 th 각각에 개별로 sticky+배경을 줘야 스크롤된
-                            본문 행이 헤더 뒤로 비쳐 보이지 않는다(부모 thead의 배경은 sticky로 화면에
-                            고정된 th 뒤까지 따라오지 않음) — position:fixed가 아니라 sticky라 컬럼
-                            너비/가로 스크롤 동기화는 테이블 레이아웃이 그대로 맞춰준다. */}
+                        {/* sticky thead th + 가로 스크롤(overflow-x)까지 함께 있는 래퍼가 세로로는
+                            "실제로 스크롤할 공간이 없는(자식 콘텐츠 높이만큼 자동으로 늘어나는)"
+                            상태면, 크롬/사파리/파이어폭스 전부 이 안의 position:sticky 요소를
+                            문서 순서상 위치가 아니라 화면 아무 데나(실측: 두 번째 행 자리) 잘못
+                            그리는 알려진 렌더링 버그가 있다 — 이전 커밋(top-[57px], 세로 미고정
+                            래퍼)에서 실제로 이 버그가 발생해 헤더가 1번째 직원 행 아래에 끼어
+                            보였다. 로컬 정적 HTML로 직접 재현/검증 완료(Tailwind 유무, th vs
+                            thead에 sticky 적용 여부와 무관하게 항상 재현됨). 유일하게 항상 정상
+                            동작하는 조합은 래퍼가 max-height로 실제 세로 스크롤 가능 영역을
+                            가지는 것 — 그래서 이 div에 overflow-auto + max-h-[70vh]를 주고(가로·
+                            세로 스크롤 모두 이 박스 안에서 발생), sticky th의 top은 페이지 상단
+                            헤더 오프셋이 아니라 "이 박스 자신의 스크롤 뷰포트 맨 위"를 기준으로
+                            0으로 둔다. thead가 아니라 th 각각에 sticky+배경을 개별로 줘야 스크롤된
+                            본문 행이 헤더 뒤로 비쳐 보이지 않는다(부모 thead의 배경은 sticky로
+                            고정된 th 뒤까지 따라오지 않음). */}
                         <thead className="bg-gray-50">
                           <tr>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">고객아이디</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">휴직일</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">복귀일</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 누적 걸음수</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급대상 일수</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 상한</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 포인트</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 지급액</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
-                            <th className="sticky top-[57px] z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">이름</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">고객아이디</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">휴직일</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">복귀일</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 누적 걸음수</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급대상 일수</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 상한</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 포인트</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 지급액</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
                           </tr>
                         </thead>
                         <tbody>
