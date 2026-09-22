@@ -4,6 +4,7 @@ import { Suspense, useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { RESOLUTION_LABEL, countCommentsByTask, isExampleTask, type AiTask, type ResolutionType } from '@/lib/ai-tasks'
+import { ORG_GROUP_ORDER, resolveOrgGroup, type OrgGroup } from '@/lib/team-org-map'
 import { TaskCard } from '@/components/ai/TaskCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -23,6 +24,7 @@ function AiTasksContent() {
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState(q)
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<OrgGroup>>(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -68,6 +70,21 @@ function AiTasksContent() {
 
   const sorted = [...exampleTasks, ...sortedReal]
 
+  // 검색/필터/정렬이 끝난 결과(sortedReal)를 사업부/본부/연구소별로 묶는다 — 예시 게시글은
+  // 기존과 동일하게 그룹과 무관하게 최상단에 고정 노출하므로 그룹 대상에서 제외한다.
+  const groupedReal = new Map<OrgGroup, AiTask[]>(ORG_GROUP_ORDER.map(g => [g, []]))
+  for (const t of sortedReal) {
+    groupedReal.get(resolveOrgGroup(t.team))!.push(t)
+  }
+
+  function toggleGroup(group: OrgGroup) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group); else next.add(group)
+      return next
+    })
+  }
+
   return (
     <div className="space-y-4">
       <div>
@@ -108,7 +125,7 @@ function AiTasksContent() {
         </div>
       </div>
 
-      <p className="text-xs text-gray-400">{sorted.length}건</p>
+      <p className="text-xs text-gray-400">{sortedReal.length}건</p>
 
       {loading ? <LoadingState />
         : sorted.length === 0 ? (
@@ -120,10 +137,40 @@ function AiTasksContent() {
           )
         )
         : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sorted.map(t => (
-              <TaskCard key={t.id} task={t} commentCount={commentCounts[t.id] ?? 0} />
-            ))}
+          <div className="space-y-6">
+            {exampleTasks.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {exampleTasks.map(t => (
+                  <TaskCard key={t.id} task={t} commentCount={commentCounts[t.id] ?? 0} />
+                ))}
+              </div>
+            )}
+
+            {ORG_GROUP_ORDER.filter(group => (groupedReal.get(group)?.length ?? 0) > 0).map(group => {
+              const groupTasks = groupedReal.get(group) ?? []
+              const collapsed = collapsedGroups.has(group)
+              return (
+                <div key={group}>
+                  <button type="button" onClick={() => toggleGroup(group)}
+                    className="w-full flex items-center justify-between py-2 border-b border-gray-200 mb-3 text-left">
+                    <span className="text-sm font-bold text-gray-800">
+                      {group} <span className="text-xs font-semibold text-gray-400 ml-1">{groupTasks.length}건</span>
+                    </span>
+                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${collapsed ? '-rotate-90' : ''}`}
+                      fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {!collapsed && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {groupTasks.map(t => (
+                        <TaskCard key={t.id} task={t} commentCount={commentCounts[t.id] ?? 0} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
     </div>
