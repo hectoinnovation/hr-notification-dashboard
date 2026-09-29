@@ -2298,6 +2298,7 @@ export default function HRDashboard() {
   const [hectoSettlement,      setHectoSettlement]      = useState<HectoCoinSettlementRow | null>(null)
   const [hectoLoading,         setHectoLoading]         = useState(false)
   const [hectoUploading,       setHectoUploading]       = useState<'first' | 'final' | null>(null)
+  const [hectoDeletingStage,   setHectoDeletingStage]   = useState<'first' | 'final' | 'roster' | null>(null)
   const [hectoDownloading,     setHectoDownloading]     = useState<'first' | 'additional' | null>(null)
   const [hectoDetailDownloading, setHectoDetailDownloading] = useState(false)
   const [hectoError,           setHectoError]           = useState<string | null>(null)
@@ -2956,6 +2957,70 @@ export default function HRDashboard() {
     } finally {
       setHectoRosterUploading(false)
     }
+  }
+
+  /**
+   * 1차/최종 업로드 파일 삭제 — 해당 단계의 파일명/업로드일시/원본 데이터(rows)만
+   * null로 초기화하고 그 즉시 해당 영역은 최초 업로드 전 상태로 돌아간다. 반대편
+   * 단계(1차↔최종)나 다른 정산월 행, 지급액 수동수정(payment_overrides)/걸음수·
+   * 포인트 수동입력(data_overrides)/정산 제외(excluded_employees)/사원리스트는
+   * "그 파일로 생성·반영된" 데이터가 아니라 관리자가 화면에서 별도로 저장한 값이라
+   * 건드리지 않는다 — 파일 재업로드 시 수동 수정값이 보존되는 것과 동일한 원칙이며,
+   * 덕분에 삭제 후 같은/다른 파일을 다시 업로드하면 그대로 정상적으로 이어서 계산된다.
+   * 이 페이지 자체가 이미 로그인 세션(관리자)으로만 접근 가능하므로 별도 권한 체크
+   * 없이 기존 업로드/수정 기능들과 동일한 보호 수준으로 동작한다.
+   */
+  async function deleteHectoUpload(stage: 'first' | 'final') {
+    if (!hectoSettlement) return
+    const alreadyUploaded = stage === 'first' ? hectoSettlement.first_uploaded_at : hectoSettlement.final_uploaded_at
+    if (!alreadyUploaded) return
+    if (!confirm('업로드된 파일과 해당 파일을 기준으로 반영된 데이터를 삭제하시겠습니까?')) return
+    const payload = stage === 'first'
+      ? { first_file_name: null, first_uploaded_at: null, first_rows: null }
+      : { final_file_name: null, final_uploaded_at: null, final_rows: null }
+    setHectoDeletingStage(stage); setHectoError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq('settlement_month', hectoSettlementMonth)
+      .select('*')
+      .single()
+    setHectoDeletingStage(null)
+    if (error) { setHectoError('삭제 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
+    setHectoNotice(
+      stage === 'first'
+        ? '1차 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+        : '최종 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+    )
+  }
+
+  /**
+   * 사원리스트 업로드 삭제 — 업로드 파일 정보(file_name/uploaded_at)와 그 파일로
+   * 들어온 매핑(source==='upload', 과거 데이터라 source가 없는 항목도 동일 취급)만
+   * 지운다. 화면에서 직접 입력/수정한 고객아이디(source==='manual')는 파일에서
+   * 비롯된 데이터가 아니므로 삭제 대상이 아니다 — 사원리스트 재업로드 시 수동 입력값이
+   * 보존되는 것과 동일한 원칙(mergeHectoCoinRosterOnUpload)이다.
+   */
+  async function deleteHectoRoster() {
+    if (!hectoRoster?.uploaded_at) return
+    if (!confirm('업로드된 파일과 해당 파일을 기준으로 반영된 데이터를 삭제하시겠습니까?')) return
+    const keptManualEntries = (hectoRoster.entries ?? []).filter(e => e.source === 'manual')
+    setHectoDeletingStage('roster'); setHectoRosterError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_roster')
+      .update({ file_name: null, uploaded_at: null, entries: keptManualEntries, updated_at: new Date().toISOString() })
+      .eq('id', 'singleton')
+      .select('*')
+      .single()
+    setHectoDeletingStage(null)
+    if (error) { setHectoRosterError('삭제 실패: ' + error.message); return }
+    setHectoRoster(data as HectoCoinRosterRow)
+    setHectoRosterNotice(
+      keptManualEntries.length > 0
+        ? `사원리스트 업로드가 삭제되었습니다. 화면에서 직접 입력한 고객아이디 ${keptManualEntries.length}건은 그대로 유지됩니다.`
+        : '사원리스트 업로드가 삭제되었습니다.'
+    )
   }
 
   /**
@@ -4144,8 +4209,13 @@ export default function HRDashboard() {
                           onFile={file => handleHectoUpload(file, 'first')} />
                       </div>
                       {hectoSettlement?.first_uploaded_at ? (
-                        <p className="text-xs text-emerald-600">
-                          ✓ {hectoSettlement.first_file_name} · {new Date(hectoSettlement.first_uploaded_at).toLocaleString('ko-KR')} 정산 완료
+                        <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
+                          <span>✓ {hectoSettlement.first_file_name} · {new Date(hectoSettlement.first_uploaded_at).toLocaleString('ko-KR')} 정산 완료</span>
+                          <button onClick={() => deleteHectoUpload('first')}
+                            disabled={hectoDeletingStage === 'first' || hectoUploading === 'first'}
+                            className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
+                            {hectoDeletingStage === 'first' ? '삭제 중...' : '삭제'}
+                          </button>
                         </p>
                       ) : (
                         <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
@@ -4158,8 +4228,13 @@ export default function HRDashboard() {
                           onFile={file => handleHectoUpload(file, 'final')} />
                       </div>
                       {hectoSettlement?.final_uploaded_at ? (
-                        <p className="text-xs text-emerald-600">
-                          ✓ {hectoSettlement.final_file_name} · {new Date(hectoSettlement.final_uploaded_at).toLocaleString('ko-KR')} 정산 완료
+                        <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
+                          <span>✓ {hectoSettlement.final_file_name} · {new Date(hectoSettlement.final_uploaded_at).toLocaleString('ko-KR')} 정산 완료</span>
+                          <button onClick={() => deleteHectoUpload('final')}
+                            disabled={hectoDeletingStage === 'final' || hectoUploading === 'final'}
+                            className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
+                            {hectoDeletingStage === 'final' ? '삭제 중...' : '삭제'}
+                          </button>
                         </p>
                       ) : (
                         <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
@@ -4172,8 +4247,13 @@ export default function HRDashboard() {
                           onFile={file => handleHectoRosterUpload(file)} />
                       </div>
                       {hectoRoster?.uploaded_at ? (
-                        <p className="text-xs text-emerald-600">
-                          ✓ {hectoRoster.file_name} · {new Date(hectoRoster.uploaded_at).toLocaleString('ko-KR')} · {hectoRoster.entries?.length ?? 0}명
+                        <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
+                          <span>✓ {hectoRoster.file_name} · {new Date(hectoRoster.uploaded_at).toLocaleString('ko-KR')} · {hectoRoster.entries?.length ?? 0}명</span>
+                          <button onClick={deleteHectoRoster}
+                            disabled={hectoDeletingStage === 'roster' || hectoRosterUploading}
+                            className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
+                            {hectoDeletingStage === 'roster' ? '삭제 중...' : '삭제'}
+                          </button>
                         </p>
                       ) : (
                         <p className="text-xs text-gray-400">{hectoRosterLoading ? '불러오는 중...' : '아직 업로드되지 않았습니다. (지급용 고객아이디 매칭에 사용)'}</p>
