@@ -36,6 +36,7 @@ export type HectoCoinSettlementRow = {
   first_data_overrides: HectoCoinDataOverrides | null
   additional_data_overrides: HectoCoinDataOverrides | null
   excluded_employees: HectoCoinExcludedEmployees | null
+  leave_excluded_names: HectoCoinLeaveExcludedNames | null
 }
 
 /**
@@ -108,6 +109,26 @@ export function validateHectoCoinDataOverride(
  * hecto_coin_settlements 행에 저장되므로 다른 달에는 영향이 없다.
  */
 export type HectoCoinExcludedEmployees = Record<string, true>
+
+/**
+ * 휴직자 제외 명단 — 관리자가 쉼표/줄바꿈으로 구분해 한 번에 입력한 이름 목록(정규화된
+ * 이름, 중복 제거됨). 위 excluded_employees(테이블 행별 휴지통 아이콘)와 기계적으로는
+ * 동일하게 "이번 정산월 화면 목록에서만 제외"하지만, 입력 경로가 다르다 — 포인트 파일에
+ * 아직 등장하지 않은 사람도 이름만 알면 미리 등록해둘 수 있고, 업로드/재계산 후 자동으로
+ * 일치 여부가 다시 확인된다. 이 목록 자체는 employees의 입사/퇴사/휴직복귀 분류 로직에는
+ * 전혀 관여하지 않는다(순수 화면/계산 단계의 제외 필터일 뿐).
+ */
+export type HectoCoinLeaveExcludedNames = string[]
+
+/**
+ * 휴직자 제외 명단 입력값 파싱 — 쉼표(,) 또는 줄바꿈으로 구분된 이름들을 다른 매칭
+ * 로직과 동일한 기준(stripEnglishFromName)으로 정규화하고, 빈 값을 제거한 뒤 중복을
+ * 제거한다(입력 순서는 유지).
+ */
+export function parseHectoCoinLeaveExcludedInput(raw: string): HectoCoinLeaveExcludedNames {
+  const names = raw.split(/[,\n]/).map(s => stripEnglishFromName(s)).filter(Boolean)
+  return Array.from(new Set(names))
+}
 
 // ─── 사원리스트(고객아이디 매핑) ────────────────────────────────────────────────
 // 정산월과 무관하게 유지되는 전역 매핑 — cafe_excel_data와 동일한 "singleton 1행"
@@ -758,6 +779,7 @@ export function computeHectoCoinEntries(
   firstDataOverrides: HectoCoinDataOverrides = {},
   additionalDataOverrides: HectoCoinDataOverrides = {},
   excludedEmployees: HectoCoinExcludedEmployees = {},
+  leaveExcludedNames: HectoCoinLeaveExcludedNames = [],
 ): HectoCoinEntry[] {
   const firstByName = groupByNormalizedName(firstRows)
   const finalByName = groupByNormalizedName(finalRows)
@@ -800,7 +822,11 @@ export function computeHectoCoinEntries(
   // 정산 대상 제외 — 항상 UNION(포인트 파일 ∪ employees 이벤트)이 전부 만들어진 뒤
   // 마지막에 적용한다. 그래야 재업로드/재계산으로 UNION이 다시 만들어져도 제외 플래그가
   // 있는 사람은 다시 나타나지 않는다(요청 사양의 순서: UNION → excluded 제거 → 최종 목록).
-  const visible = entries.filter(e => !excludedEmployees[e.name])
+  // excludedEmployees(행별 휴지통 아이콘)와 leaveExcludedNames(휴직자 제외 명단 일괄
+  // 입력)는 입력 경로만 다를 뿐 기계적으로는 동일한 "이번 정산월 화면에서만 제외" 필터라
+  // 하나의 최종 필터 단계에서 함께 적용한다(두 목록 중 하나에만 있어도 제외됨).
+  const leaveExcludedSet = new Set(leaveExcludedNames)
+  const visible = entries.filter(e => !excludedEmployees[e.name] && !leaveExcludedSet.has(e.name))
   return visible.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 

@@ -16,7 +16,7 @@ import {
 import {
   parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
   validateHectoCoinOverrideAmount, validateHectoCoinDataOverride, validateHectoCoinCustomerId,
-  mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry,
+  mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry, parseHectoCoinLeaveExcludedInput,
   toHectoCoinDetailRow, hectoCoinDetailFilename,
   type HectoCoinSettlementRow, type HectoCoinRosterRow, type HectoCoinEntry, type HectoCoinPaymentOverrides,
   type HectoCoinDataOverrides, type HectoCoinDetailSummary, type HectoCoinExcludedEmployees,
@@ -1736,6 +1736,57 @@ function HectoEditableCustomerIdCell({
   )
 }
 
+/**
+ * 헥토코인 "휴직자 제외 명단" 입력기 — 쉼표/줄바꿈으로 구분한 이름 여러 개를 한 번에
+ * 입력해 이번 정산월 대상에서 제외한다. 다른 헥토코인 인라인 편집 컴포넌트들과 동일하게
+ * "편집 모드를 열 때 현재 저장된 값을 스냅샷 떠서 로컬 state로 들고, 저장/취소 시 닫는"
+ * 패턴을 쓴다 — 그래야 다른 필드 저장으로 hectoSettlement가 갱신돼도(예: 지급액 수동
+ * 수정 저장) 입력 중이던 텍스트가 조용히 사라지지 않는다.
+ */
+function HectoLeaveExcludedEditor({
+  names, matchedCount, saving, onSave,
+}: {
+  names: string[]; matchedCount: number; saving: boolean; onSave: (raw: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+
+  function startEdit() { setDraft(names.join('\n')); setEditing(true) }
+  function handleSave() { onSave(draft); setEditing(false) }
+  function handleCancel() { setEditing(false) }
+
+  if (editing) {
+    return (
+      <div className="space-y-1.5">
+        <textarea autoFocus value={draft} disabled={saving} rows={3}
+          onChange={e => setDraft(e.target.value)}
+          placeholder="휴직자 이름을 쉼표(,) 또는 줄바꿈으로 구분해 입력하세요. 예: 홍길동, 김철수"
+          className="w-full text-xs border border-orange-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+        <div className="flex items-center gap-2">
+          <button onClick={handleSave} disabled={saving}
+            className="text-xs font-semibold text-white bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded-lg disabled:opacity-50">
+            {saving ? '저장 중...' : '저장'}
+          </button>
+          <button onClick={handleCancel} disabled={saving}
+            className="text-xs font-semibold text-gray-500 hover:text-gray-700 px-3 py-1">취소</button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div className="text-xs text-gray-600 min-w-0">
+        <span className="font-semibold text-amber-600">휴직 제외 {matchedCount}명</span>
+        {names.length > 0 && <span className="text-gray-400"> · {names.join(', ')}</span>}
+      </div>
+      <button onClick={startEdit} className="text-xs font-semibold text-blue-600 hover:text-blue-800 shrink-0">
+        {names.length > 0 ? '수정' : '명단 입력'}
+      </button>
+    </div>
+  )
+}
+
 // ─── 직원 폼 ──────────────────────────────────────────────────────────────────
 function FormField({ label, value, onChange, placeholder, type = 'text', required = false }: {
   label: string; value: string; onChange: (v: string) => void
@@ -2326,6 +2377,11 @@ export default function HRDashboard() {
   const [hectoExcludeSavingKey,  setHectoExcludeSavingKey]  = useState<string | null>(null)
   const [hectoExcludeError,      setHectoExcludeError]      = useState<string | null>(null)
   const [hectoExcludedPanelOpen, setHectoExcludedPanelOpen] = useState(false)
+  // 휴직자 제외 명단 — 쉼표/줄바꿈으로 구분한 이름 여러 개를 한 번에 입력해 제외하는
+  // 별도 입력 경로(hectoSettlement.leave_excluded_names). 개별 행 휴지통 아이콘과
+  // 기계적으로는 동일한 필터를 쓰지만 UI/입력 방식이 달라 상태를 따로 둔다.
+  const [hectoLeaveExcludedSaving, setHectoLeaveExcludedSaving] = useState(false)
+  const [hectoLeaveExcludedError,  setHectoLeaveExcludedError]  = useState<string | null>(null)
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2536,13 +2592,28 @@ export default function HRDashboard() {
   // + 사원리스트(고객아이디 매핑)에서 화면 표시용 결과를 매번 다시 계산
   const hectoExcludedEmployees: HectoCoinExcludedEmployees = hectoSettlement?.excluded_employees ?? {}
   const hectoExcludedNames = Object.keys(hectoExcludedEmployees)
+  const hectoLeaveExcludedNames = hectoSettlement?.leave_excluded_names ?? []
   const hectoEntries: HectoCoinEntry[] = computeHectoCoinEntries(
     hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
     employees, hectoRoster?.entries ?? [],
     hectoSettlement?.first_payment_overrides ?? {}, hectoSettlement?.additional_payment_overrides ?? {},
     hectoSettlement?.first_data_overrides ?? {}, hectoSettlement?.additional_data_overrides ?? {},
-    hectoExcludedEmployees,
+    hectoExcludedEmployees, hectoLeaveExcludedNames,
   )
+  // "휴직 제외 X명" 표시용 — 입력한 이름 중 실제로 이번 달 UNION 목록에 존재해서
+  // 진짜로 제외 효과가 발생한 인원만 센다(오타로 존재하지 않는 이름을 세지 않기 위해
+  // 휴직자 제외 명단만 뺀 목록을 한 번 더 계산해서 교집합을 구한다 — 순수 함수라
+  // 추가 네트워크 호출 없이 저렴하다).
+  const hectoEntriesWithoutLeaveExclusion = computeHectoCoinEntries(
+    hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
+    employees, hectoRoster?.entries ?? [],
+    hectoSettlement?.first_payment_overrides ?? {}, hectoSettlement?.additional_payment_overrides ?? {},
+    hectoSettlement?.first_data_overrides ?? {}, hectoSettlement?.additional_data_overrides ?? {},
+    hectoExcludedEmployees, [],
+  )
+  const hectoLeaveExcludedMatchedCount = hectoLeaveExcludedNames.filter(
+    name => hectoEntriesWithoutLeaveExclusion.some(e => e.name === name)
+  ).length
   // 요약 카드/상세 엑셀 공용 — 둘이 서로 다른 계산식을 쓰면 화면 총액과 엑셀 총액이
   // 어긋날 수 있으므로 반드시 같은 변수를 그대로 재사용한다(hecto 탭 렌더 블록과
   // downloadHectoCoinDetailExcel 양쪽에서 참조).
@@ -3171,6 +3242,29 @@ export default function HRDashboard() {
       .single()
     setHectoExcludeSavingKey(null)
     if (error) { setHectoExcludeError('복원 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
+  }
+
+  /**
+   * 휴직자 제외 명단 저장 — 텍스트 원본을 정규화·중복제거(parseHectoCoinLeaveExcludedInput)
+   * 한 뒤 hecto_coin_settlements.leave_excluded_names(정산월별)에 통째로 저장한다.
+   * 아직 1차 파일도 업로드되지 않아 이번 달 행 자체가 없을 수도 있으므로(명단을 미리
+   * 등록해두는 용도) update가 아니라 upsert를 쓴다 — 다른 컬럼은 payload에 없으므로
+   * 원본 파일/override/제외 플래그 등 기존 값은 전혀 건드리지 않는다.
+   */
+  async function saveHectoLeaveExcludedNames(raw: string) {
+    const names = parseHectoCoinLeaveExcludedInput(raw)
+    setHectoLeaveExcludedSaving(true); setHectoLeaveExcludedError(null)
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .upsert(
+        { settlement_month: hectoSettlementMonth, leave_excluded_names: names, updated_at: new Date().toISOString() },
+        { onConflict: 'settlement_month' },
+      )
+      .select('*')
+      .single()
+    setHectoLeaveExcludedSaving(false)
+    if (error) { setHectoLeaveExcludedError('저장 실패: ' + error.message); return }
     setHectoSettlement(data as HectoCoinSettlementRow)
   }
 
@@ -4266,6 +4360,21 @@ export default function HRDashboard() {
                         </div>
                       )}
                     </div>
+                  </div>
+
+                  {/* 휴직자 제외 명단 — 업로드 파일 원본은 그대로 두고 정산 계산 단계에서만
+                      이름이 일치하는 직원을 제외한다(정산월별 저장, 다른 달에는 영향 없음) */}
+                  <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-1.5">
+                    <p className="text-sm font-semibold text-gray-800">휴직자 제외 명단</p>
+                    <p className="text-[11px] text-gray-400">
+                      이름이 일치하는 직원은 이번 정산월 헥토코인 정산 대상에서만 제외됩니다(업로드 파일 원본·입사/퇴사/휴직복귀 분류에는 영향 없음).
+                    </p>
+                    <HectoLeaveExcludedEditor
+                      names={hectoLeaveExcludedNames}
+                      matchedCount={hectoLeaveExcludedMatchedCount}
+                      saving={hectoLeaveExcludedSaving}
+                      onSave={saveHectoLeaveExcludedNames} />
+                    {hectoLeaveExcludedError && <p className="text-xs text-red-500">{hectoLeaveExcludedError}</p>}
                   </div>
 
                   {/* 월별 요약 카드 */}
