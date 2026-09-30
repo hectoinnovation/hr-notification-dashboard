@@ -487,12 +487,27 @@ function bulkGreetingP(types: Array<'hire' | 'leave'>): string {
   return `<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>${what} 포인트 정보를 공유드립니다.</p>`
 }
 
+/**
+ * 메일 제목/본문에 쓰는 "구분"값 — empLabel(emp)은 퇴사자(status==='resigned')에
+ * 대해 항상 '퇴사'만 반환하는데(join_reason이 퇴사자에겐 항상 null로 저장되는 기존
+ * 규칙 때문), is_transfer=true인 전적 퇴사자는 메일에서 "퇴사 (전적)"로 구분해
+ * 보여준다. 입사자 쪽(입사/전적/휴직자/휴직복귀자) 표기는 기존 empLabel 결과를 그대로
+ * 쓰며 전혀 건드리지 않는다 — empLabel 자체(화면 TypeBadge·상단 검색필터 등에서도
+ * 재사용됨)는 수정하지 않고, 메일 본문을 만드는 이 파일의 make*Html 함수들에서만
+ * empLabel 대신 이 래퍼를 쓴다. 순수 텍스트 치환일 뿐이라 카페/웰니스포인트 지급 제외
+ * 여부 같은 기존 계산/분기 로직(hire-side isTransfer 파라미터 등)에는 전혀 영향이 없다.
+ */
+function mailLabel(emp: Employee): string {
+  const label = empLabel(emp)
+  return label === '퇴사' && emp.is_transfer ? '퇴사 (전적)' : label
+}
+
 function makeNotifHtml(emp: Employee, type: 'hire' | 'leave') {
   const isTransfer  = type === 'hire' && emp.join_reason === '전적'
   const isOnLeave   = emp.join_reason === '휴직'
   const dateLabel   = getDateLabel(type, isTransfer, emp.join_reason)
   const date        = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
-  const label       = empLabel(emp)
+  const label       = mailLabel(emp)
 
   // 퇴사자 or 휴직자 (leave-type)
   if (type === 'leave') {
@@ -504,8 +519,8 @@ ${greetingP(type, emp.join_reason)}
 <tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
 ${closingP}`
     }
-    // 퇴사자: 마지막출근일 포함
-    return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 퇴사</h3>
+    // 퇴사자: 마지막출근일 포함 — 제목도 label 그대로 사용해 전적 퇴사자는 "퇴사 (전적)"로 표시
+    return `<h3 style="color:#ea580c">[인사 알림] ${emp.name} 님 ${label}</h3>
 ${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">구분</th><th style="${TH}">${dateLabel}</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr>
 <tr><td style="${TD}">${label}</td><td style="${TD}">${date}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr></table>
@@ -519,7 +534,7 @@ ${greetingP(type, emp.join_reason)}
 ${closingP}`
 }
 function makeCafeHtml(emp: Employee, type: 'hire' | 'leave', points: DayPointData | null, isTransfer: boolean) {
-  const 구분     = empLabel(emp)
+  const 구분     = mailLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
   // 표시용: 사용자가 입력한 날짜 그대로 (휴직자도 입력한 휴직시작일 표시)
   const displayDate = (type === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
@@ -548,7 +563,7 @@ ${greetingP(type, emp.join_reason)}
 ${closingP}`
 }
 function makeWellnessHtml(emp: Employee, type: 'hire' | 'leave', isTransfer: boolean) {
-  const 구분     = empLabel(emp)
+  const 구분     = mailLabel(emp)
   const dateLabel = getDateLabel(type, isTransfer, emp.join_reason)
   // 표시용: 사용자가 입력한 날짜 그대로 (휴직자 → 입력한 휴직시작일, 퇴사자 → exit_date)
   const displayDate = (type === 'hire' ? emp.join_date : (emp.exit_date ?? emp.leave_date)) ?? '-'
@@ -627,7 +642,7 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 
   if (leaves.length > 0) {
     const rows = leaves.map(({ emp }) =>
-      `<tr><td style="${TD}">퇴사</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr>`
+      `<tr><td style="${TD}">${mailLabel(emp)}</td><td style="${TD}">${emp.exit_date??'-'}</td><td style="${TD}">${emp.leave_date??'-'}</td><td style="${TD}">${emp.department??'-'}</td><td style="${TD}">${emp.division??'-'}</td><td style="${TD}">${emp.team??'-'}</td><td style="${TD}">${emp.name}</td></tr>`
     ).join('')
     body += sec('[퇴사]', '#7e22ce',
       `<table style="${TS}"><thead><tr><th style="${TH}">구분</th><th style="${TH}">퇴사일</th><th style="${TH}">마지막 출근일</th><th style="${TH}">부서</th><th style="${TH}">실</th><th style="${TH}">팀</th><th style="${TH}">이름</th></tr></thead><tbody>${rows}</tbody></table>`)
@@ -638,7 +653,7 @@ function makeBulkNotifHtml(entries: Array<{ emp: Employee; type: 'hire' | 'leave
 
 function makeBulkCafeHtml(entries: Array<{ emp: Employee; empType: 'hire' | 'leave'; points: DayPointData | null; isTransfer: boolean }>) {
   const rows = entries.map(({ emp, empType, points, isTransfer }) => {
-    const label = empLabel(emp)
+    const label = mailLabel(emp)
     // 표시용: 사용자가 입력한 날짜 그대로 (휴직자도 입력한 휴직시작일 표시)
     const displayDate = (empType === 'hire' ? emp.join_date : emp.exit_date) ?? '-'
     const date = displayDate   // 카페포인트 계산은 points 파라미터로 전달받음
@@ -678,7 +693,7 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
 
   if (leaves.length > 0) {
     const leaveRows = leaves.map(({ emp, isTransfer }) => {
-      const 구분    = empLabel(emp)
+      const 구분    = mailLabel(emp)
       // 표시용: 사용자가 입력한 날짜 그대로 (휴직자 → 입력한 휴직시작일, 퇴사자 → exit_date)
       const displayDate = emp.exit_date ?? '-'
       // 계산용: 휴직자 → 휴직시작일-1일, 퇴사자 → exit_date 그대로
