@@ -241,22 +241,12 @@ type LeaveMonthCalc = {
 }
 
 /**
- * 퇴사월 재직일수/총일수는 두 포인트가 동일 — "실제 근무 마지막 날"을 기준으로
- * 계산한다(timezone 영향 없는 date-only 파싱). 입사월과 그 달이 같으면(같은 달
- * 입사·근무종료) 그 달 1일부터가 아니라 입사일~마지막 근무일(양일 포함)만
- * 재직일수로 인정한다.
- *
- * leaveDateStr(마지막 출근일)이 exitDateStr(공식 퇴사일)보다 있으면 그 값을 우선
- * 사용한다 — 연차 소진 등으로 공식 퇴사일이 실제 마지막 근무일보다 한참 뒤로
- * 밀리는 경우가 실제 운영 데이터에 흔한데, 이때 exitDateStr을 그대로 쓰면 "실제로
- * 하루도 근무하지 않은 달"까지 그 달 1일부터 근무한 것으로 잘못 계산되어 일할계산
- * 대상이 아닌(= 그 달을 온전히 근무한) 직원의 지급액이 실제보다 작게 나오는 버그가
- * 있었다. leaveDateStr이 없으면(레거시 데이터 등, 대부분 leave_date===exit_date인
- * 정상 케이스 포함) exitDateStr을 그대로 쓰므로 기존 계산 결과와 완전히 동일하다.
+ * 퇴사월 재직일수/총일수는 두 포인트가 동일 — join_date/exit_date만으로 계산
+ * (timezone 영향 없는 date-only 파싱). 입사월과 퇴사월이 같으면(같은 달 입사·퇴사)
+ * 그 달 1일부터가 아니라 입사일~퇴사일(양일 포함)만 재직일수로 인정한다.
  */
-function leaveMonthDayInfo(joinDateStr: string, exitDateStr: string, leaveDateStr?: string | null): { year: number; month: number; workedDays: number; daysInLeaveMonth: number } {
-  const effectiveDateStr = leaveDateStr || exitDateStr
-  const [ey, em, ed] = effectiveDateStr.split('-').map(Number)
+function leaveMonthDayInfo(joinDateStr: string, exitDateStr: string): { year: number; month: number; workedDays: number; daysInLeaveMonth: number } {
+  const [ey, em, ed] = exitDateStr.split('-').map(Number)
   const daysInLeaveMonth = daysInMonth(ey, em)
   const [jy, jm, jd] = joinDateStr.split('-').map(Number)
   const workedDays = (jy === ey && jm === em) ? (ed - jd + 1) : ed
@@ -264,8 +254,8 @@ function leaveMonthDayInfo(joinDateStr: string, exitDateStr: string, leaveDateSt
 }
 
 /** 성과포인트: 연간 기준금액 고정(1,000,000원) — 재직 연차와 무관 */
-function calcPerformancePointLeaveMonth(joinDateStr: string, exitDateStr: string, leaveDateStr?: string | null): LeaveMonthCalc {
-  const { workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr, leaveDateStr)
+function calcPerformancePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc {
+  const { workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
   const monthlyBase = PERFORMANCE_POINT_ANNUAL / 12
   const amount = Math.round(monthlyBase * workedDays / daysInLeaveMonth)
   return { annualBase: PERFORMANCE_POINT_ANNUAL, monthlyBase, daysInLeaveMonth, workedDays, amount }
@@ -284,9 +274,9 @@ function calcTenureAppliedYears(joinYear: number, targetYear: number): number {
 }
 
 /** 근속포인트: 퇴사연도에 적용되는 연차 기준으로 연간 기준금액을 산정한 뒤 퇴사월만 일할계산 */
-function calcTenurePointLeaveMonth(joinDateStr: string, exitDateStr: string, leaveDateStr?: string | null): LeaveMonthCalc & { appliedYears: number; eligible: boolean } {
+function calcTenurePointLeaveMonth(joinDateStr: string, exitDateStr: string): LeaveMonthCalc & { appliedYears: number; eligible: boolean } {
   const joinYear = Number(joinDateStr.split('-')[0])
-  const { year: exitYear, workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr, leaveDateStr)
+  const { year: exitYear, workedDays, daysInLeaveMonth } = leaveMonthDayInfo(joinDateStr, exitDateStr)
   const appliedYears = calcTenureAppliedYears(joinYear, exitYear)
   const annualBase = appliedYears * TENURE_POINT_PER_YEAR
   const monthlyBase = annualBase / 12
@@ -857,7 +847,7 @@ function buildPerformancePointRows(list: Employee[]): PerformancePointRow[] {
     .filter(e => e.status === 'resigned' && e.performance_point_target === true)
     .map(emp => ({
       emp,
-      calc: emp.join_date && emp.exit_date ? calcPerformancePointLeaveMonth(emp.join_date, emp.exit_date, emp.leave_date) : null,
+      calc: emp.join_date && emp.exit_date ? calcPerformancePointLeaveMonth(emp.join_date, emp.exit_date) : null,
     }))
 }
 
@@ -866,7 +856,7 @@ function buildTenurePointRows(list: Employee[]): TenurePointRow[] {
     .filter(e => e.status === 'resigned' && e.tenure_point_target === true)
     .map(emp => ({
       emp,
-      calc: emp.exit_date && emp.join_date ? calcTenurePointLeaveMonth(emp.join_date, emp.exit_date, emp.leave_date) : null,
+      calc: emp.exit_date && emp.join_date ? calcTenurePointLeaveMonth(emp.join_date, emp.exit_date) : null,
     }))
 }
 
