@@ -67,6 +67,7 @@ interface EmployeeForm {
   position: string; phone: string; customer_id: string
   join_reason: string; status: 'active' | 'resigned'
   performance_point_target: boolean; tenure_point_target: boolean
+  is_transfer: boolean  // 퇴사자 전적 여부(일반 퇴사=false/전적 퇴사=true) — status/join_reason과 별개
 }
 const EMPTY_FORM: EmployeeForm = {
   name: '', join_date: '', leave_date: '', exit_date: '',
@@ -74,6 +75,7 @@ const EMPTY_FORM: EmployeeForm = {
   position: '', phone: '', customer_id: '',
   join_reason: '입사', status: 'active',
   performance_point_target: false, tenure_point_target: false,
+  is_transfer: false,
 }
 const PAGE_SIZE = 10
 
@@ -1052,6 +1054,12 @@ function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onTog
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-sm font-bold text-gray-900">{emp.name}</span>
               <TypeBadge type={typeLabel} />
+              {/* 전적 퇴사 배지 — 입사 쪽 전적(join_reason==='전적')은 이미 TypeBadge가
+                  "전적"으로 표시하므로 별도 뱃지가 필요없다(중복 방지). is_transfer는
+                  퇴사자 전용 필드이므로 여기서만 추가로 노출한다. */}
+              {emp.is_transfer && (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded border flex-shrink-0 bg-amber-50 text-amber-700 border-amber-200">전적</span>
+              )}
               <SentBadge sent={mailSent} />
             </div>
             <p className="text-xs text-gray-400 mt-0.5 truncate">
@@ -1805,7 +1813,7 @@ function FormField({ label, value, onChange, placeholder, type = 'text', require
 function EmployeeModal({ show, isEdit, form, submitting, onChange, onToggle, onSubmit, onClose }: {
   show: boolean; isEdit: boolean; form: EmployeeForm; submitting: boolean
   onChange: (f: keyof EmployeeForm, v: string) => void
-  onToggle: (f: 'performance_point_target' | 'tenure_point_target', v: boolean) => void
+  onToggle: (f: 'performance_point_target' | 'tenure_point_target' | 'is_transfer', v: boolean) => void
   onSubmit: () => void; onClose: () => void
 }) {
   if (!show) return null
@@ -1839,6 +1847,14 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onToggle, onS
               <div className="grid grid-cols-2 gap-3">
                 <FormField label="마지막 출근일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
                 <FormField label="퇴사일" type="date" value={form.exit_date} onChange={v => onChange('exit_date', v)} />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-500 block mb-1.5">퇴사 구분</label>
+                <select value={form.is_transfer ? '전적' : '일반'} onChange={e => onToggle('is_transfer', e.target.value === '전적')}
+                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
+                  <option value="일반">일반 퇴사</option>
+                  <option value="전적">전적 퇴사</option>
+                </select>
               </div>
               <div className="space-y-1.5 pt-0.5">
                 <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
@@ -1894,8 +1910,8 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onToggle, onS
               <label className="text-xs font-semibold text-gray-500 block mb-1.5">구분</label>
               <select value={form.join_reason} onChange={e => onChange('join_reason', e.target.value)}
                 className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-orange-400 bg-white">
-                <option value="입사">입사</option>
-                <option value="전적">전적</option>
+                <option value="입사">일반 입사</option>
+                <option value="전적">전적 입사</option>
                 <option value="휴직">휴직자</option>
                 <option value="휴직복귀">휴직복귀자</option>
                 <option value="인턴">인턴</option>
@@ -2503,13 +2519,17 @@ export default function HRDashboard() {
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
 
-  // notify tab: sub-tabs handle type separation, so skip typeF here
+  // notify tab: sub-tabs handle type separation, so skip typeF here — 단, 상단 검색창의
+  // "전적" 필터만은 예외로 적용한다. 하이어사이드 전적(join_reason==='전적')과 퇴사사이드
+  // 전적(is_transfer)을 모두 포함해 "전적 대상자만 보기" 검색/필터 조건으로 쓸 수 있게 한다.
+  // 그 외 typeF 값('입사'/'퇴사'/'휴직자' 등)은 서브탭이 이미 담당하므로 그대로 무시한다.
   const filteredNotify = allNotify.filter(({ emp, mailKey }) => {
     const q = search.trim().toLowerCase()
     if (q) {
       const text = [emp.name, emp.department, emp.division, emp.team].filter(Boolean).join(' ').toLowerCase()
       if (!text.includes(q)) return false
     }
+    if (typeF === '전적' && !(emp.join_reason === '전적' || emp.is_transfer)) return false
     if (sentF === '발송완료' && !mailSent[mailKey]) return false
     if (sentF === '미발송'   &&  mailSent[mailKey]) return false
     return true
@@ -2725,6 +2745,10 @@ export default function HRDashboard() {
       join_reason: form.status === 'active' ? (form.join_reason || '입사') : null, status: form.status,
       performance_point_target: form.status === 'resigned' ? form.performance_point_target : false,
       tenure_point_target: form.status === 'resigned' ? form.tenure_point_target : false,
+      // 전적 여부는 퇴사자 화면에서만 노출/저장한다 — 입사자의 전적 여부는 기존처럼
+      // join_reason==='전적'이 그대로 담당하므로, active 상태에서는 항상 false(일반)로
+      // 고정해 두 신호가 어긋나는 상황 자체를 만들지 않는다.
+      is_transfer: form.status === 'resigned' ? form.is_transfer : false,
     }
 
     // ── 직원 저장 ────────────────────────────────────────────────────────────
@@ -3278,7 +3302,8 @@ export default function HRDashboard() {
       phone: emp.phone ?? '', customer_id: emp.customer_id ?? '',
       join_reason: emp.join_reason ?? '입사', status: emp.status,
       performance_point_target: emp.performance_point_target ?? false,
-      tenure_point_target: emp.tenure_point_target ?? false })
+      tenure_point_target: emp.tenure_point_target ?? false,
+      is_transfer: emp.is_transfer ?? false })
     setShowForm(true)
   }
   function closeForm() { setShowForm(false); setEditTarget(null); setForm(EMPTY_FORM) }

@@ -26,4 +26,7 @@ export type Employee = {
   customer_id?: string  // 웰니스코인 엑셀(선불 관리자 거래 요청 양식) C열에 쓰이는 고객아이디. 기존 직원은 비어있을 수 있음
   performance_point_target?: boolean  // 퇴사자 성과포인트 정산 대상 여부(담당자가 직접 체크)
   tenure_point_target?: boolean       // 퇴사자 근속포인트 정산 대상 여부(담당자가 직접 체크)
+  is_transfer?: boolean  // 전적 여부(입사/퇴사 status·join_reason과 별개 값) — 퇴사자에게만 노출/저장.
+                          // 입사자의 전적 여부는 기존처럼 join_reason==='전적'이 그대로 담당하므로
+                          // 여기서는 건드리지 않는다(중복 신호로 인한 혼선 방지)
 }
