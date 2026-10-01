@@ -37,6 +37,9 @@ export type HectoCoinSettlementRow = {
   additional_data_overrides: HectoCoinDataOverrides | null
   excluded_employees: HectoCoinExcludedEmployees | null
   leave_excluded_names: HectoCoinLeaveExcludedNames | null
+  hecto_reference_file_name: string | null
+  hecto_reference_uploaded_at: string | null
+  hecto_reference_rows: HectoReferenceRow[] | null
 }
 
 /**
@@ -319,6 +322,181 @@ export function parseHectoCoinRosterFile(buffer: ArrayBuffer): { entries: HectoC
   }
   if (entries.length === 0) throw new Error('업로드할 수 있는 사원 데이터가 없습니다.')
   return { entries, skippedRows }
+}
+
+// ─── 헥토 기준 엑셀 검증(비교 전용 — 기존 정산 계산에는 전혀 관여하지 않음) ──────────
+// 헥토에서 별도로 전달받는 "기준" 엑셀(성명/금액/비고 외 다른 컬럼도 있지만 이 3개만
+// 사용)을 업로드해서, 현재 대시보드 정산 대상자·지급상한과 일치하는지 교차 검증하는
+// 기능이다. 이 파일을 업로드해도 first_rows/final_rows/사원리스트/지급상한/실제
+// 지급액 등 기존 정산 결과는 전혀 수정되지 않는다 — 순수 비교용 원본만 별도
+// 컬럼(hecto_reference_rows)에 저장하고, 비교 결과는 항상 그 원본 + 기존
+// computeHectoCoinEntries 결과에서 매번 다시 계산한다(기존 저장 방식과 동일한 원칙).
+
+export type HectoReferenceRow = {
+  name: string          // 원본 그대로(앞뒤 공백만 제거) — stripEnglishFromName 등 추가 정규화 하지 않음(요청 사양: "이름 앞뒤 공백 제거 후 비교")
+  amount: number         // 금액
+  note: string | null    // 비고(뚜벅투게더 금액 추출용 원본 문자열)
+}
+
+const HECTO_REFERENCE_NAME_HEADERS = ['성명', '이름']
+
+/**
+ * 헥토 기준 엑셀 파싱 — 여러 컬럼이 있을 수 있지만 성명/금액/비고 3개만 사용하고
+ * 나머지는 전부 무시한다. 이름은 다른 매칭 로직과 달리 stripEnglishFromName을
+ * 적용하지 않는다(요청 사양: 앞뒤 공백 제거만) — 헥토 기준 파일 자체가 영문 접미사
+ * 없는 공식 성명을 쓰는 걸 전제로 한다.
+ */
+export function parseHectoReferenceExcelFile(buffer: ArrayBuffer): { rows: HectoReferenceRow[]; skippedRows: string[] } {
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const ws = wb.Sheets[wb.SheetNames[0]]
+  if (!ws) throw new Error('엑셀 시트를 찾을 수 없습니다.')
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
+
+  let headerRow = -1
+  let col = { name: -1, amount: -1, note: -1 }
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const row = rows[r] as unknown[]
+    const found = { name: -1, amount: -1, note: -1 }
+    row.forEach((cell, c) => {
+      const norm = normalizeHeader(cell)
+      if (!norm) return
+      if (found.name === -1 && HECTO_REFERENCE_NAME_HEADERS.includes(norm)) found.name = c
+      if (found.amount === -1 && norm.includes('금액')) found.amount = c
+      if (found.note === -1 && norm.includes('비고')) found.note = c
+    })
+    if (found.name !== -1 && found.amount !== -1) { headerRow = r; col = found; break }
+  }
+  if (headerRow === -1 || col.name === -1) throw new Error('성명(이름) 컬럼을 찾을 수 없습니다.')
+  if (col.amount === -1) throw new Error('금액 컬럼을 찾을 수 없습니다.')
+
+  const parsedRows: HectoReferenceRow[] = []
+  const skippedRows: string[] = []
+  for (let r = headerRow + 1; r < rows.length; r++) {
+    const row = rows[r] as unknown[]
+    const name = String(row[col.name] ?? '').trim()
+    if (!name) continue
+    const amount = parseHectoCoinNumber(row[col.amount])
+    if (amount === null) {
+      skippedRows.push(`${r + 1}행 (${name}) — 금액 값을 확인할 수 없어 제외되었습니다.`)
+      continue
+    }
+    const note = col.note !== -1 ? (String(row[col.note] ?? '').trim() || null) : null
+    parsedRows.push({ name, amount, note })
+  }
+  if (parsedRows.length === 0) throw new Error('업로드할 수 있는 데이터가 없습니다.')
+  return { rows: parsedRows, skippedRows }
+}
+
+/** 3·6·9·12월은 뚜벅투게더 지급월 — 이 달의 헥토 기준 "금액"에는 뚜벅투게더 지급액이
+ *  섞여 들어오므로 비교 전에 분리해야 한다(요청 사양). */
+export function isTtubeokTogetherMonth(settlementMonth: string): boolean {
+  const m = Number(settlementMonth.split('-')[1])
+  return m === 3 || m === 6 || m === 9 || m === 12
+}
+
+/**
+ * 비고 문자열 전체를 해석하지 않고, "뚜벅투게더" 뒤에 나오는 숫자만 추출한다(요청
+ * 사양 예시 그대로: 띄어쓰기/쉼표/콜론 유무, 앞뒤 다른 문구와 무관하게 숫자만 뽑는다).
+ * 문구가 없거나 비고가 비어 있으면 0원으로 처리한다.
+ */
+export function extractTtubeokTogetherAmount(note: string | null): number {
+  if (!note) return 0
+  const match = note.match(/뚜벅투게더\s*[:：]?\s*([\d,]+)/)
+  if (!match) return 0
+  const amount = Number(match[1].replace(/,/g, ''))
+  return Number.isFinite(amount) ? amount : 0
+}
+
+export type HectoReferenceComparisonResult = 'matched' | 'amount_mismatch' | 'hecto_only' | 'dashboard_only' | 'duplicate'
+
+export type HectoReferenceComparisonRow = {
+  name: string
+  hectoAmount: number | null              // 헥토 기준 엑셀의 금액(헥토 파일에 없으면 null)
+  ttubeokAmount: number                   // 비고에서 추출한 뚜벅투게더 금액(뚜벅투게더 지급월이 아니면 항상 0)
+  comparisonHectoAmount: number | null    // 비교용 헥토 금액 = hectoAmount - ttubeokAmount(뚜벅투게더월만 차감)
+  dashboardPayCap: number | null          // 현재 대시보드 지급상한(헥토 파일에만 있으면 null)
+  result: HectoReferenceComparisonResult
+}
+
+export type HectoReferenceComparisonSummary = {
+  hectoCount: number          // 헥토 기준 파일의 고유 성명 수(중복 이름도 1명으로 카운트)
+  dashboardCount: number      // 현재 대시보드 정산 대상 인원
+  bothCount: number           // 양쪽 모두 존재
+  dashboardOnlyCount: number  // 대시보드에만 있음
+  hectoOnlyCount: number      // 헥토 파일에만 있음
+  duplicateCount: number      // 헥토 파일 내 동일 이름 중복으로 비교 불가
+  matchedCount: number        // 금액까지 일치
+  mismatchCount: number       // 양쪽 다 있지만 금액 불일치
+}
+
+/**
+ * 헥토 기준 엑셀과 현재 대시보드 정산 대상자(dashboardEntries — 이미 중복 병합·제외
+ * 처리까지 끝난, 화면에 실제로 보이는 목록 그대로)를 이름 기준으로 비교한다. 순수
+ * 비교 함수라 아무 것도 저장/변경하지 않는다 — computeHectoCoinEntries 결과와
+ * hecto_reference_rows를 그대로 입력받아 매번 새로 계산한다.
+ */
+export function compareHectoReference(
+  settlementMonth: string,
+  referenceRows: HectoReferenceRow[],
+  dashboardEntries: HectoCoinEntry[],
+): { rows: HectoReferenceComparisonRow[]; summary: HectoReferenceComparisonSummary } {
+  const isTtubeok = isTtubeokTogetherMonth(settlementMonth)
+
+  const byName = new Map<string, HectoReferenceRow[]>()
+  for (const r of referenceRows) {
+    const name = r.name.trim()
+    if (!name) continue
+    if (!byName.has(name)) byName.set(name, [])
+    byName.get(name)!.push(r)
+  }
+  const dashboardByName = new Map(dashboardEntries.map(e => [e.name, e]))
+  const allNames = new Set<string>([...byName.keys(), ...dashboardByName.keys()])
+
+  const rows: HectoReferenceComparisonRow[] = []
+  for (const name of allNames) {
+    const refs = byName.get(name) ?? []
+    const dash = dashboardByName.get(name) ?? null
+
+    if (refs.length > 1) {
+      // 같은 헥토 기준 파일 안에 동일 이름이 여러 번 — 임의로 합산하지 않고 확인 필요로 표시
+      rows.push({
+        name, hectoAmount: null, ttubeokAmount: 0, comparisonHectoAmount: null,
+        dashboardPayCap: dash?.payCap ?? null, result: 'duplicate',
+      })
+      continue
+    }
+
+    const ref = refs[0] ?? null
+    if (ref && !dash) {
+      rows.push({
+        name, hectoAmount: ref.amount, ttubeokAmount: isTtubeok ? extractTtubeokTogetherAmount(ref.note) : 0,
+        comparisonHectoAmount: null, dashboardPayCap: null, result: 'hecto_only',
+      })
+    } else if (!ref && dash) {
+      rows.push({
+        name, hectoAmount: null, ttubeokAmount: 0, comparisonHectoAmount: null,
+        dashboardPayCap: dash.payCap, result: 'dashboard_only',
+      })
+    } else if (ref && dash) {
+      const ttubeokAmount = isTtubeok ? extractTtubeokTogetherAmount(ref.note) : 0
+      const comparisonHectoAmount = ref.amount - ttubeokAmount
+      const result: HectoReferenceComparisonResult = comparisonHectoAmount === dash.payCap ? 'matched' : 'amount_mismatch'
+      rows.push({ name, hectoAmount: ref.amount, ttubeokAmount, comparisonHectoAmount, dashboardPayCap: dash.payCap, result })
+    }
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+
+  const summary: HectoReferenceComparisonSummary = {
+    hectoCount: byName.size,
+    dashboardCount: dashboardEntries.length,
+    bothCount: rows.filter(r => r.result === 'matched' || r.result === 'amount_mismatch').length,
+    dashboardOnlyCount: rows.filter(r => r.result === 'dashboard_only').length,
+    hectoOnlyCount: rows.filter(r => r.result === 'hecto_only').length,
+    duplicateCount: rows.filter(r => r.result === 'duplicate').length,
+    matchedCount: rows.filter(r => r.result === 'matched').length,
+    mismatchCount: rows.filter(r => r.result === 'amount_mismatch').length,
+  }
+  return { rows, summary }
 }
 
 // ─── 직원 DB 기반 일할계산 ──────────────────────────────────────────────────────

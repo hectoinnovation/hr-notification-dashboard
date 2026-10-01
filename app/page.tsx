@@ -18,8 +18,10 @@ import {
   validateHectoCoinOverrideAmount, validateHectoCoinDataOverride, validateHectoCoinCustomerId,
   mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry, parseHectoCoinLeaveExcludedInput,
   toHectoCoinDetailRow, hectoCoinDetailFilename,
+  parseHectoReferenceExcelFile, compareHectoReference, isTtubeokTogetherMonth,
   type HectoCoinSettlementRow, type HectoCoinRosterRow, type HectoCoinEntry, type HectoCoinPaymentOverrides,
   type HectoCoinDataOverrides, type HectoCoinDetailSummary, type HectoCoinExcludedEmployees,
+  type HectoReferenceComparisonResult,
 } from '@/lib/hecto-coin'
 
 // STAGES, Stage, calcDday, makeOnboardingMailHtml are imported from @/lib/onboarding
@@ -2341,6 +2343,16 @@ function hectoMonthLabel(ym: string): string {
   const [y, m] = ym.split('-')
   return `${y}년 ${Number(m)}월`
 }
+/** 헥토 기준 엑셀 검증 결과 한글 라벨 + 뱃지 색상(비교 전용 — 기존 정산 로직과 무관) */
+function hectoRefResultLabel(result: HectoReferenceComparisonResult): { label: string; cls: string } {
+  switch (result) {
+    case 'matched':         return { label: '일치',             cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
+    case 'amount_mismatch': return { label: '금액 불일치',       cls: 'bg-red-50 text-red-700 border-red-200' }
+    case 'hecto_only':      return { label: '헥토 파일에만 있음', cls: 'bg-amber-50 text-amber-700 border-amber-200' }
+    case 'dashboard_only':  return { label: '대시보드에만 있음', cls: 'bg-purple-50 text-purple-700 border-purple-200' }
+    case 'duplicate':       return { label: '중복 확인 필요',     cls: 'bg-gray-100 text-gray-700 border-gray-300' }
+  }
+}
 /** 정산월 드롭다운 옵션 — 최근 18개월 전부터 다음 달까지(최신순) */
 function hectoMonthOptions(): string[] {
   const [ny, nm] = todayKstDateStr().split('-').map(Number)
@@ -2380,7 +2392,7 @@ export default function HRDashboard() {
   const [hectoSettlement,      setHectoSettlement]      = useState<HectoCoinSettlementRow | null>(null)
   const [hectoLoading,         setHectoLoading]         = useState(false)
   const [hectoUploading,       setHectoUploading]       = useState<'first' | 'final' | null>(null)
-  const [hectoDeletingStage,   setHectoDeletingStage]   = useState<'first' | 'final' | 'roster' | null>(null)
+  const [hectoDeletingStage,   setHectoDeletingStage]   = useState<'first' | 'final' | 'roster' | 'reference' | null>(null)
   const [hectoDownloading,     setHectoDownloading]     = useState<'first' | 'additional' | null>(null)
   const [hectoDetailDownloading, setHectoDetailDownloading] = useState(false)
   const [hectoError,           setHectoError]           = useState<string | null>(null)
@@ -2413,6 +2425,15 @@ export default function HRDashboard() {
   // 기계적으로는 동일한 필터를 쓰지만 UI/입력 방식이 달라 상태를 따로 둔다.
   const [hectoLeaveExcludedSaving, setHectoLeaveExcludedSaving] = useState(false)
   const [hectoLeaveExcludedError,  setHectoLeaveExcludedError]  = useState<string | null>(null)
+  // 헥토 기준 엑셀 검증(비교 전용) — 업로드/삭제는 hectoDeletingStage('reference')를
+  // 공유하고, 비교 결과 자체는 저장하지 않고 렌더링마다 compareHectoReference로
+  // 매번 새로 계산한다(다른 헥토코인 원본 파일들과 동일한 원칙).
+  const [hectoRefUploading, setHectoRefUploading] = useState(false)
+  const [hectoRefError,    setHectoRefError]      = useState<string | null>(null)
+  const [hectoRefNotice,   setHectoRefNotice]     = useState<string | null>(null)
+  const [hectoRefSkipped,  setHectoRefSkipped]    = useState<string[]>([])
+  const [hectoRefFilter,   setHectoRefFilter]     = useState<HectoReferenceComparisonResult | 'all'>('all')
+  const [hectoRefListOpen, setHectoRefListOpen]   = useState<{ dashboardOnly: boolean; hectoOnly: boolean; duplicate: boolean }>({ dashboardOnly: false, hectoOnly: false, duplicate: false })
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -2649,6 +2670,15 @@ export default function HRDashboard() {
   const hectoLeaveExcludedMatchedCount = hectoLeaveExcludedNames.filter(
     name => hectoEntriesWithoutLeaveExclusion.some(e => e.name === name)
   ).length
+  // 헥토 기준 엑셀 비교(검증 전용) — 화면에 실제로 보이는 hectoEntries(중복 병합·
+  // 제외 처리까지 끝난 최종 목록) 그대로를 "현재 대시보드 정산 대상자"로 비교한다.
+  // 순수 조회 계산이라 hectoEntries 자체나 1차/최종/사원리스트/지급상한 등 기존
+  // 정산 결과에는 전혀 영향을 주지 않는다.
+  const hectoReferenceRows = hectoSettlement?.hecto_reference_rows ?? []
+  const hectoReferenceComparison = compareHectoReference(hectoSettlementMonth, hectoReferenceRows, hectoEntries)
+  const hectoReferenceFilteredRows = hectoRefFilter === 'all'
+    ? hectoReferenceComparison.rows
+    : hectoReferenceComparison.rows.filter(r => r.result === hectoRefFilter)
   // 요약 카드/상세 엑셀 공용 — 둘이 서로 다른 계산식을 쓰면 화면 총액과 엑셀 총액이
   // 어긋날 수 있으므로 반드시 같은 변수를 그대로 재사용한다(hecto 탭 렌더 블록과
   // downloadHectoCoinDetailExcel 양쪽에서 참조).
@@ -3070,6 +3100,40 @@ export default function HRDashboard() {
   }
 
   /**
+   * 헥토 기준 엑셀 업로드 — 성명/금액/비고 원본만 그대로 저장한다(비교 전용). 이
+   * 업로드는 first_rows/final_rows/지급상한/실제 지급액 등 기존 정산 계산 컬럼을
+   * 전혀 건드리지 않는다 — 비교 결과는 화면 렌더링 시 compareHectoReference로
+   * 매번 새로 계산된다(기존 1차/최종 파일과 동일하게 "원본만 저장, 계산은 항상
+   * 다시" 원칙).
+   */
+  async function handleHectoReferenceUpload(file: File) {
+    setHectoRefUploading(true); setHectoRefError(null); setHectoRefNotice(null); setHectoRefSkipped([])
+    try {
+      const buffer = await file.arrayBuffer()
+      const { rows, skippedRows } = parseHectoReferenceExcelFile(buffer)
+      const wasReupload = !!hectoSettlement?.hecto_reference_uploaded_at
+      const nowIso = new Date().toISOString()
+      const { data, error } = await supabase
+        .from('hecto_coin_settlements')
+        .upsert({
+          settlement_month: hectoSettlementMonth,
+          hecto_reference_file_name: file.name, hecto_reference_uploaded_at: nowIso, hecto_reference_rows: rows,
+          updated_at: nowIso,
+        }, { onConflict: 'settlement_month' })
+        .select('*')
+        .single()
+      if (error) { setHectoRefError('저장 실패: ' + error.message); return }
+      setHectoSettlement(data as HectoCoinSettlementRow)
+      setHectoRefSkipped(skippedRows)
+      setHectoRefNotice(wasReupload ? '헥토 기준 파일이 재업로드되어 비교 결과가 다시 계산되었습니다.' : '헥토 기준 파일이 업로드되어 비교 결과가 계산되었습니다.')
+    } catch (err) {
+      setHectoRefError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
+    } finally {
+      setHectoRefUploading(false)
+    }
+  }
+
+  /**
    * 1차/최종 업로드 파일 삭제 — 해당 단계의 파일명/업로드일시/원본 데이터(rows)만
    * null로 초기화하고 그 즉시 해당 영역은 최초 업로드 전 상태로 돌아간다. 반대편
    * 단계(1차↔최종)나 다른 정산월 행, 지급액 수동수정(payment_overrides)/걸음수·
@@ -3080,14 +3144,20 @@ export default function HRDashboard() {
    * 이 페이지 자체가 이미 로그인 세션(관리자)으로만 접근 가능하므로 별도 권한 체크
    * 없이 기존 업로드/수정 기능들과 동일한 보호 수준으로 동작한다.
    */
-  async function deleteHectoUpload(stage: 'first' | 'final') {
+  async function deleteHectoUpload(stage: 'first' | 'final' | 'reference') {
     if (!hectoSettlement) return
-    const alreadyUploaded = stage === 'first' ? hectoSettlement.first_uploaded_at : hectoSettlement.final_uploaded_at
+    const alreadyUploaded = stage === 'first' ? hectoSettlement.first_uploaded_at
+      : stage === 'final' ? hectoSettlement.final_uploaded_at
+      : hectoSettlement.hecto_reference_uploaded_at
     if (!alreadyUploaded) return
     if (!confirm('업로드된 파일과 해당 파일을 기준으로 반영된 데이터를 삭제하시겠습니까?')) return
     const payload = stage === 'first'
       ? { first_file_name: null, first_uploaded_at: null, first_rows: null }
-      : { final_file_name: null, final_uploaded_at: null, final_rows: null }
+      : stage === 'final'
+      ? { final_file_name: null, final_uploaded_at: null, final_rows: null }
+      // 헥토 기준 파일은 비교 전용이라 지워도 first_rows/final_rows/지급상한 등
+      // 기존 정산 계산에는 애초에 전혀 영향이 없다 — 비교 결과만 사라진다.
+      : { hecto_reference_file_name: null, hecto_reference_uploaded_at: null, hecto_reference_rows: null }
     setHectoDeletingStage(stage); setHectoError(null)
     const { data, error } = await supabase
       .from('hecto_coin_settlements')
@@ -3099,9 +3169,9 @@ export default function HRDashboard() {
     if (error) { setHectoError('삭제 실패: ' + error.message); return }
     setHectoSettlement(data as HectoCoinSettlementRow)
     setHectoNotice(
-      stage === 'first'
-        ? '1차 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
-        : '최종 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+      stage === 'first' ? '1차 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+        : stage === 'final' ? '최종 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+        : '헥토 기준 파일이 삭제되었습니다. 필요하면 다시 업로드해주세요.'
     )
   }
 
@@ -4321,6 +4391,12 @@ export default function HRDashboard() {
                       <button onClick={() => setHectoExcludeError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
                     </div>
                   )}
+                  {hectoRefError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-xs text-red-600 flex items-center justify-between">
+                      <span>{hectoRefError}</span>
+                      <button onClick={() => setHectoRefError(null)} className="text-red-400 hover:text-red-600 ml-3">닫기</button>
+                    </div>
+                  )}
                   {hectoNotice && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2.5 text-xs text-blue-600 flex items-center justify-between">
                       <span>{hectoNotice}</span>
@@ -4334,8 +4410,8 @@ export default function HRDashboard() {
                     </div>
                   )}
 
-                  {/* 1차/최종 파일 업로드 + 사원리스트 업로드 */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* 1차/최종 파일 업로드 + 사원리스트 업로드 + 헥토 기준 파일 업로드 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-semibold text-gray-800">1차 파일 업로드</p>
@@ -4397,6 +4473,31 @@ export default function HRDashboard() {
                       {hectoRosterSkipped.length > 0 && (
                         <div className="text-xs text-amber-600 space-y-0.5">
                           {hectoRosterSkipped.map((s, i) => <p key={i}>{s}</p>)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-semibold text-gray-800">헥토 기준 파일 업로드</p>
+                        <HectoUploadButton label="엑셀 업로드" uploading={hectoRefUploading}
+                          onFile={file => handleHectoReferenceUpload(file)} />
+                      </div>
+                      {hectoSettlement?.hecto_reference_uploaded_at ? (
+                        <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
+                          <span>✓ {hectoSettlement.hecto_reference_file_name} · {new Date(hectoSettlement.hecto_reference_uploaded_at).toLocaleString('ko-KR')} · {hectoSettlement.hecto_reference_rows?.length ?? 0}명</span>
+                          <button onClick={() => deleteHectoUpload('reference')}
+                            disabled={hectoDeletingStage === 'reference' || hectoRefUploading}
+                            className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
+                            {hectoDeletingStage === 'reference' ? '삭제 중...' : '삭제'}
+                          </button>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400">아직 업로드되지 않았습니다. (검증 전용 — 기존 정산 계산에 영향 없음)</p>
+                      )}
+                      {hectoRefNotice && <p className="text-xs text-blue-600">{hectoRefNotice}</p>}
+                      {hectoRefSkipped.length > 0 && (
+                        <div className="text-xs text-amber-600 space-y-0.5">
+                          {hectoRefSkipped.map((s, i) => <p key={i}>{s}</p>)}
                         </div>
                       )}
                     </div>
@@ -4468,6 +4569,104 @@ export default function HRDashboard() {
                       )}
                     </div>
                   )}
+
+                  {/* 헥토 기준 엑셀 검증 — 비교 전용(업로드된 경우에만 표시). 기존 1차/최종/
+                      사원리스트/지급상한/실제 지급액은 전혀 수정하지 않는다. */}
+                  {hectoSettlement?.hecto_reference_uploaded_at && (() => {
+                    const { summary } = hectoReferenceComparison
+                    const diff = Math.abs(summary.hectoCount - summary.dashboardCount)
+                    const dashboardOnlyNames = hectoReferenceComparison.rows.filter(r => r.result === 'dashboard_only').map(r => r.name)
+                    const hectoOnlyNames = hectoReferenceComparison.rows.filter(r => r.result === 'hecto_only').map(r => r.name)
+                    const duplicateNames = hectoReferenceComparison.rows.filter(r => r.result === 'duplicate').map(r => r.name)
+                    const filterChips: Array<{ id: HectoReferenceComparisonResult | 'all'; label: string; count: number }> = [
+                      { id: 'all', label: '전체 비교 인원', count: hectoReferenceComparison.rows.length },
+                      { id: 'matched', label: '금액 일치', count: summary.matchedCount },
+                      { id: 'amount_mismatch', label: '금액 불일치', count: summary.mismatchCount },
+                      { id: 'hecto_only', label: '헥토 파일에만 있음', count: summary.hectoOnlyCount },
+                      { id: 'dashboard_only', label: '대시보드에만 있음', count: summary.dashboardOnlyCount },
+                      { id: 'duplicate', label: '중복 확인 필요', count: summary.duplicateCount },
+                    ]
+                    return (
+                      <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-800">헥토 기준 엑셀 검증 <span className="text-[11px] font-normal text-gray-400">(비교 전용 — 기존 정산 결과에는 영향 없음)</span></p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            헥토 기준 <b>{summary.hectoCount}명</b> / 현재 정산 <b>{summary.dashboardCount}명</b> / {diff}명 차이
+                            {isTtubeokTogetherMonth(hectoSettlementMonth) && (
+                              <span className="ml-1.5 text-[11px] text-amber-600 font-semibold">· 뚜벅투게더 지급월(비고에서 뚜벅투게더 금액을 차감해 비교)</span>
+                            )}
+                          </p>
+                        </div>
+
+                        {/* 인원 비교 — 접기/펼치기 목록 */}
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { key: 'dashboardOnly' as const, label: '대시보드에만 있음', names: dashboardOnlyNames },
+                            { key: 'hectoOnly' as const, label: '헥토 파일에만 있음', names: hectoOnlyNames },
+                            { key: 'duplicate' as const, label: '중복 확인 필요', names: duplicateNames },
+                          ].filter(g => g.names.length > 0).map(g => (
+                            <div key={g.key} className="bg-gray-50 rounded-lg border border-gray-200 px-3 py-1.5">
+                              <button onClick={() => setHectoRefListOpen(p => ({ ...p, [g.key]: !p[g.key] }))}
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-800">
+                                <svg className={`w-3 h-3 transition-transform ${hectoRefListOpen[g.key] ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                </svg>
+                                {g.label} {g.names.length}명
+                              </button>
+                              {hectoRefListOpen[g.key] && (
+                                <p className="text-[11px] text-gray-500 mt-1.5 max-w-md">{g.names.join(', ')}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* 금액 비교 요약 — 클릭 시 아래 표를 해당 결과로 필터링 */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {filterChips.map(c => (
+                            <button key={c.id} onClick={() => setHectoRefFilter(c.id)}
+                              className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${hectoRefFilter === c.id ? 'bg-orange-500 border-orange-500 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                              {c.label} {c.count}명
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* 직원별 상세 비교표 */}
+                        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성명</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">헥토 금액</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">뚜벅투게더</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">비교용 헥토 금액</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">대시보드 지급상한</th>
+                                <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">결과</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {hectoReferenceFilteredRows.length === 0 ? (
+                                <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">해당하는 직원이 없습니다.</td></tr>
+                              ) : hectoReferenceFilteredRows.map(r => {
+                                const { label, cls } = hectoRefResultLabel(r.result)
+                                return (
+                                  <tr key={r.name} className="border-t border-gray-100">
+                                    <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{r.name}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.hectoAmount != null ? r.hectoAmount.toLocaleString() + '원' : '-'}</td>
+                                    <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{r.result === 'hecto_only' || r.result === 'matched' || r.result === 'amount_mismatch' ? r.ttubeokAmount.toLocaleString() + '원' : '-'}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.comparisonHectoAmount != null ? r.comparisonHectoAmount.toLocaleString() + '원' : '-'}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.dashboardPayCap != null ? r.dashboardPayCap.toLocaleString() + '원' : '-'}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap">
+                                      <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${cls}`}>{label}</span>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })()}
 
                   {/* 지급용 엑셀 다운로드 */}
                   <div className="flex justify-end gap-2">
