@@ -613,7 +613,7 @@ export type HectoCoinEntry = {
   totalAmount: number | null           // 적용된 1차 + 적용된 추가
 
   pointsMatchStatus: HectoCoinPointsMatchStatus
-  isDuplicateInPointsFile: boolean   // 같은 업로드 파일 안에 동일 이름이 2건 이상
+  wasMergedFromDuplicates: boolean   // 같은 업로드 파일 안에 동일 이름이 2건 이상이라 1행으로 자동 병합됐는지(안내용 — 더 이상 지급 대상에서 제외하지 않음)
 
   employeeMatch: 'matched' | 'not_found' | 'duplicate'
   customerId: string | null
@@ -634,9 +634,31 @@ function groupByNormalizedName(rows: HectoCoinRawRow[]): Map<string, HectoCoinRa
   return m
 }
 
+/**
+ * 같은 업로드 파일 안에 동일 정규화 이름이 여러 줄 있으면(엑셀 추출 과정의 중복 등
+ * — 실제 운영 데이터에서도 확인됨) 직원 1명당 1행으로 병합한다. "월 누적" 수치이므로
+ * 합산하면 실제보다 부풀려지므로(중복 합산으로 지급상한을 초과하는 사고를 막기 위해)
+ * 단순히 합치지 않고 steps/points 각각 가장 큰 값(가장 늦게 집계된, 가장 완전한 값으로
+ * 간주)을 채택한다 — 두 줄 값이 완전히 같으면(흔한 패턴) 당연히 그 값 그대로 유지된다.
+ * 회사/직책 등 참고 정보는 첫 번째 줄 것을 그대로 쓴다. 포인트 파일에는 사번/이메일
+ * 같은 별도 식별자 컬럼이 없어(이름/회사/직책/걸음수/포인트만 제공됨) 이 시스템 전체가
+ * 이미 쓰고 있는 정규화된 이름을 그대로 병합 키로 쓴다.
+ */
+function mergeDuplicateRows(rows: HectoCoinRawRow[]): HectoCoinRawRow {
+  const maxOf = (vals: Array<number | null>): number | null =>
+    vals.reduce((max: number | null, v) => (v != null && (max == null || v > max) ? v : max), null)
+  return {
+    name: rows[0].name,
+    company: rows[0].company,
+    position: rows[0].position,
+    steps: maxOf(rows.map(r => r.steps)),
+    points: maxOf(rows.map(r => r.points)) ?? 0,
+  }
+}
+
 function buildEntry(
   settlementMonth: string, key: string, name: string, rawName: string,
-  first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, isDuplicateInPointsFile: boolean,
+  first: HectoCoinRawRow | null, final: HectoCoinRawRow | null, wasMergedFromDuplicates: boolean,
   employees: Employee[], roster: HectoCoinRosterEntry[],
   firstOverrides: HectoCoinPaymentOverrides, additionalOverrides: HectoCoinPaymentOverrides,
   finalFileUploaded: boolean,
@@ -649,9 +671,13 @@ function buildEntry(
   const pointsMatchStatus: HectoCoinPointsMatchStatus =
     first && final ? 'matched' : first ? 'first_only' : final ? 'final_only' : 'no_points_file'
 
-  // 포인트 파일 내 중복 이름이면 어느 행을 기준으로 직원을 매칭해야 할지도 불분명하므로
-  // 직원 매칭 자체를 시도하지 않는다(어차피 지급 대상에서 제외됨).
-  const employeeMatch: HectoCoinEmployeeMatch = isDuplicateInPointsFile ? { kind: 'not_found' } : matchEmployeeByName(name, employees)
+  // 같은 파일 안의 중복 줄은 computeHectoCoinEntries가 호출 전에 이미 1행으로 병합해서
+  // 넘겨주므로(mergeDuplicateRows), 여기서는 중복 여부와 무관하게 항상 정상적으로 직원
+  // 매칭/지급상한 계산을 수행한다 — wasMergedFromDuplicates는 "병합되어 1행이 됐다"는
+  // 안내 표시용 플래그일 뿐, 더 이상 지급 계산 자체를 막지 않는다(과거에는 중복이면
+  // 지급 대상에서 통째로 제외했는데, 그러면 정작 그 직원이 이번 달 아예 지급을 못 받는
+  // 문제가 있었다).
+  const employeeMatch: HectoCoinEmployeeMatch = matchEmployeeByName(name, employees)
   const customerIdMatch = matchCustomerId(name, roster, employeeMatch)
 
   let statusLabel: string
@@ -663,12 +689,7 @@ function buildEntry(
   let displayLeaveDate: string | null = null
   let displayExitDate: string | null = null
 
-  if (isDuplicateInPointsFile) {
-    // 같은 업로드 파일 안에 동일 이름이 2건 이상 — 어느 포인트 값이 누구 것인지 알 수
-    // 없으므로 이 케이스만 지급 계산 자체를 하지 않는다(employees/사원리스트와는 무관).
-    statusLabel = '중복 이름 확인필요'
-    excludeReason = statusLabel
-  } else {
+  {
     // employees는 전 직원 마스터가 아니라 "일할계산 예외 이벤트"만 담는 테이블이므로,
     // 매칭되면 그 이벤트를 반영하고 / 매칭 안 되거나(not_found) 동명이인이라 어느 기록을
     // 적용할지 알 수 없으면(duplicate) "이번 달 알려진 예외 없음 = 정상재직"을 기본값으로
@@ -714,7 +735,13 @@ function buildEntry(
   // 의미가 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 적용하지
   // 않는다(어차피 화면에서도 편집 UI를 노출하지 않는다).
   const firstOverrideAmount = firstAutoAmount != null ? validOverride(firstOverrides[name]) : null
-  const firstAmount = firstOverrideAmount ?? firstAutoAmount
+  // 수동 수정값은 저장 시점(validateHectoCoinOverrideAmount)에 그 당시 지급상한을
+  // 넘지 않는지 검증하지만, 그 뒤 직원 정보(입/퇴사일 등)가 바뀌어 지급상한 자체가
+  // 낮아지면 저장된 값이 "그때는 맞았지만 지금은 상한 초과"인 채로 남을 수 있다 —
+  // 화면에 적용될 때 한 번 더 지급상한으로 클램프해 어떤 경로로도 상한을 넘지 않게 한다.
+  const firstAmount = firstOverrideAmount != null
+    ? (payCap != null ? Math.min(firstOverrideAmount, payCap) : firstOverrideAmount)
+    : firstAutoAmount
 
   // ── 최종 단계 — 1차와 동일한 구조 ──
   const finalStepsFile = final?.steps ?? null
@@ -738,7 +765,11 @@ function buildEntry(
   // 1차를 수동 수정하면 추가 지급 자동계산도 함께 갱신되어야 하기 때문.
   const additionalAutoAmount = (finalAmount != null && firstAmount != null) ? Math.max(finalAmount - firstAmount, 0) : null
   const additionalOverrideAmount = additionalAutoAmount != null ? validOverride(additionalOverrides[name]) : null
-  const additionalAmount = additionalOverrideAmount ?? additionalAutoAmount
+  // 1차와 동일한 이유로 "적용된 1차 지급액 + 이 추가 지급액"이 지급상한을 넘지 않도록
+  // 한 번 더 클램프한다(저장 당시엔 맞았지만 이후 지급상한이 낮아진 경우의 안전망).
+  const additionalAmount = additionalOverrideAmount != null
+    ? (payCap != null && firstAmount != null ? Math.min(additionalOverrideAmount, Math.max(payCap - firstAmount, 0)) : additionalOverrideAmount)
+    : additionalAutoAmount
   const totalAmount = firstAmount != null ? firstAmount + (additionalAmount ?? 0) : null
 
   // 화면 "월 누적 걸음수" 단일 참고 컬럼 — 최종 적용 걸음수 우선, 없으면 1차 적용 걸음수
@@ -753,7 +784,7 @@ function buildEntry(
     firstPoints, firstAutoAmount, firstOverrideAmount, firstAmount,
     finalStepsFile, finalPointsFile, finalInPointsFile, finalStepsManual, finalPointsManual, finalDataIsManual,
     finalPoints, finalAmount, additionalAutoAmount, additionalOverrideAmount, additionalAmount, totalAmount,
-    pointsMatchStatus, isDuplicateInPointsFile,
+    pointsMatchStatus, wasMergedFromDuplicates,
     employeeMatch: employeeMatch.kind,
     customerId: customerIdMatch.kind === 'matched' ? customerIdMatch.customerId : null,
     customerIdMatch: customerIdMatch.kind,
@@ -765,8 +796,9 @@ function buildEntry(
  * 1차/최종 원본 + employees(현재 상태) + 사원리스트에서 화면에 표시할 개인별 정산
  * 결과를 매번 새로 계산한다. 이름은 stripEnglishFromName으로 정규화한 뒤 비교하므로
  * 헥토코인 원본 파일의 "안소정ABCE" 같은 표기도 직원 DB/사원리스트의 "안소정"과
- * 동일 인물로 매칭된다. 같은 업로드 파일 안에 동일 정규화 이름이 2건 이상이면 자동으로
- * 짝을 맞추지 않고 각 건을 개별 항목으로 남겨 사용자가 직접 확인하게 한다.
+ * 동일 인물로 매칭된다. 같은 업로드 파일 안에 동일 정규화 이름이 2건 이상이면
+ * mergeDuplicateRows로 1행으로 병합해서(월 누적 수치이므로 가장 큰 값을 채택 — 합산
+ * 금지) 직원 1명당 1행만 만들고, 그 1행은 정상적으로 지급상한까지 계산된다.
  */
 export function computeHectoCoinEntries(
   settlementMonth: string,
@@ -790,15 +822,15 @@ export function computeHectoCoinEntries(
   for (const name of names) {
     const firsts = firstByName.get(name) ?? []
     const finals = finalByName.get(name) ?? []
-    if (firsts.length > 1 || finals.length > 1) {
-      firsts.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__1__${i}`, name, r.name, r, null, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides)))
-      finals.forEach((r, i) => entries.push(buildEntry(settlementMonth, `${name}__2__${i}`, name, r.name, null, r, true, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides)))
-      continue
-    }
-    const first = firsts[0] ?? null
-    const final = finals[0] ?? null
+    // 같은 파일 안에 동일 이름이 여러 줄이면(엑셀 추출 과정의 중복 등) 직원 1명당 1행만
+    // 만들도록 각 쪽을 1행으로 병합한다(mergeDuplicateRows) — 더 이상 중복 건수만큼
+    // 행을 쪼개서 지급 대상에서 제외하지 않는다(요청 사양: 직원 1명당 1행, 중복 합산으로
+    // 지급상한을 초과하지 않도록).
+    const wasMergedFromDuplicates = firsts.length > 1 || finals.length > 1
+    const first = firsts.length > 1 ? mergeDuplicateRows(firsts) : (firsts[0] ?? null)
+    const final = finals.length > 1 ? mergeDuplicateRows(finals) : (finals[0] ?? null)
     const rawName = (final ?? first)!.name
-    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, wasMergedFromDuplicates, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
   }
 
   // 헥토코인 포인트 파일에는 이름이 없지만, employees에 이번 정산월 입사/퇴사/휴직/복귀
@@ -854,6 +886,7 @@ export function hectoCoinStatusText(e: HectoCoinEntry): string {
   }
   if (e.firstDataIsManual) parts.push('1차 데이터 수동입력')
   if (e.finalDataIsManual) parts.push('최종 데이터 수동입력')
+  if (e.wasMergedFromDuplicates) parts.push('포인트 파일 내 중복 데이터 자동 병합됨')
   if (e.employeeMatch === 'duplicate') parts.push('직원DB 동명이인 확인필요')
   if (e.customerIdMatch === 'duplicate') parts.push('고객아이디 동명이인 확인필요')
   else if (e.customerIdMatch === 'not_found') parts.push('고객아이디 미매칭')

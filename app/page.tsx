@@ -4585,13 +4585,13 @@ export default function HRDashboard() {
                                 <HectoEditableDataCell
                                   points={e.firstPoints} steps={e.firstStepsManual ?? e.firstStepsFile} isManual={e.firstDataIsManual}
                                   filePoints={e.firstPointsFile} inPointsFile={e.firstInPointsFile}
-                                  disabled={!!e.excludeReason || e.isDuplicateInPointsFile}
+                                  disabled={!!e.excludeReason}
                                   saving={hectoDataOverrideSavingKey === `first:${e.name}`}
                                   onSave={entry => saveHectoDataOverride('first', e.name, entry)}
                                   onRestore={() => clearHectoDataOverride('first', e.name)} />
                               </td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
-                                {(e.excludeReason || e.isDuplicateInPointsFile)
+                                {e.excludeReason
                                   ? <span className="text-gray-800">{e.firstAmount != null ? e.firstAmount.toLocaleString() + '원' : '-'}</span>
                                   : <HectoEditableAmountCell
                                       appliedAmount={e.firstAmount} autoAmount={e.firstAutoAmount} overrideAmount={e.firstOverrideAmount}
@@ -4604,13 +4604,13 @@ export default function HRDashboard() {
                                 <HectoEditableDataCell
                                   points={e.finalPoints} steps={e.finalStepsManual ?? e.finalStepsFile} isManual={e.finalDataIsManual}
                                   filePoints={e.finalPointsFile} inPointsFile={e.finalInPointsFile}
-                                  disabled={!!e.excludeReason || e.isDuplicateInPointsFile}
+                                  disabled={!!e.excludeReason}
                                   saving={hectoDataOverrideSavingKey === `additional:${e.name}`}
                                   onSave={entry => saveHectoDataOverride('additional', e.name, entry)}
                                   onRestore={() => clearHectoDataOverride('additional', e.name)} />
                               </td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
-                                {(e.excludeReason || e.isDuplicateInPointsFile)
+                                {e.excludeReason
                                   ? <span className="text-gray-600">{e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : '-'}</span>
                                   : <HectoEditableAmountCell
                                       appliedAmount={e.additionalAmount} autoAmount={e.additionalAutoAmount} overrideAmount={e.additionalOverrideAmount}
@@ -4642,6 +4642,11 @@ export default function HRDashboard() {
                                       )}
                                     </>
                                   )}
+                                {e.wasMergedFromDuplicates && (
+                                  <span className="text-amber-600 font-semibold" title="포인트 파일에 동일 이름이 여러 줄 있어 걸음수/포인트가 가장 큰 값 기준으로 1행에 자동 병합되었습니다(합산 아님)">
+                                    {' '}· 중복 데이터 자동 병합
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           ))}
