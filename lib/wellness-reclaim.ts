@@ -94,40 +94,45 @@ export function addOneDayToDateStr(dateStr: string): string {
   return `${yy}-${mm}-${dd}`
 }
 
-/** 화면/메일 표시용 "M.D"(연도·0패딩 없음) — "이름_M.D" 포맷에 사용 */
-export function formatMonthDayLabel(dateStr: string): string {
+/** 화면/메일 표시용 "M.D"(연도·0패딩 없음) — "이름_M.D" 포맷에 사용. 회수일자를 계산할
+ * 수 없는 선택(환수금액 없는 직원도 직접 체크해서 보낼 수 있음) 대비 null-safe. */
+export function formatMonthDayLabel(dateStr: string | null): string {
+  if (!dateStr) return '날짜 확인 필요'
   const [, m, d] = dateStr.split('-').map(Number)
   return `${m}.${d}`
 }
 
 export type WellnessReclaimEntry = {
   emp: Employee
-  amount: number
-  recoupDate: string // 'YYYY-MM-DD' — 퇴사일 + 1일
+  amount: number              // 사용자가 선택한 금액 그대로(매칭 안 된 직원을 직접 선택하면 0원)
+  recoupDate: string | null   // 'YYYY-MM-DD' — 퇴사일 + 1일(퇴사일이 없으면 null)
   mailKey: string
 }
 export type WellnessReclaimUnmatched = { name: string; amount: number; reason: string }
 
 /**
  * 화면에 "먼저" 보여줄 행 — 지급 탭이 퇴사자 카드를 먼저 보여주고 그 위에 계산값을
- * 얹는 것과 동일한 구조다. amount/recoupDate는 업로드된 환수 엑셀과 이름이 매칭될
- * 때만 채워지고(reclaimable=true), 매칭이 안 되거나 환수 엑셀을 아직 올리지 않았으면
- * amount=null(= "환수 없음")로 표시하되 퇴사자 본인은 화면 목록에서 빠지지 않는다.
+ * 얹는 것과 동일한 구조다. amount/recoupDate는 업로드된 환수 엑셀과 이름이 매칭될 때만
+ * 채워지고, 매칭이 안 되거나 환수 엑셀을 아직 올리지 않았으면 amount=null(= "환수
+ * 없음")로 표시하되 퇴사자 본인은 화면 목록에서 빠지지 않는다. 체크박스는 reclaimable과
+ * 무관하게 퇴사자 전원이 항상 선택 가능하다(요청 사양) — reclaimable은 오직 카드에
+ * 환수금액/회수일자를 보여줄지, "환수 없음"을 보여줄지 판단하는 표시용 플래그일 뿐,
+ * 선택 가능 여부를 제어하지 않는다.
  */
 export type WellnessReclaimDisplayRow = {
   emp: Employee
-  amount: number | null        // null = 환수 대상 아님("환수 없음")
+  amount: number | null        // null = 환수 엑셀과 매칭된 금액 없음("환수 없음" 표시)
   recoupDate: string | null    // amount>0이고 퇴사일이 있을 때만 값
-  reclaimable: boolean         // 체크 가능 여부 = amount>0 && recoupDate 계산 가능
+  reclaimable: boolean         // 표시용 플래그(환수금액 실제 매칭 여부) — 체크 가능 여부와 무관
   mailKey: string
 }
 
 /**
  * employees 테이블의 퇴사자(status==='resigned') 전체를 기준으로 화면 목록을 구성하고,
  * 업로드된 환수 엑셀(rawRows)과 이름으로 매칭되는 사람만 환수금액을 함께 보여준다
- * (요청 사양: "퇴사자 전체 목록 표시 → 환수 엑셀과 이름 매칭 → 환수금액 있는 직원만
- * 선택 가능"). 엑셀 쪽 이름이 퇴사자 명단 어디에도 매칭되지 않는 행은 unmatched로
- * 따로 반환해 관리자가 엑셀 쪽 오타/누락을 확인할 수 있게 한다.
+ * (요청 사양: "퇴사자 전체 목록 표시 → 환수 엑셀과 이름 매칭 → 사용자가 직접 체크").
+ * 엑셀 쪽 이름이 퇴사자 명단 어디에도 매칭되지 않는 행은 unmatched로 따로 반환해
+ * 관리자가 엑셀 쪽 오타/누락을 확인할 수 있게 한다.
  */
 export function buildWellnessReclaimDisplayRows(
   employees: Employee[],
@@ -158,11 +163,15 @@ export function buildWellnessReclaimDisplayRows(
   return { rows, unmatched }
 }
 
-/** display row 중 실제로 체크/메일/다운로드가 가능한(환수금액>0 + 회수일자 계산 가능) 건만 추려 WellnessReclaimEntry로 변환 */
-export function reclaimableEntries(rows: WellnessReclaimDisplayRow[]): WellnessReclaimEntry[] {
-  return rows
-    .filter(r => r.reclaimable && r.amount != null && r.recoupDate != null)
-    .map(r => ({ emp: r.emp, amount: r.amount as number, recoupDate: r.recoupDate as string, mailKey: r.mailKey }))
+/**
+ * 체크박스는 환수금액 매칭 여부와 무관하게 퇴사자 전원이 항상 선택 가능하다(요청 사양:
+ * "퇴사자 전체를 직접 체크할 수 있게") — 이 함수는 "사용자가 실제로 체크한" display row를
+ * 그대로 WellnessReclaimEntry로 변환한다. 환수 엑셀과 매칭되지 않은 사람을 선택하면
+ * 금액은 0원으로 처리되고(amount ?? 0), 회수일자는 계산할 수 없으면 null로 남는다 —
+ * 화면/메일 쪽에서 0원·날짜 미확정 상태를 명확히 표시해야 한다.
+ */
+export function selectedReclaimEntries(rows: WellnessReclaimDisplayRow[]): WellnessReclaimEntry[] {
+  return rows.map(r => ({ emp: r.emp, amount: r.amount ?? 0, recoupDate: r.recoupDate, mailKey: r.mailKey }))
 }
 
 export function sumWellnessReclaimAmount(entries: WellnessReclaimEntry[]): number {
@@ -175,7 +184,7 @@ export function buildWellnessReclaimExcelRows(entries: WellnessReclaimEntry[]): 
   return entries.map(({ emp, amount, recoupDate }) => ({
     '성명': emp.name,
     '퇴사일': emp.exit_date ?? '-',
-    '회수일자': recoupDate,
+    '회수일자': recoupDate ?? '확인 필요',
     '환수금액': amount,
   }))
 }

@@ -14,7 +14,7 @@ import {
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
 import {
-  parseWellnessReclaimExcelFile, buildWellnessReclaimDisplayRows, reclaimableEntries, buildWellnessReclaimExcelRows,
+  parseWellnessReclaimExcelFile, buildWellnessReclaimDisplayRows, selectedReclaimEntries, buildWellnessReclaimExcelRows,
   sumWellnessReclaimAmount, formatMonthDayLabel, wellnessReclaimMailAttachmentFilename,
   type WellnessReclaimEntry, type WellnessReclaimRawRow, type WellnessReclaimDisplayRow,
 } from '@/lib/wellness-reclaim'
@@ -486,7 +486,7 @@ function formatDotDate(d: Date): string {
  * 대상자별 퇴사일+1일을 자동 계산해 "n. 이름_M.D" 목록으로 나열한다(요청 사양).
  */
 function buildWellnessReclaimMailBody(
-  payDate: string, recoupList: Array<{ name: string; recoupDate: string }>, count: number, totalAmount: number,
+  payDate: string, recoupList: Array<{ name: string; recoupDate: string | null }>, count: number, totalAmount: number,
 ): string {
   const recoupLines = recoupList.length > 0
     ? recoupList.map((r, i) => `${i + 1}. ${r.name}_${formatMonthDayLabel(r.recoupDate)}`).join('\n')
@@ -522,6 +522,19 @@ function makeBulkWellnessReclaimHtml(entries: WellnessReclaimEntry[]): string {
 <p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>웰니스포인트 환수 대상자 정보를 공유드립니다.</p>
 <div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">구분</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">환수금액</th></tr></thead><tbody>${rows}</tbody></table></div>
 ${closingP}`
+}
+/**
+ * 환수금액이 0원(또는 환수 엑셀과 매칭 안 됨)인 대상자를 포함해서 메일을 보내려는 경우
+ * 발송 직전에 한 번 더 확인시킨다(요청 사양: "0원 대상인 경우 메일 발송 전에 경고") —
+ * 퇴사자 전체를 직접 체크할 수 있게 하면서 생긴 실수 방지용 가드. 취소하면 false를
+ * 반환해 호출부가 발송을 중단한다.
+ */
+function confirmZeroAmountReclaimSend(selected: WellnessReclaimDisplayRow[]): boolean {
+  const zero = selected.filter(r => !r.amount || r.amount <= 0)
+  if (zero.length === 0) return true
+  return window.confirm(
+    `환수금액이 0원(또는 환수 엑셀과 매칭되지 않음)인 대상자가 ${zero.length}명 포함되어 있습니다: ${zero.map(r => r.emp.name).join(', ')}\n그래도 발송하시겠습니까?`
+  )
 }
 /**
  * 웰니스포인트 탭 "웰니스코인 환수" → "XLSX 첨부 메일 보내기" 전용 — /api/wellness-reclaim-mail
@@ -1127,24 +1140,19 @@ function MailPanel({ fixedRecipients, fixedCC = [], defaultSubject, mailSent, ht
 }
 
 // ─── 공통 카드 헤더 ───────────────────────────────────────────────────────────
-function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete, selected, onSelect, checkboxDisabled }: {
+function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete, selected, onSelect }: {
   emp: Employee; typeLabel: string; date: string; dateLabel: string
   mailSent: boolean; expanded: boolean
   onToggle: () => void; onEdit?: () => void; onDelete?: () => void
   selected?: boolean; onSelect?: (checked: boolean) => void
-  // true면 체크박스를 숨기지 않고 그대로 보여주되 비활성화한다(웰니스코인 환수 탭 전용 —
-  // 환수금액이 없는 퇴사자도 체크박스 자체는 보이되 선택만 못 하게 해야 하는 요구사항).
-  // 생략 시(기존 카페/웰니스 지급 PointCard 호출부) 동작은 전혀 바뀌지 않는다.
-  checkboxDisabled?: boolean
 }) {
   const orgParts = [emp.department, emp.division, emp.team].filter(Boolean)
   return (
     <div className="flex items-stretch">
       {onSelect !== undefined && (
-        <label className={`flex items-center justify-center px-3 border-r border-gray-100 bg-gray-50/50 flex-shrink-0 ${checkboxDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
-          onClick={e => e.stopPropagation()}>
-          <input type="checkbox" checked={selected ?? false} disabled={checkboxDisabled} onChange={e => onSelect(e.target.checked)}
-            className={`w-4 h-4 accent-orange-500 ${checkboxDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`} />
+        <label className="flex items-center justify-center px-3 border-r border-gray-100 bg-gray-50/50 flex-shrink-0 cursor-pointer" onClick={e => e.stopPropagation()}>
+          <input type="checkbox" checked={selected ?? false} onChange={e => onSelect(e.target.checked)}
+            className="w-4 h-4 accent-orange-500 cursor-pointer" />
         </label>
       )}
       <div
@@ -1593,9 +1601,12 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
   const typeLabel = empLabel(emp)
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      {/* 체크박스는 환수금액 매칭 여부와 무관하게 항상 활성 — 퇴사자 전체를 사용자가 직접
+          체크할 수 있어야 한다(요청 사양). reclaimable은 아래 본문에 환수금액/회수일자를
+          보여줄지 "환수 없음"을 보여줄지만 결정한다. */}
       <CardHeader emp={emp} typeLabel={typeLabel} date={emp.exit_date ?? '-'} dateLabel="퇴사일"
         mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
-        selected={selected} onSelect={onSelect} checkboxDisabled={!reclaimable} />
+        selected={selected} onSelect={onSelect} />
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
@@ -2881,7 +2892,10 @@ export default function HRDashboard() {
   // 분리된 별도 목록이며 매번 다시 계산한다.
   const { rows: wellnessReclaimAllRows, unmatched: wellnessReclaimUnmatched } =
     buildWellnessReclaimDisplayRows(employees, wellnessReclaimRaw)
-  const wellnessReclaimEntries = reclaimableEntries(wellnessReclaimAllRows) // 체크/메일/다운로드 대상(환수금액>0인 사람만)
+  // 요약 문구/배지에만 쓰는 값 — 실제로 환수 엑셀과 매칭된(환수금액>0) 사람 수·합계.
+  // 체크 가능 여부와는 무관하다(퇴사자 전체가 항상 선택 가능 — 요청 사양).
+  const wellnessReclaimMatchedRows   = wellnessReclaimAllRows.filter(r => r.reclaimable)
+  const wellnessReclaimMatchedTotal  = wellnessReclaimMatchedRows.reduce((sum, r) => sum + (r.amount ?? 0), 0)
 
   // notify tab: sub-tabs handle type separation, so skip typeF here — 단, 상단 검색창의
   // "전적" 필터만은 예외로 적용한다. 하이어사이드 전적(join_reason==='전적')과 퇴사사이드
@@ -4457,7 +4471,10 @@ export default function HRDashboard() {
                     onSelect={checked => toggleSelect(entry.mailKey, checked)} />
                 )
               }
-              const selReclaim = wellnessReclaimEntries.filter(e => selectedKeys.has(e.mailKey))
+              // 환수 탭: 퇴사자 전체가 항상 선택 가능하다(요청 사양) — 체크 상태는 현재 화면에
+              // "보이는"(기간 필터 적용된) 퇴사자 목록(wellnessReclaimGroup) 기준으로 계산한다.
+              const selReclaimRows = wellnessReclaimGroup.filter(r => selectedKeys.has(r.mailKey))
+              const selReclaim = selectedReclaimEntries(selReclaimRows)
               return (
               <div className="space-y-3">
                 {/* 웰니스코인 지급 / 환수 — 완전히 분리된 두 하위 목록(선택·메일 발송 흐름은 재사용) */}
@@ -4470,7 +4487,7 @@ export default function HRDashboard() {
                   <button onClick={() => setWellnessSubTab('reclaim')}
                     className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${wellnessSubTab === 'reclaim' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                     웰니스코인 환수
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimEntries.length}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimMatchedRows.length}</span>
                   </button>
                 </div>
                 {wellnessSubTab === 'reclaim' ? (
@@ -4491,7 +4508,7 @@ export default function HRDashboard() {
                       )}
                     </div>
                     <p className="text-xs text-gray-400">
-                      환수 대상 {wellnessReclaimEntries.length}명 · 총 환수금액 {sumWellnessReclaimAmount(wellnessReclaimEntries).toLocaleString()}원
+                      환수 엑셀 매칭 {wellnessReclaimMatchedRows.length}명 · 금액 합계 {wellnessReclaimMatchedTotal.toLocaleString()}원
                     </p>
                   </div>
                   {wellnessReclaimError && <p className="text-xs text-red-500">{wellnessReclaimError}</p>}
@@ -4501,10 +4518,10 @@ export default function HRDashboard() {
                     </p>
                   )}
                   {/* 지급 탭과 동일한 구조: 퇴사자 전체를 화면 목록으로 먼저 보여주고(카드/월별 그룹/
-                      기간 필터), 그 위에 업로드한 환수 엑셀 금액을 매칭해 환수 대상자만 체크 가능하게
-                      한다. 체크/선택 인원/통합 메일 발송/XLSX 첨부 메일 보내기/엑셀 다운로드는
-                      "환수금액이 있는 직원"(wellnessReclaimEntries) 기준으로만 동작 — 대상자가
-                      0명이어도 UI 자체는 항상 보이고, 버튼을 눌렀을 때 기존 alert 가드가 동작한다. */}
+                      기간 필터), 체크박스는 환수금액 매칭 여부와 무관하게 항상 활성 — 사용자가
+                      퇴사자 아무나 직접 체크할 수 있다(요청 사양). "전체 선택"도 현재 필터에
+                      보이는 퇴사자 전체(wellnessReclaimGroup)를 대상으로 한다. 메일/엑셀에는
+                      선택된 사람의 실제 금액(매칭 안 됐으면 0원)이 그대로 들어간다. */}
                   <p className="text-xs text-gray-400">{wellnessReclaimGroup.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-400 ml-1">기간</span>
@@ -4512,21 +4529,24 @@ export default function HRDashboard() {
                     {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간에서 검색)</span>}
                   </div>
                   <BulkControls
-                    total={wellnessReclaimEntries.length}
-                    selectedCount={selReclaim.length}
-                    onSelectAll={() => selectAll(wellnessReclaimEntries.map(e => e.mailKey))}
+                    total={wellnessReclaimGroup.length}
+                    selectedCount={selReclaimRows.length}
+                    onSelectAll={() => selectAll(wellnessReclaimGroup.map(r => r.mailKey))}
                     onDeselectAll={deselectAll}
                     bulkSending={bulkSending} bulkResult={bulkResult}
                     previewHtml={selReclaim.length > 0 ? makeBulkWellnessReclaimHtml(selReclaim) : ''}
                     defaultRecipients={FR.wellness}
                     defaultCC={FR.wellnessCC}
-                    onBulkSend={(to, cc) => handleBulkSend(
-                      to,
-                      `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
-                      makeBulkWellnessReclaimHtml(selReclaim),
-                      selReclaim.map(e => e.mailKey),
-                      cc
-                    )} />
+                    onBulkSend={(to, cc) => {
+                      if (!confirmZeroAmountReclaimSend(selReclaimRows)) return
+                      handleBulkSend(
+                        to,
+                        `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
+                        makeBulkWellnessReclaimHtml(selReclaim),
+                        selReclaim.map(e => e.mailKey),
+                        cc
+                      )
+                    }} />
                   <div className="flex justify-end gap-2 mt-1">
                     <button
                       onClick={() => {
@@ -4542,7 +4562,11 @@ export default function HRDashboard() {
                       웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
                     </button>
                     <button
-                      onClick={() => openWellnessReclaimMailModal(selReclaim)}
+                      onClick={() => {
+                        if (selReclaim.length === 0) { alert('메일로 보낼 대상자를 선택해주세요.'); return }
+                        if (!confirmZeroAmountReclaimSend(selReclaimRows)) return
+                        openWellnessReclaimMailModal(selReclaim)
+                      }}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
