@@ -106,43 +106,63 @@ export type WellnessReclaimEntry = {
   recoupDate: string // 'YYYY-MM-DD' — 퇴사일 + 1일
   mailKey: string
 }
-export type WellnessReclaimExcluded = { name: string; amount: number; reason: string }
+export type WellnessReclaimUnmatched = { name: string; amount: number; reason: string }
 
 /**
- * 업로드된 환수 원본 행(이름+금액)을 employees 테이블의 "퇴사자(status==='resigned')"와
- * 이름으로 매칭해 화면에 표시할 환수 대상자를 만든다(요청 사양: 퇴사자 기준). 휴직자
- * 등 퇴사자가 아닌 직원은 이름이 같아도 매칭 대상에서 제외한다 — 전체 employees가
- * 아니라 호출 전에 이미 status==='resigned'로 걸러진 목록을 넘겨도 되지만, 이 함수
- * 자체도 방어적으로 한 번 더 걸러서 호출부 실수로 비퇴사자가 섞여도 안전하다.
- * 이름이 퇴사자 명단에서 매칭되지 않거나 퇴사일이 없어 회수일자를 계산할 수 없는
- * 건은 excluded로 분리한다.
+ * 화면에 "먼저" 보여줄 행 — 지급 탭이 퇴사자 카드를 먼저 보여주고 그 위에 계산값을
+ * 얹는 것과 동일한 구조다. amount/recoupDate는 업로드된 환수 엑셀과 이름이 매칭될
+ * 때만 채워지고(reclaimable=true), 매칭이 안 되거나 환수 엑셀을 아직 올리지 않았으면
+ * amount=null(= "환수 없음")로 표시하되 퇴사자 본인은 화면 목록에서 빠지지 않는다.
  */
-export function buildWellnessReclaimEntries(
-  rawRows: WellnessReclaimRawRow[],
+export type WellnessReclaimDisplayRow = {
+  emp: Employee
+  amount: number | null        // null = 환수 대상 아님("환수 없음")
+  recoupDate: string | null    // amount>0이고 퇴사일이 있을 때만 값
+  reclaimable: boolean         // 체크 가능 여부 = amount>0 && recoupDate 계산 가능
+  mailKey: string
+}
+
+/**
+ * employees 테이블의 퇴사자(status==='resigned') 전체를 기준으로 화면 목록을 구성하고,
+ * 업로드된 환수 엑셀(rawRows)과 이름으로 매칭되는 사람만 환수금액을 함께 보여준다
+ * (요청 사양: "퇴사자 전체 목록 표시 → 환수 엑셀과 이름 매칭 → 환수금액 있는 직원만
+ * 선택 가능"). 엑셀 쪽 이름이 퇴사자 명단 어디에도 매칭되지 않는 행은 unmatched로
+ * 따로 반환해 관리자가 엑셀 쪽 오타/누락을 확인할 수 있게 한다.
+ */
+export function buildWellnessReclaimDisplayRows(
   employees: Employee[],
-): { included: WellnessReclaimEntry[]; excluded: WellnessReclaimExcluded[] } {
+  rawRows: WellnessReclaimRawRow[],
+): { rows: WellnessReclaimDisplayRow[]; unmatched: WellnessReclaimUnmatched[] } {
   const resigned = employees.filter(e => e.status === 'resigned')
-  const byName = new Map<string, Employee>()
-  for (const e of resigned) {
-    const key = stripEnglishFromName(e.name)
-    if (key) byName.set(key, e)
-  }
-  const included: WellnessReclaimEntry[] = []
-  const excluded: WellnessReclaimExcluded[] = []
-  for (const row of rawRows) {
-    const key = stripEnglishFromName(row.name)
-    const emp = byName.get(key)
-    if (!emp) {
-      excluded.push({ name: row.name, amount: row.amount, reason: '퇴사자(status=resigned) 명단에서 이름을 찾을 수 없습니다.' })
+  const resignedKeys = new Set(resigned.map(e => stripEnglishFromName(e.name)).filter(Boolean))
+
+  const amountByName = new Map<string, number>()
+  const unmatched: WellnessReclaimUnmatched[] = []
+  for (const r of rawRows) {
+    const key = stripEnglishFromName(r.name)
+    if (!key) continue
+    if (!resignedKeys.has(key)) {
+      unmatched.push({ name: r.name, amount: r.amount, reason: '퇴사자(status=resigned) 명단에서 이름을 찾을 수 없습니다.' })
       continue
     }
-    if (!emp.exit_date) {
-      excluded.push({ name: row.name, amount: row.amount, reason: '퇴사일이 입력되지 않아 회수일자를 계산할 수 없습니다.' })
-      continue
-    }
-    included.push({ emp, amount: row.amount, recoupDate: addOneDayToDateStr(emp.exit_date), mailKey: `reclaim_wellness_${emp.id}` })
+    amountByName.set(key, r.amount)
   }
-  return { included, excluded }
+
+  const rows: WellnessReclaimDisplayRow[] = resigned.map(emp => {
+    const key = stripEnglishFromName(emp.name)
+    const amount = amountByName.get(key) ?? null
+    const recoupDate = (amount != null && amount > 0 && emp.exit_date) ? addOneDayToDateStr(emp.exit_date) : null
+    const reclaimable = amount != null && amount > 0 && recoupDate != null
+    return { emp, amount, recoupDate, reclaimable, mailKey: `reclaim_wellness_${emp.id}` }
+  })
+  return { rows, unmatched }
+}
+
+/** display row 중 실제로 체크/메일/다운로드가 가능한(환수금액>0 + 회수일자 계산 가능) 건만 추려 WellnessReclaimEntry로 변환 */
+export function reclaimableEntries(rows: WellnessReclaimDisplayRow[]): WellnessReclaimEntry[] {
+  return rows
+    .filter(r => r.reclaimable && r.amount != null && r.recoupDate != null)
+    .map(r => ({ emp: r.emp, amount: r.amount as number, recoupDate: r.recoupDate as string, mailKey: r.mailKey }))
 }
 
 export function sumWellnessReclaimAmount(entries: WellnessReclaimEntry[]): number {

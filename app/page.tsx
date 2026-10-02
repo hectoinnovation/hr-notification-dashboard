@@ -14,9 +14,9 @@ import {
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
 import {
-  parseWellnessReclaimExcelFile, buildWellnessReclaimEntries, buildWellnessReclaimExcelRows,
+  parseWellnessReclaimExcelFile, buildWellnessReclaimDisplayRows, reclaimableEntries, buildWellnessReclaimExcelRows,
   sumWellnessReclaimAmount, formatMonthDayLabel, wellnessReclaimMailAttachmentFilename,
-  type WellnessReclaimEntry, type WellnessReclaimRawRow,
+  type WellnessReclaimEntry, type WellnessReclaimRawRow, type WellnessReclaimDisplayRow,
 } from '@/lib/wellness-reclaim'
 import {
   parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
@@ -1570,6 +1570,58 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   )
 }
 
+/**
+ * 웰니스코인 환수 탭 전용 카드 — 지급 탭의 PointCard와 똑같은 CardHeader/InfoRow/
+ * TypeBadge를 그대로 재사용해 동일한 UI로 보이게 하되, PointCard 자체는 전혀
+ * 수정하지 않는다(카페포인트/웰니스코인 지급 양쪽에서 쓰는 공용 컴포넌트라 건드리면
+ * 그쪽까지 영향받을 위험이 있음). 환수 대상(환수금액>0)이 아닌 퇴사자도 화면에는
+ * 항상 보이되, 체크박스는 환수 대상자에게만 노출한다(onSelect를 reclaimable일
+ * 때만 CardHeader에 전달 — undefined면 CardHeader가 체크박스 자체를 렌더링하지 않음).
+ */
+function WellnessReclaimCard({ row, selected, onSelect }: {
+  row: WellnessReclaimDisplayRow
+  selected: boolean
+  onSelect: (checked: boolean) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const { emp, amount, recoupDate, reclaimable } = row
+  const typeLabel = empLabel(emp)
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <CardHeader emp={emp} typeLabel={typeLabel} date={emp.exit_date ?? '-'} dateLabel="퇴사일"
+        mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
+        selected={reclaimable ? selected : undefined} onSelect={reclaimable ? onSelect : undefined} />
+      {expanded && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
+          <div className="space-y-0">
+            <InfoRow label="입사일자">
+              <span className={`text-xs font-semibold ${emp.join_date ? 'text-gray-700' : 'text-red-500'}`}>{emp.join_date ?? '미입력'}</span>
+            </InfoRow>
+            <InfoRow label="퇴사일"><span className="text-xs font-semibold text-gray-700">{emp.exit_date ?? '-'}</span></InfoRow>
+            <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
+            {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
+            {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
+            {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
+            {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
+          </div>
+          {reclaimable ? (
+            <div className="space-y-0">
+              <InfoRow label="환수금액"><span className="text-xs font-bold text-red-600">{amount!.toLocaleString()}원</span></InfoRow>
+              <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate}</span></InfoRow>
+            </div>
+          ) : amount != null && amount > 0 ? (
+            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+              ⚠️ 환수금액 {amount.toLocaleString()}원은 있으나 퇴사일이 입력되지 않아 회수일자를 계산할 수 없습니다. 직원 정보에서 퇴사일을 확인해주세요.
+            </p>
+          ) : (
+            <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">환수 없음(업로드한 환수 엑셀에 이 직원의 환수금액이 없습니다)</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── 엑셀 업로드 버튼 ─────────────────────────────────────────────────────────
 function ExcelUploadBtn({ onParsed, savedFileName }: {
   onParsed: (data: Record<number, ExcelSheetData>, fileName: string) => void
@@ -2640,6 +2692,10 @@ export default function HRDashboard() {
   const [wellnessReclaimUploading, setWellnessReclaimUploading] = useState(false)
   const [wellnessReclaimError,     setWellnessReclaimError]     = useState<string | null>(null)
   const [wellnessReclaimMailModal, setWellnessReclaimMailModal] = useState<{ entries: WellnessReclaimEntry[]; count: number; totalAmount: number; filename: string } | null>(null)
+  // 화면 목록은 지급 탭과 동일하게 "퇴사자 전체"를 먼저 보여주고 그 위에 환수 엑셀 금액을
+  // 매칭해 표시한다 — 월별 그룹/기간 필터/접기 상태도 지급 탭과 같은 구조로 따로 둔다.
+  const [wellnessReclaimMonthFilter,    setWellnessReclaimMonthFilter]    = useState<PeriodFilter>('3m')
+  const [wellnessReclaimSectCollapsed,  setWellnessReclaimSectCollapsed]  = useState<Set<string>>(new Set())
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
   const [stageDoneAt,    setStageDoneAt]    = useState<Record<string, string>>({})
   const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
@@ -2814,10 +2870,13 @@ export default function HRDashboard() {
     ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
-  // 웰니스코인 환수 — 업로드된 환수 원본(wellnessReclaimRaw)을 employees와 이름으로 매칭해
-  // 화면에 표시할 대상자를 매번 다시 계산한다. allWellness(지급)와는 완전히 분리된 별도 목록.
-  const { included: wellnessReclaimEntries, excluded: wellnessReclaimExcluded } =
-    buildWellnessReclaimEntries(wellnessReclaimRaw, employees)
+  // 웰니스코인 환수 — 지급 탭(allWellness)과 똑같이 "퇴사자 전체"를 먼저 화면 목록으로
+  // 구성하고, 업로드된 환수 원본(wellnessReclaimRaw)과 이름이 매칭되는 사람만 환수금액을
+  // 함께 보여준다(요청 사양: 화면 목록≠환수 대상, 분리). allWellness(지급)와는 완전히
+  // 분리된 별도 목록이며 매번 다시 계산한다.
+  const { rows: wellnessReclaimAllRows, unmatched: wellnessReclaimUnmatched } =
+    buildWellnessReclaimDisplayRows(employees, wellnessReclaimRaw)
+  const wellnessReclaimEntries = reclaimableEntries(wellnessReclaimAllRows) // 체크/메일/다운로드 대상(환수금액>0인 사람만)
 
   // notify tab: sub-tabs handle type separation, so skip typeF here — 단, 상단 검색창의
   // "전적" 필터만은 예외로 적용한다. 하이어사이드 전적(join_reason==='전적')과 퇴사사이드
@@ -2891,6 +2950,21 @@ export default function HRDashboard() {
     '입사/휴직복귀자': wellnessHireGroup.length,
     '퇴사/휴직자':     wellnessLeaveGroup.length,
   }
+
+  // 웰니스코인 환수 — 지급 탭(wellnessLeaveGroup)과 동일한 패턴(기간 필터 + 월별 그룹 +
+  // 기준일 오름차순 정렬)을 퇴사자 전체 목록(wellnessReclaimAllRows)에 그대로 적용한다.
+  // 검색어는 지급 탭과 동일하게 이름/부서/실/팀 기준으로 적용.
+  const wellnessReclaimSearched = wellnessReclaimAllRows.filter(r => {
+    const q = search.trim().toLowerCase()
+    if (!q) return true
+    const text = [r.emp.name, r.emp.department, r.emp.division, r.emp.team].filter(Boolean).join(' ').toLowerCase()
+    return text.includes(q)
+  })
+  const wellnessReclaimEffectivePeriod = effectivePeriod(wellnessReclaimMonthFilter, searchActive)
+  const wellnessReclaimGroup = sortByDateAsc(
+    wellnessReclaimSearched.filter(r => inPeriod(r.emp.exit_date, wellnessReclaimEffectivePeriod)),
+    r => r.emp.exit_date ?? null,
+  )
 
   // 상단 필터가 선택한 그룹만 아래 섹션에 노출 (전체 선택 시 두 섹션 모두 노출)
   const showCafeHire      = cafeGroupF === '전체' || cafeGroupF === '입사/휴직복귀자'
@@ -4416,20 +4490,22 @@ export default function HRDashboard() {
                     </p>
                   </div>
                   {wellnessReclaimError && <p className="text-xs text-red-500">{wellnessReclaimError}</p>}
-                  {wellnessReclaimExcluded.length > 0 && (
+                  {wellnessReclaimUnmatched.length > 0 && (
                     <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      제외됨({wellnessReclaimExcluded.length}건): {wellnessReclaimExcluded.map(e => `${e.name}(${e.reason})`).join(', ')}
+                      엑셀 쪽 이름이 퇴사자 명단과 매칭되지 않음({wellnessReclaimUnmatched.length}건): {wellnessReclaimUnmatched.map(e => `${e.name}(${e.amount.toLocaleString()}원)`).join(', ')}
                     </p>
                   )}
-                  {wellnessReclaimEntries.length === 0 && (
-                    <p className="text-xs text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded-lg px-3 py-2">
-                      업로드된 엑셀에 환수 대상(환수 금액이 있는 직원)이 아직 없습니다. 위 &quot;환수 대상 엑셀 업로드&quot;로 파일을 올려주세요.
-                      대상자가 없어도 아래 메일 발송 UI는 항상 표시됩니다(선택 가능한 대상자가 없으면 버튼 클릭 시 안내 메시지가 뜹니다).
-                    </p>
-                  )}
-                  {/* 지급 탭과 동일하게, 대상자가 0명이어도 체크박스/선택 인원/통합 메일 발송/XLSX 첨부
-                      메일 보내기/엑셀 다운로드 UI 자체는 항상 보이도록 EmptyState로 전체를 가리지 않는다.
-                      대상자가 없을 때 클릭하면 각 버튼의 기존 alert 가드가 그대로 동작한다. */}
+                  {/* 지급 탭과 동일한 구조: 퇴사자 전체를 화면 목록으로 먼저 보여주고(카드/월별 그룹/
+                      기간 필터), 그 위에 업로드한 환수 엑셀 금액을 매칭해 환수 대상자만 체크 가능하게
+                      한다. 체크/선택 인원/통합 메일 발송/XLSX 첨부 메일 보내기/엑셀 다운로드는
+                      "환수금액이 있는 직원"(wellnessReclaimEntries) 기준으로만 동작 — 대상자가
+                      0명이어도 UI 자체는 항상 보이고, 버튼을 눌렀을 때 기존 alert 가드가 동작한다. */}
+                  <p className="text-xs text-gray-400">{wellnessReclaimGroup.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-400 ml-1">기간</span>
+                    <PeriodFilterChips value={wellnessReclaimMonthFilter} onChange={setWellnessReclaimMonthFilter} />
+                    {searchActive && <span className="text-xs text-gray-400">(검색 중에는 전체 기간에서 검색)</span>}
+                  </div>
                   <BulkControls
                     total={wellnessReclaimEntries.length}
                     selectedCount={selReclaim.length}
@@ -4469,40 +4545,22 @@ export default function HRDashboard() {
                       XLSX 첨부 메일 보내기{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
                     </button>
                   </div>
-                  <div className="overflow-x-auto border border-gray-200 rounded-xl">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap"></th>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성명</th>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">구분</th>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
-                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">회수일자</th>
-                          <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">환수금액</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {wellnessReclaimEntries.length === 0 ? (
-                          <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-400">환수 대상자가 없습니다.</td></tr>
-                        ) : wellnessReclaimEntries.map(entry => (
-                          <tr key={entry.mailKey} className="border-t border-gray-100 hover:bg-gray-50">
-                            <td className="px-3 py-2">
-                              <input type="checkbox" checked={selectedKeys.has(entry.mailKey)}
-                                onChange={e => toggleSelect(entry.mailKey, e.target.checked)}
-                                className="w-4 h-4 accent-orange-500 cursor-pointer" />
-                            </td>
-                            <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-700">{entry.emp.name}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{empLabel(entry.emp)}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.join_date ?? '-'}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.exit_date ?? '-'}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.recoupDate}</td>
-                            <td className="px-3 py-2 whitespace-nowrap text-right font-semibold text-red-600">{entry.amount.toLocaleString()}원</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  <AccordionSection title="퇴사자" count={wellnessReclaimGroup.length} color="purple"
+                    collapsed={wellnessReclaimSectCollapsed.has('resigned')}
+                    onToggle={() => setWellnessReclaimSectCollapsed(p => toggleSetMember(p, 'resigned'))}
+                    hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
+                    <MonthGroupList groups={groupByMonth(wellnessReclaimGroup, r => r.emp.exit_date)} sectionKey="wellness-reclaim"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 퇴사자가 없습니다"
+                      renderItems={(items: WellnessReclaimDisplayRow[]) => (
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                          {items.map(row => (
+                            <WellnessReclaimCard key={row.mailKey} row={row}
+                              selected={selectedKeys.has(row.mailKey)}
+                              onSelect={checked => toggleSelect(row.mailKey, checked)} />
+                          ))}
+                        </div>
+                      )} />
+                  </AccordionSection>
                 </div>
                 ) : (
                 <>
