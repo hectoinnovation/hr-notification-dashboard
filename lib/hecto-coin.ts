@@ -40,6 +40,7 @@ export type HectoCoinSettlementRow = {
   hecto_reference_file_name: string | null
   hecto_reference_uploaded_at: string | null
   hecto_reference_rows: HectoReferenceRow[] | null
+  hecto_reference_month: string | null
 }
 
 /**
@@ -114,22 +115,30 @@ export function validateHectoCoinDataOverride(
 export type HectoCoinExcludedEmployees = Record<string, true>
 
 /**
- * 휴직자 제외 명단 — 관리자가 쉼표/줄바꿈으로 구분해 한 번에 입력한 이름 목록(정규화된
- * 이름, 중복 제거됨). 위 excluded_employees(테이블 행별 휴지통 아이콘)와 기계적으로는
- * 동일하게 "이번 정산월 화면 목록에서만 제외"하지만, 입력 경로가 다르다 — 포인트 파일에
- * 아직 등장하지 않은 사람도 이름만 알면 미리 등록해둘 수 있고, 업로드/재계산 후 자동으로
- * 일치 여부가 다시 확인된다. 이 목록 자체는 employees의 입사/퇴사/휴직복귀 분류 로직에는
- * 전혀 관여하지 않는다(순수 화면/계산 단계의 제외 필터일 뿐).
+ * 휴직자 제외 명단 — 관리자가 쉼표/줄바꿈으로 구분해 한 번에 입력한 이름 목록(원본
+ * 그대로, 앞뒤 공백만 제거, 중복 제거됨). 위 excluded_employees(테이블 행별 휴지통
+ * 아이콘)와 기계적으로는 동일하게 "이번 정산월 화면 목록에서만 제외"하지만, 입력
+ * 경로가 다르다 — 포인트 파일에 아직 등장하지 않은 사람도 이름만 알면 미리 등록해둘
+ * 수 있고, 업로드/재계산 후 자동으로 일치 여부가 다시 확인된다. 이 목록 자체는
+ * employees의 입사/퇴사/휴직복귀 분류 로직에는 전혀 관여하지 않는다(순수 화면/계산
+ * 단계의 제외 필터일 뿐).
+ *
+ * 영문 접미사(stripEnglishFromName)로 정규화하지 않는다 — "황지현B"처럼 동명이인
+ * 구분용 접미사가 있는 직원을 정확히 그 사람만 제외하려면 입력값과 매칭 키 양쪽
+ * 모두 원본 이름을 유지해야 한다(computeHectoCoinEntries의 leaveExcludedSet 매칭이
+ * e.rawName을 쓰는 것과 동일한 원칙 — [[compareHectoReference]] 참고).
  */
 export type HectoCoinLeaveExcludedNames = string[]
 
 /**
- * 휴직자 제외 명단 입력값 파싱 — 쉼표(,) 또는 줄바꿈으로 구분된 이름들을 다른 매칭
- * 로직과 동일한 기준(stripEnglishFromName)으로 정규화하고, 빈 값을 제거한 뒤 중복을
- * 제거한다(입력 순서는 유지).
+ * 휴직자 제외 명단 입력값 파싱 — 쉼표(,) 또는 줄바꿈으로 구분된 이름들의 앞뒤 공백만
+ * 제거하고(영문 접미사는 그대로 유지), 빈 값을 제거한 뒤 중복을 제거한다(입력 순서는
+ * 유지). 반환되는 배열의 길이가 곧 "입력된 고유 이름 수"이며, 화면의 "휴직 제외 N명"
+ * 표시는 항상 이 길이를 그대로 써야 한다 — 실제 정산 데이터와의 매칭 성공 여부와
+ * 무관하게, 관리자가 입력한 이름은 전부 제외 대상이기 때문이다.
  */
 export function parseHectoCoinLeaveExcludedInput(raw: string): HectoCoinLeaveExcludedNames {
-  const names = raw.split(/[,\n]/).map(s => stripEnglishFromName(s)).filter(Boolean)
+  const names = raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean)
   return Array.from(new Set(names))
 }
 
@@ -331,6 +340,15 @@ export function parseHectoCoinRosterFile(buffer: ArrayBuffer): { entries: HectoC
 // 지급액 등 기존 정산 결과는 전혀 수정되지 않는다 — 순수 비교용 원본만 별도
 // 컬럼(hecto_reference_rows)에 저장하고, 비교 결과는 항상 그 원본 + 기존
 // computeHectoCoinEntries 결과에서 매번 다시 계산한다(기존 저장 방식과 동일한 원칙).
+//
+// hecto_reference_month: 업로드된 헥토 기준 파일이 실제로 어느 달의 데이터인지를
+// 나타내는 "기준월" — 화면에서 보고 있는 정산월(settlement_month, hecto_coin_settlements
+// 행의 키)과 다를 수 있다(예: 10월 화면에서 9월 기준 파일을 테스트로 올려보는 경우).
+// 이 필드가 비어 있으면(과거 데이터 포함) 화면 정산월을 그대로 기준월로 취급한다
+// (app/page.tsx: hectoReferenceMonth = hectoSettlement?.hecto_reference_month ||
+// hectoSettlementMonth). 뚜벅투게더 차감 등 "월"에 의존하는 모든 비교 로직은 반드시
+// 화면 정산월이 아니라 이 기준월로 판단해야 한다 — compareHectoReference의 첫
+// 인자(referenceMonth)로 항상 이 값을 넘긴다.
 
 export type HectoReferenceRow = {
   name: string          // 원본 그대로(앞뒤 공백만 제거) — stripEnglishFromName 등 추가 정규화 하지 않음(요청 사양: "이름 앞뒤 공백 제거 후 비교")
@@ -447,13 +465,18 @@ export type HectoReferenceComparisonSummary = {
  * rawName은 포인트 파일 원본 이름이든 employees UNION 경로든 항상 영문 접미사가
  * 보존된 원본이라(computeHectoCoinEntries 참고) 두 버그 모두 이 키 하나로 해결된다.
  * 기존 정산 계산(computeHectoCoinEntries/buildEntry) 자체는 전혀 건드리지 않았다.
+ *
+ * referenceMonth는 "화면에서 보고 있는 정산월"이 아니라 "업로드된 헥토 기준 파일이
+ * 실제로 어느 달 데이터인지"(hecto_reference_month)다 — 다른 월 기준 파일을 임시로
+ * 올려 테스트하는 경우 두 값이 달라질 수 있고, 뚜벅투게더 차감 여부(3/6/9/12월)는
+ * 반드시 이 기준월로만 판단해야 한다. 호출부(app/page.tsx)가 항상 그 값을 넘긴다.
  */
 export function compareHectoReference(
-  settlementMonth: string,
+  referenceMonth: string,
   referenceRows: HectoReferenceRow[],
   dashboardEntries: HectoCoinEntry[],
 ): { rows: HectoReferenceComparisonRow[]; summary: HectoReferenceComparisonSummary } {
-  const isTtubeok = isTtubeokTogetherMonth(settlementMonth)
+  const isTtubeok = isTtubeokTogetherMonth(referenceMonth)
 
   const byName = new Map<string, HectoReferenceRow[]>()
   for (const r of referenceRows) {
@@ -1048,8 +1071,12 @@ export function computeHectoCoinEntries(
   // excludedEmployees(행별 휴지통 아이콘)와 leaveExcludedNames(휴직자 제외 명단 일괄
   // 입력)는 입력 경로만 다를 뿐 기계적으로는 동일한 "이번 정산월 화면에서만 제외" 필터라
   // 하나의 최종 필터 단계에서 함께 적용한다(두 목록 중 하나에만 있어도 제외됨).
+  // leaveExcludedSet은 반드시 e.rawName(원본 이름, 영문 접미사 보존)으로 매칭한다 —
+  // e.name(정규화 이름)으로 매칭하면 "황지현A"/"황지현B"처럼 접미사만 다른 두 사람이
+  // 같은 정규화 이름으로 겹칠 때, 한 사람만 제외하려고 입력한 이름이 둘 다에게 적용되는
+  // 오매칭이 발생한다(compareHectoReference의 rawName 매칭과 동일한 원칙).
   const leaveExcludedSet = new Set(leaveExcludedNames)
-  const visible = entries.filter(e => !excludedEmployees[e.name] && !leaveExcludedSet.has(e.name))
+  const visible = entries.filter(e => !excludedEmployees[e.name] && !leaveExcludedSet.has(e.rawName.trim()))
   return visible.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 

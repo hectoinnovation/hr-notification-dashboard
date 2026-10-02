@@ -1936,6 +1936,7 @@ function HectoEditableCustomerIdCell({
 function HectoLeaveExcludedEditor({
   names, matchedCount, saving, onSave,
 }: {
+  /** names.length(입력된 고유 이름 수)가 메인 카운트 — 실제 매칭 성공 여부와 무관 */
   names: string[]; matchedCount: number; saving: boolean; onSave: (raw: string) => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -1967,7 +1968,10 @@ function HectoLeaveExcludedEditor({
   return (
     <div className="flex items-start justify-between gap-2">
       <div className="text-xs text-gray-600 min-w-0">
-        <span className="font-semibold text-amber-600">휴직 제외 {matchedCount}명</span>
+        <span className="font-semibold text-amber-600">휴직 제외 {names.length}명</span>
+        {names.length > 0 && matchedCount !== names.length && (
+          <span className="text-gray-400"> (입력 {names.length}명 / 실제 매칭 {matchedCount}명)</span>
+        )}
         {names.length > 0 && <span className="text-gray-400"> · {names.join(', ')}</span>}
       </div>
       <button onClick={startEdit} className="text-xs font-semibold text-blue-600 hover:text-blue-800 shrink-0">
@@ -2777,6 +2781,9 @@ export default function HRDashboard() {
   const [hectoRefSkipped,  setHectoRefSkipped]    = useState<string[]>([])
   const [hectoRefFilter,   setHectoRefFilter]     = useState<HectoReferenceComparisonResult | 'all'>('all')
   const [hectoRefListOpen, setHectoRefListOpen]   = useState<{ dashboardOnly: boolean; hectoOnly: boolean; duplicate: boolean }>({ dashboardOnly: false, hectoOnly: false, duplicate: false })
+  // 헥토 기준 파일 "기준월" — 화면 정산월(hectoSettlementMonth)과 분리된 값으로,
+  // 다른 월 기준 파일을 임시로 올려 비교 테스트할 때 쓴다(hecto_reference_month).
+  const [hectoRefMonthSaving, setHectoRefMonthSaving] = useState(false)
 
   const [activeTab,           setActiveTab]           = useState<TabId>('notify')
   const [notifySubTab,        setNotifySubTab]        = useState<'all' | 'hire' | 'transfer' | 'leave' | 'onleave' | 'return'>('all')
@@ -3026,10 +3033,14 @@ export default function HRDashboard() {
     hectoSettlement?.first_data_overrides ?? {}, hectoSettlement?.additional_data_overrides ?? {},
     hectoExcludedEmployees, hectoLeaveExcludedNames,
   )
-  // "휴직 제외 X명" 표시용 — 입력한 이름 중 실제로 이번 달 UNION 목록에 존재해서
-  // 진짜로 제외 효과가 발생한 인원만 센다(오타로 존재하지 않는 이름을 세지 않기 위해
-  // 휴직자 제외 명단만 뺀 목록을 한 번 더 계산해서 교집합을 구한다 — 순수 함수라
-  // 추가 네트워크 호출 없이 저렴하다).
+  // "휴직 제외 N명" 메인 카운트는 항상 입력된 고유 이름 수(hectoLeaveExcludedNames.length)
+  // 그대로 쓴다 — 실제 정산 데이터와의 매칭 성공 여부와 무관하게 관리자가 입력한 이름은
+  // 전부 제외 대상이기 때문이다(예: 13명 입력 시 그중 일부만 이번 달 포인트 파일에
+  // 등장하더라도 화면에는 항상 "휴직 제외 13명"으로 표시). 매칭 성공 수는 "입력 N명 /
+  // 실제 매칭 M명" 형태의 보조 정보로만 별도 표시한다(오타로 존재하지 않는 이름을 구분해
+  // 보여주기 위해 — 휴직자 제외 명단만 뺀 목록을 한 번 더 계산해서 교집합을 구한다,
+  // 순수 함수라 추가 네트워크 호출 없이 저렴하다). 매칭은 rawName(원본 이름, 영문
+  // 접미사 보존) 기준이다 — computeHectoCoinEntries의 leaveExcludedSet 매칭과 동일 원칙.
   const hectoEntriesWithoutLeaveExclusion = computeHectoCoinEntries(
     hectoSettlementMonth, hectoSettlement?.first_rows ?? [], hectoSettlement?.final_rows ?? [],
     employees, hectoRoster?.entries ?? [],
@@ -3038,14 +3049,19 @@ export default function HRDashboard() {
     hectoExcludedEmployees, [],
   )
   const hectoLeaveExcludedMatchedCount = hectoLeaveExcludedNames.filter(
-    name => hectoEntriesWithoutLeaveExclusion.some(e => e.name === name)
+    name => hectoEntriesWithoutLeaveExclusion.some(e => e.rawName.trim() === name)
   ).length
   // 헥토 기준 엑셀 비교(검증 전용) — 화면에 실제로 보이는 hectoEntries(중복 병합·
   // 제외 처리까지 끝난 최종 목록) 그대로를 "현재 대시보드 정산 대상자"로 비교한다.
   // 순수 조회 계산이라 hectoEntries 자체나 1차/최종/사원리스트/지급상한 등 기존
   // 정산 결과에는 전혀 영향을 주지 않는다.
   const hectoReferenceRows = hectoSettlement?.hecto_reference_rows ?? []
-  const hectoReferenceComparison = compareHectoReference(hectoSettlementMonth, hectoReferenceRows, hectoEntries)
+  // 헥토 기준 파일의 기준월 — 지정되어 있지 않으면(과거 데이터 포함) 화면 정산월을
+  // 그대로 기준월로 취급한다(기존 동작과 동일). 뚜벅투게더 차감 등 "월"에 의존하는
+  // 비교 로직은 반드시 이 값을 써야 하며, 화면 정산월을 직접 쓰면 안 된다.
+  const hectoReferenceMonth = hectoSettlement?.hecto_reference_month || hectoSettlementMonth
+  const hectoReferenceMonthMismatch = hectoReferenceMonth !== hectoSettlementMonth
+  const hectoReferenceComparison = compareHectoReference(hectoReferenceMonth, hectoReferenceRows, hectoEntries)
   const hectoReferenceFilteredRows = hectoRefFilter === 'all'
     ? hectoReferenceComparison.rows
     : hectoReferenceComparison.rows.filter(r => r.result === hectoRefFilter)
@@ -3494,6 +3510,10 @@ export default function HRDashboard() {
    * 전혀 건드리지 않는다 — 비교 결과는 화면 렌더링 시 compareHectoReference로
    * 매번 새로 계산된다(기존 1차/최종 파일과 동일하게 "원본만 저장, 계산은 항상
    * 다시" 원칙).
+   *
+   * 기준월(hecto_reference_month)은 업로드 시 덮어쓰지 않는다 — 관리자가 업로드
+   * 전에 기준월 선택기로 미리 다른 달을 지정해뒀으면(다른 월 파일 테스트) 그 값을
+   * 그대로 유지하고, 아직 지정한 적이 없으면(null) 화면 정산월을 기본값으로 쓴다.
    */
   async function handleHectoReferenceUpload(file: File) {
     setHectoRefUploading(true); setHectoRefError(null); setHectoRefNotice(null); setHectoRefSkipped([])
@@ -3507,6 +3527,7 @@ export default function HRDashboard() {
         .upsert({
           settlement_month: hectoSettlementMonth,
           hecto_reference_file_name: file.name, hecto_reference_uploaded_at: nowIso, hecto_reference_rows: rows,
+          hecto_reference_month: hectoSettlement?.hecto_reference_month || hectoSettlementMonth,
           updated_at: nowIso,
         }, { onConflict: 'settlement_month' })
         .select('*')
@@ -3520,6 +3541,24 @@ export default function HRDashboard() {
     } finally {
       setHectoRefUploading(false)
     }
+  }
+
+  /**
+   * 헥토 기준 파일의 기준월 변경 — 업로드된 파일 원본(hecto_reference_rows)은 그대로
+   * 두고 "이 파일을 어느 달 기준으로 비교할지"만 바꾼다. 화면 정산월(settlement_month)
+   * 이나 1차/최종 파일 등 다른 컬럼에는 전혀 영향이 없다.
+   */
+  async function saveHectoReferenceMonth(month: string) {
+    setHectoRefMonthSaving(true); setHectoRefError(null)
+    const nowIso = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('hecto_coin_settlements')
+      .upsert({ settlement_month: hectoSettlementMonth, hecto_reference_month: month, updated_at: nowIso }, { onConflict: 'settlement_month' })
+      .select('*')
+      .single()
+    setHectoRefMonthSaving(false)
+    if (error) { setHectoRefError('기준월 저장 실패: ' + error.message); return }
+    setHectoSettlement(data as HectoCoinSettlementRow)
   }
 
   /**
@@ -3545,8 +3584,9 @@ export default function HRDashboard() {
       : stage === 'final'
       ? { final_file_name: null, final_uploaded_at: null, final_rows: null }
       // 헥토 기준 파일은 비교 전용이라 지워도 first_rows/final_rows/지급상한 등
-      // 기존 정산 계산에는 애초에 전혀 영향이 없다 — 비교 결과만 사라진다.
-      : { hecto_reference_file_name: null, hecto_reference_uploaded_at: null, hecto_reference_rows: null }
+      // 기존 정산 계산에는 애초에 전혀 영향이 없다 — 비교 결과만 사라진다. 기준월도
+      // 함께 초기화해서, 다음 업로드 때 다시 화면 정산월을 기본값으로 쓰게 한다.
+      : { hecto_reference_file_name: null, hecto_reference_uploaded_at: null, hecto_reference_rows: null, hecto_reference_month: null }
     setHectoDeletingStage(stage); setHectoError(null)
     const { data, error } = await supabase
       .from('hecto_coin_settlements')
@@ -4968,6 +5008,20 @@ export default function HRDashboard() {
                         <HectoUploadButton label="엑셀 업로드" uploading={hectoRefUploading}
                           onFile={file => handleHectoReferenceUpload(file)} />
                       </div>
+                      <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                        <span className="text-gray-400">기준월(다른 월 파일 테스트용):</span>
+                        <select value={hectoReferenceMonth} disabled={hectoRefMonthSaving}
+                          onChange={e => saveHectoReferenceMonth(e.target.value)}
+                          className="text-xs border border-gray-200 rounded-lg px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50">
+                          {hectoMonthOptions().map(ym => <option key={ym} value={ym}>{hectoMonthLabel(ym)}</option>)}
+                        </select>
+                        {hectoRefMonthSaving && <span className="text-gray-400">저장 중...</span>}
+                      </div>
+                      {hectoReferenceMonthMismatch && (
+                        <p className="text-xs text-amber-600 font-semibold">
+                          ⚠ 현재 정산월({hectoMonthLabel(hectoSettlementMonth)})과 헥토 기준 파일 기준월({hectoMonthLabel(hectoReferenceMonth)})이 다릅니다. 테스트용 비교인지 확인해주세요.
+                        </p>
+                      )}
                       {hectoSettlement?.hecto_reference_uploaded_at ? (
                         <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
                           <span>✓ {hectoSettlement.hecto_reference_file_name} · {new Date(hectoSettlement.hecto_reference_uploaded_at).toLocaleString('ko-KR')} · {hectoSettlement.hecto_reference_rows?.length ?? 0}명</span>
@@ -5076,9 +5130,12 @@ export default function HRDashboard() {
                       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
                         <div>
                           <p className="text-sm font-semibold text-gray-800">헥토 기준 엑셀 검증 <span className="text-[11px] font-normal text-gray-400">(비교 전용 — 기존 정산 결과에는 영향 없음)</span></p>
-                          <p className="text-xs text-gray-600 mt-1">
+                          <p className="text-xs text-gray-500 mt-1">
+                            현재 정산월: <b>{hectoMonthLabel(hectoSettlementMonth)}</b> · 헥토 기준 파일 기준월: <b>{hectoMonthLabel(hectoReferenceMonth)}</b>
+                          </p>
+                          <p className="text-xs text-gray-600 mt-0.5">
                             헥토 기준 <b>{summary.hectoCount}명</b> / 현재 정산 <b>{summary.dashboardCount}명</b> / {diff}명 차이
-                            {isTtubeokTogetherMonth(hectoSettlementMonth) && (
+                            {isTtubeokTogetherMonth(hectoReferenceMonth) && (
                               <span className="ml-1.5 text-[11px] text-amber-600 font-semibold">· 뚜벅투게더 지급월(비고에서 뚜벅투게더 금액을 차감해 비교)</span>
                             )}
                           </p>
