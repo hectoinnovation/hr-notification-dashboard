@@ -3063,9 +3063,18 @@ export default function HRDashboard() {
       const { error } = await supabase.from('wellness_coin_reclaim_upload').upsert({
         id: 'singleton', file_name: file.name, data: rows, uploaded_at: nowIso, updated_at: nowIso,
       }, { onConflict: 'id' })
-      if (error) setWellnessReclaimError('엑셀 저장 실패: ' + error.message)
+      if (error) {
+        const msg = '엑셀 저장 실패: ' + error.message
+        setWellnessReclaimError(msg)
+        alert(msg) // 저장 실패는 화면을 놓치면 원인 파악이 어려워 반드시 즉시 알림으로도 띄운다
+      }
     } catch (err) {
-      setWellnessReclaimError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
+      // 파싱 실패 시(헤더를 못 찾는 등) Supabase 저장까지 가지 않고 여기서 끝나므로,
+      // 업로드가 "성공한 것처럼 조용히 아무 일도 안 일어나는" 상태를 방지하기 위해
+      // alert으로도 즉시 알려 사용자가 정확한 실패 사유(어떤 컬럼을 못 찾았는지)를 놓치지 않게 한다.
+      const msg = err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.'
+      setWellnessReclaimError(msg)
+      alert(msg)
     } finally {
       setWellnessReclaimUploading(false)
     }

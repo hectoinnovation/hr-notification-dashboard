@@ -21,7 +21,16 @@ function parseReclaimAmount(v: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-const RECLAIM_NAME_HEADERS = ['성명', '이름']
+/**
+ * 성명 컬럼 판정 — 정확히 "성명"/"이름"일 때만이 아니라 "성명(국문)", "직원명", "이름(한글)"
+ * 처럼 다른 글자가 섞인 실제 현업 엑셀 헤더도 인식하도록 부분일치로 판정한다("환수"
+ * 컬럼 판정과 동일한 방식). 과거 정확히 일치(exact match)만 허용했을 때 실제 업로드
+ * 파일의 헤더가 조금만 달라도 "성명(이름) 컬럼을 찾을 수 없습니다" 에러로 파싱 자체가
+ * 실패해 업로드가 DB에 저장조차 되지 않는 문제가 있었다.
+ */
+function isReclaimNameHeader(norm: string): boolean {
+  return norm.includes('성명') || norm.includes('이름')
+}
 
 /**
  * 헥토에서 받는 웰니스 관련 엑셀에서 성명 + "환수" 문구가 포함된 금액 컬럼만 찾아
@@ -36,21 +45,22 @@ export function parseWellnessReclaimExcelFile(buffer: ArrayBuffer): { rows: Well
   if (!ws) throw new Error('엑셀 시트를 찾을 수 없습니다.')
   const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
+  // 실제 업로드 파일에 안내/제목 등 전치 행이 여러 줄 있을 수 있어 넉넉하게(20행) 스캔한다.
   let headerRow = -1
   let col = { name: -1, reclaim: -1 }
-  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+  for (let r = 0; r < Math.min(rows.length, 20); r++) {
     const row = rows[r] as unknown[]
     const found = { name: -1, reclaim: -1 }
     row.forEach((cell, c) => {
       const norm = normalizeReclaimHeader(cell)
       if (!norm) return
-      if (found.name === -1 && RECLAIM_NAME_HEADERS.includes(norm)) found.name = c
+      if (found.name === -1 && isReclaimNameHeader(norm)) found.name = c
       if (found.reclaim === -1 && norm.includes('환수')) found.reclaim = c
     })
     if (found.name !== -1 && found.reclaim !== -1) { headerRow = r; col = found; break }
   }
-  if (headerRow === -1 || col.name === -1) throw new Error('성명(이름) 컬럼을 찾을 수 없습니다.')
-  if (col.reclaim === -1) throw new Error('"환수"가 포함된 금액 컬럼을 찾을 수 없습니다.')
+  if (headerRow === -1 || col.name === -1) throw new Error('성명(이름) 컬럼을 찾을 수 없습니다. 엑셀 상단 헤더 행에 "성명" 또는 "이름"이 포함된 컬럼이 있는지 확인해주세요.')
+  if (col.reclaim === -1) throw new Error('"환수"가 포함된 금액 컬럼을 찾을 수 없습니다. 엑셀 상단 헤더 행에 "환수"라는 글자가 포함된 컬럼이 있는지 확인해주세요.')
 
   const parsedRaw: WellnessReclaimRawRow[] = []
   for (let r = headerRow + 1; r < rows.length; r++) {
@@ -99,16 +109,21 @@ export type WellnessReclaimEntry = {
 export type WellnessReclaimExcluded = { name: string; amount: number; reason: string }
 
 /**
- * 업로드된 환수 원본 행(이름+금액)을 employees 테이블과 이름으로 매칭해 화면에 표시할
- * 환수 대상자를 만든다. 이름이 직원 명단에서 매칭되지 않거나 퇴사일이 없어 회수일자를
- * 계산할 수 없는 건은 excluded로 분리한다.
+ * 업로드된 환수 원본 행(이름+금액)을 employees 테이블의 "퇴사자(status==='resigned')"와
+ * 이름으로 매칭해 화면에 표시할 환수 대상자를 만든다(요청 사양: 퇴사자 기준). 휴직자
+ * 등 퇴사자가 아닌 직원은 이름이 같아도 매칭 대상에서 제외한다 — 전체 employees가
+ * 아니라 호출 전에 이미 status==='resigned'로 걸러진 목록을 넘겨도 되지만, 이 함수
+ * 자체도 방어적으로 한 번 더 걸러서 호출부 실수로 비퇴사자가 섞여도 안전하다.
+ * 이름이 퇴사자 명단에서 매칭되지 않거나 퇴사일이 없어 회수일자를 계산할 수 없는
+ * 건은 excluded로 분리한다.
  */
 export function buildWellnessReclaimEntries(
   rawRows: WellnessReclaimRawRow[],
   employees: Employee[],
 ): { included: WellnessReclaimEntry[]; excluded: WellnessReclaimExcluded[] } {
+  const resigned = employees.filter(e => e.status === 'resigned')
   const byName = new Map<string, Employee>()
-  for (const e of employees) {
+  for (const e of resigned) {
     const key = stripEnglishFromName(e.name)
     if (key) byName.set(key, e)
   }
@@ -118,7 +133,7 @@ export function buildWellnessReclaimEntries(
     const key = stripEnglishFromName(row.name)
     const emp = byName.get(key)
     if (!emp) {
-      excluded.push({ name: row.name, amount: row.amount, reason: '직원 명단에서 이름을 찾을 수 없습니다.' })
+      excluded.push({ name: row.name, amount: row.amount, reason: '퇴사자(status=resigned) 명단에서 이름을 찾을 수 없습니다.' })
       continue
     }
     if (!emp.exit_date) {
