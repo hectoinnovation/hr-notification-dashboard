@@ -524,19 +524,6 @@ function makeBulkWellnessReclaimHtml(entries: WellnessReclaimEntry[]): string {
 ${closingP}`
 }
 /**
- * 환수금액이 0원(또는 환수 엑셀과 매칭 안 됨)인 대상자를 포함해서 메일을 보내려는 경우
- * 발송 직전에 한 번 더 확인시킨다(요청 사양: "0원 대상인 경우 메일 발송 전에 경고") —
- * 퇴사자 전체를 직접 체크할 수 있게 하면서 생긴 실수 방지용 가드. 취소하면 false를
- * 반환해 호출부가 발송을 중단한다.
- */
-function confirmZeroAmountReclaimSend(selected: WellnessReclaimDisplayRow[]): boolean {
-  const zero = selected.filter(r => !r.amount || r.amount <= 0)
-  if (zero.length === 0) return true
-  return window.confirm(
-    `환수금액이 0원(또는 환수 엑셀과 매칭되지 않음)인 대상자가 ${zero.length}명 포함되어 있습니다: ${zero.map(r => r.emp.name).join(', ')}\n그래도 발송하시겠습니까?`
-  )
-}
-/**
  * 웰니스포인트 탭 "웰니스코인 환수" → "XLSX 첨부 메일 보내기" 전용 — /api/wellness-reclaim-mail
  * 호출. 기존 sendWellnessMailApi(/api/wellness-mail, 지급용)와 완전히 분리된 별도 경로.
  */
@@ -1587,9 +1574,9 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
  * 웰니스코인 환수 탭 전용 카드 — 지급 탭의 PointCard와 똑같은 CardHeader/InfoRow/
  * TypeBadge를 그대로 재사용해 동일한 UI로 보이게 하되, PointCard 자체는 전혀
  * 수정하지 않는다(카페포인트/웰니스코인 지급 양쪽에서 쓰는 공용 컴포넌트라 건드리면
- * 그쪽까지 영향받을 위험이 있음). 환수 대상(환수금액>0)이 아닌 퇴사자도 화면에는
- * 항상 보이되, 체크박스는 환수 대상자에게만 노출한다(onSelect를 reclaimable일
- * 때만 CardHeader에 전달 — undefined면 CardHeader가 체크박스 자체를 렌더링하지 않음).
+ * 그쪽까지 영향받을 위험이 있음). 환수 엑셀과 매칭 여부는 "체크 가능 여부"와 전혀
+ * 무관하다(요청 사양) — 퇴사자 전원이 항상 체크 가능하고, 매칭 안 된 사람은 본문에
+ * "환수 없음"만 표시한다.
  */
 function WellnessReclaimCard({ row, selected, onSelect }: {
   row: WellnessReclaimDisplayRow
@@ -2886,10 +2873,10 @@ export default function HRDashboard() {
     ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
-  // 웰니스코인 환수 — 지급 탭(allWellness)과 똑같이 "퇴사자 전체"를 먼저 화면 목록으로
-  // 구성하고, 업로드된 환수 원본(wellnessReclaimRaw)과 이름이 매칭되는 사람만 환수금액을
-  // 함께 보여준다(요청 사양: 화면 목록≠환수 대상, 분리). allWellness(지급)와는 완전히
-  // 분리된 별도 목록이며 매번 다시 계산한다.
+  // 웰니스코인 환수 — 지급 탭(allWellness)과 똑같이 "퇴사자 전체"를 화면 목록으로 구성한다.
+  // 업로드된 환수 원본(wellnessReclaimRaw)은 대상자를 정하지 않고, 체크한 사람의 환수금액을
+  // 조회하는 용도로만 쓰인다(요청 사양: 대상 선택은 오직 사용자의 체크로만 결정). allWellness
+  // (지급)와는 완전히 분리된 별도 목록이며 매번 다시 계산한다.
   const { rows: wellnessReclaimAllRows, unmatched: wellnessReclaimUnmatched } =
     buildWellnessReclaimDisplayRows(employees, wellnessReclaimRaw)
   // 요약 문구/배지에만 쓰는 값 — 실제로 환수 엑셀과 매칭된(환수금액>0) 사람 수·합계.
@@ -4499,7 +4486,10 @@ export default function HRDashboard() {
                           ✓ {wellnessReclaimFileName}{wellnessReclaimUploadedAt ? ` (${new Date(wellnessReclaimUploadedAt).toLocaleString('ko-KR')})` : ''}
                         </span>
                       )}
-                      <HectoUploadButton label={wellnessReclaimUploading ? '파싱 중...' : '환수 대상 엑셀 업로드'} uploading={wellnessReclaimUploading} onFile={handleWellnessReclaimUpload} />
+                      {/* 이 업로드는 "환수 대상자를 정하는" 파일이 아니라, 체크한 퇴사자의 환수금액을
+                          조회할 때 쓰는 금액 데이터 소스일 뿐이다(요청 사양: 대상 결정과 분리) —
+                          아무도 업로드하지 않아도 퇴사자 전체는 그대로 체크 가능하다. */}
+                      <HectoUploadButton label={wellnessReclaimUploading ? '파싱 중...' : '웰니스 환수금액 데이터 업로드'} uploading={wellnessReclaimUploading} onFile={handleWellnessReclaimUpload} />
                       {wellnessReclaimFileName && (
                         <button onClick={handleWellnessReclaimDelete}
                           className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg transition-colors">
@@ -4537,16 +4527,13 @@ export default function HRDashboard() {
                     previewHtml={selReclaim.length > 0 ? makeBulkWellnessReclaimHtml(selReclaim) : ''}
                     defaultRecipients={FR.wellness}
                     defaultCC={FR.wellnessCC}
-                    onBulkSend={(to, cc) => {
-                      if (!confirmZeroAmountReclaimSend(selReclaimRows)) return
-                      handleBulkSend(
-                        to,
-                        `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
-                        makeBulkWellnessReclaimHtml(selReclaim),
-                        selReclaim.map(e => e.mailKey),
-                        cc
-                      )
-                    }} />
+                    onBulkSend={(to, cc) => handleBulkSend(
+                      to,
+                      `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
+                      makeBulkWellnessReclaimHtml(selReclaim),
+                      selReclaim.map(e => e.mailKey),
+                      cc
+                    )} />
                   <div className="flex justify-end gap-2 mt-1">
                     <button
                       onClick={() => {
@@ -4562,11 +4549,7 @@ export default function HRDashboard() {
                       웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
                     </button>
                     <button
-                      onClick={() => {
-                        if (selReclaim.length === 0) { alert('메일로 보낼 대상자를 선택해주세요.'); return }
-                        if (!confirmZeroAmountReclaimSend(selReclaimRows)) return
-                        openWellnessReclaimMailModal(selReclaim)
-                      }}
+                      onClick={() => openWellnessReclaimMailModal(selReclaim)}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
