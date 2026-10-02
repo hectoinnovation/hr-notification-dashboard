@@ -14,9 +14,9 @@ import {
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
 import {
-  parseWellnessReclaimExcelFile, buildWellnessReclaimDisplayRows, selectedReclaimEntries, buildWellnessReclaimExcelRows,
-  sumWellnessReclaimAmount, formatMonthDayLabel, wellnessReclaimMailAttachmentFilename,
-  type WellnessReclaimEntry, type WellnessReclaimRawRow, type WellnessReclaimDisplayRow,
+  buildWellnessReclaimDisplayRows, selectedReclaimEntries,
+  sumWellnessReclaimAmount, formatMonthDayLabel, wellnessReclaimMailAttachmentFilename, wellnessReclaimCoinFilename,
+  type WellnessReclaimEntry, type WellnessReclaimDisplayRow,
 } from '@/lib/wellness-reclaim'
 import {
   parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
@@ -925,6 +925,40 @@ async function downloadWellnessCoinExcel(rows: WellnessCoinRow[]): Promise<strin
   }
 }
 
+/**
+ * 웰니스코인 환수 탭 "웰니스코인 환수 엑셀 다운로드" — 지급 쪽 downloadWellnessCoinExcel과
+ * 완전히 분리된 별도 함수. 체크한 직원만, 지급과 동일한 고정 템플릿(/api/
+ * wellness-reclaim-coin-excel → lib/wellness-reclaim.ts fillWellnessReclaimCoinTemplate)으로
+ * 생성한다 — 지급 쪽 /api/wellness-coin-excel은 전혀 건드리지 않는다.
+ */
+async function downloadWellnessReclaimCoinExcel(entries: WellnessReclaimEntry[]): Promise<string | null> {
+  try {
+    const res = await fetch('/api/wellness-reclaim-coin-excel', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rows: entries.map(e => ({ name: e.emp.name, customerId: e.emp.customer_id, amount: e.amount })),
+      }),
+    })
+    if (!res.ok) {
+      let errMsg = '엑셀 생성에 실패했습니다.'
+      try { const data = await res.json() as { error?: string }; errMsg = data.error ?? errMsg } catch { /* ignore */ }
+      return errMsg
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = wellnessReclaimCoinFilename()
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : '네트워크 오류'
+  }
+}
+
 // ─── 성과포인트 / 근속포인트 대상자 목록 (화면·엑셀 공용 — 계산은 위 calc 함수만 사용) ───
 type PerformancePointRow = { emp: Employee; calc: LeaveMonthCalc | null }
 type TenurePointRow = { emp: Employee; calc: (LeaveMonthCalc & { appliedYears: number; eligible: boolean }) | null }
@@ -1584,13 +1618,13 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
   onSelect: (checked: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const { emp, amount, recoupDate, reclaimable } = row
+  const { emp, amount, recoupDate } = row
   const typeLabel = empLabel(emp)
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-      {/* 체크박스는 환수금액 매칭 여부와 무관하게 항상 활성 — 퇴사자 전체를 사용자가 직접
-          체크할 수 있어야 한다(요청 사양). reclaimable은 아래 본문에 환수금액/회수일자를
-          보여줄지 "환수 없음"을 보여줄지만 결정한다. */}
+      {/* 체크박스는 환수금액 유무와 무관하게 항상 활성 — 퇴사자 전체를 사용자가 직접
+          체크할 수 있어야 한다(요청 사양). amount는 지급 탭과 동일한 계산 결과를
+          그대로 보여줄 뿐, 선택 가능 여부에는 관여하지 않는다. */}
       <CardHeader emp={emp} typeLabel={typeLabel} date={emp.exit_date ?? '-'} dateLabel="퇴사일"
         mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
         selected={selected} onSelect={onSelect} />
@@ -1607,17 +1641,15 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
             {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
             {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
           </div>
-          {reclaimable ? (
-            <div className="space-y-0">
-              <InfoRow label="환수금액"><span className="text-xs font-bold text-red-600">{amount!.toLocaleString()}원</span></InfoRow>
-              <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate}</span></InfoRow>
-            </div>
-          ) : amount != null && amount > 0 ? (
-            <p className="text-xs text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              ⚠️ 환수금액 {amount.toLocaleString()}원은 있으나 퇴사일이 입력되지 않아 회수일자를 계산할 수 없습니다. 직원 정보에서 퇴사일을 확인해주세요.
-            </p>
+          {amount == null ? (
+            <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">환수금액 계산 불가(입사일 또는 퇴사일 미입력) — 직원 정보를 확인해주세요.</p>
           ) : (
-            <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">환수 없음(업로드한 환수 엑셀에 이 직원의 환수금액이 없습니다)</p>
+            <div className="space-y-0">
+              <InfoRow label="환수금액">
+                <span className={`text-xs font-bold ${amount > 0 ? 'text-red-600' : 'text-gray-400'}`}>{amount.toLocaleString()}원</span>
+              </InfoRow>
+              <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate ?? '확인 필요'}</span></InfoRow>
+            </div>
           )}
         </div>
       )}
@@ -2686,13 +2718,11 @@ export default function HRDashboard() {
   const [wellnessMailModal, setWellnessMailModal] = useState<{ entries: WellnessMailEntryInput[]; sentKeys: string[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
-  // 웰니스코인 환수 — 기존 웰니스코인 지급(위 상태들)과 완전히 분리된 별도 업로드/목록/메일 상태.
-  // 지급 대상/금액/메일/다운로드 로직에는 전혀 영향을 주지 않는다.
+  // 웰니스코인 환수 — 기존 웰니스코인 지급(위 상태들)과 완전히 분리된 별도 목록/메일 상태.
+  // 지급 대상/금액/메일/다운로드 로직에는 전혀 영향을 주지 않는다. 별도 업로드 파일이
+  // 없다 — 환수금액은 employees 데이터로부터 매번 다시 계산한다(buildWellnessReclaimDisplayRows).
   const [wellnessSubTab,           setWellnessSubTab]           = useState<'pay' | 'reclaim'>('pay')
-  const [wellnessReclaimRaw,       setWellnessReclaimRaw]       = useState<WellnessReclaimRawRow[]>([])
-  const [wellnessReclaimFileName,  setWellnessReclaimFileName]  = useState<string | null>(null)
-  const [wellnessReclaimUploadedAt, setWellnessReclaimUploadedAt] = useState<string | null>(null)
-  const [wellnessReclaimUploading, setWellnessReclaimUploading] = useState(false)
+  const [wellnessReclaimDownloading, setWellnessReclaimDownloading] = useState(false)
   const [wellnessReclaimError,     setWellnessReclaimError]     = useState<string | null>(null)
   const [wellnessReclaimMailModal, setWellnessReclaimMailModal] = useState<{ entries: WellnessReclaimEntry[]; count: number; totalAmount: number; filename: string } | null>(null)
   // 화면 목록은 지급 탭과 동일하게 "퇴사자 전체"를 먼저 보여주고 그 위에 환수 엑셀 금액을
@@ -2874,15 +2904,14 @@ export default function HRDashboard() {
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
   // 웰니스코인 환수 — 지급 탭(allWellness)과 똑같이 "퇴사자 전체"를 화면 목록으로 구성한다.
-  // 업로드된 환수 원본(wellnessReclaimRaw)은 대상자를 정하지 않고, 체크한 사람의 환수금액을
-  // 조회하는 용도로만 쓰인다(요청 사양: 대상 선택은 오직 사용자의 체크로만 결정). allWellness
-  // (지급)와는 완전히 분리된 별도 목록이며 매번 다시 계산한다.
-  const { rows: wellnessReclaimAllRows, unmatched: wellnessReclaimUnmatched } =
-    buildWellnessReclaimDisplayRows(employees, wellnessReclaimRaw)
-  // 요약 문구/배지에만 쓰는 값 — 실제로 환수 엑셀과 매칭된(환수금액>0) 사람 수·합계.
+  // 환수금액은 업로드 파일이 아니라 지급 탭과 동일한 calcWellnessLeave() 계산 결과를
+  // 그대로 가져온다(요청 사양: 대상 선택은 오직 사용자의 체크로만 결정, 금액은 기존
+  // 계산값 재사용). allWellness(지급)와는 완전히 분리된 별도 목록이며 매번 다시 계산한다.
+  const wellnessReclaimAllRows = buildWellnessReclaimDisplayRows(employees)
+  // 요약 문구/배지에만 쓰는 값 — 실제로 환수할 금액이 있는(amount>0) 사람 수·합계.
   // 체크 가능 여부와는 무관하다(퇴사자 전체가 항상 선택 가능 — 요청 사양).
-  const wellnessReclaimMatchedRows   = wellnessReclaimAllRows.filter(r => r.reclaimable)
-  const wellnessReclaimMatchedTotal  = wellnessReclaimMatchedRows.reduce((sum, r) => sum + (r.amount ?? 0), 0)
+  const wellnessReclaimOwedRows  = wellnessReclaimAllRows.filter(r => (r.amount ?? 0) > 0)
+  const wellnessReclaimOwedTotal = wellnessReclaimOwedRows.reduce((sum, r) => sum + (r.amount ?? 0), 0)
 
   // notify tab: sub-tabs handle type separation, so skip typeF here — 단, 상단 검색창의
   // "전적" 필터만은 예외로 적용한다. 하이어사이드 전적(join_reason==='전적')과 퇴사사이드
@@ -3066,14 +3095,13 @@ export default function HRDashboard() {
 
   async function fetchAllData() {
     setLoading(true); setError(null)
-    const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes, reclaimRes] = await Promise.all([
+    const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
       supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent,done_at'),
       supabase.from('notifications').select('employee_id,notification_type,mail_sent'),
       supabase.from('point_requests').select('employee_id,employee_type,point_type,mail_sent'),
       supabase.from('cafe_excel_data').select('file_name,data').eq('id', 'singleton').maybeSingle(),
       supabase.from('scheduled_mails').select('subject,sent_at').eq('status', 'sent').like('subject', '[온보딩 알림]%'),
-      supabase.from('wellness_coin_reclaim_upload').select('file_name,data,uploaded_at').eq('id', 'singleton').maybeSingle(),
     ])
     if (empRes.error) { setError(empRes.error.message); setLoading(false); return }
     const empData = empRes.data ?? []
@@ -3111,11 +3139,6 @@ export default function HRDashboard() {
       setCafeExcel(excelRes.data.data as Record<number, ExcelSheetData>)
       setCafeExcelFileName(excelRes.data.file_name ?? null)
     }
-    if (reclaimRes.data) {
-      setWellnessReclaimRaw((reclaimRes.data.data as WellnessReclaimRawRow[] | null) ?? [])
-      setWellnessReclaimFileName(reclaimRes.data.file_name ?? null)
-      setWellnessReclaimUploadedAt(reclaimRes.data.uploaded_at ?? null)
-    }
     setStageDone(newDone); setStageDoneAt(newDoneAt); setMailSent(newMail); setOnboardSentAt(newSentAt); setLoading(false)
   }
 
@@ -3126,45 +3149,6 @@ export default function HRDashboard() {
       id: 'singleton', file_name: fileName, data, uploaded_at: new Date().toISOString(),
     }, { onConflict: 'id' })
     if (error) setError('엑셀 저장 실패: ' + error.message)
-  }
-
-  // 웰니스코인 환수 — 헥토에서 받는 웰니스 관련 엑셀을 업로드해 "환수" 금액이 있는 직원만
-  // 추출한다. 지급(allWellness/handleCafeExcelUpload 등)과는 완전히 분리된 별도 저장소
-  // (wellness_coin_reclaim_upload)를 쓰며, 업로드해도 기존 지급 대상/금액/메일/다운로드에는
-  // 전혀 영향을 주지 않는다.
-  async function handleWellnessReclaimUpload(file: File) {
-    setWellnessReclaimUploading(true); setWellnessReclaimError(null)
-    try {
-      const { rows } = parseWellnessReclaimExcelFile(await file.arrayBuffer())
-      const nowIso = new Date().toISOString()
-      setWellnessReclaimRaw(rows)
-      setWellnessReclaimFileName(file.name)
-      setWellnessReclaimUploadedAt(nowIso)
-      const { error } = await supabase.from('wellness_coin_reclaim_upload').upsert({
-        id: 'singleton', file_name: file.name, data: rows, uploaded_at: nowIso, updated_at: nowIso,
-      }, { onConflict: 'id' })
-      if (error) {
-        const msg = '엑셀 저장 실패: ' + error.message
-        setWellnessReclaimError(msg)
-        alert(msg) // 저장 실패는 화면을 놓치면 원인 파악이 어려워 반드시 즉시 알림으로도 띄운다
-      }
-    } catch (err) {
-      // 파싱 실패 시(헤더를 못 찾는 등) Supabase 저장까지 가지 않고 여기서 끝나므로,
-      // 업로드가 "성공한 것처럼 조용히 아무 일도 안 일어나는" 상태를 방지하기 위해
-      // alert으로도 즉시 알려 사용자가 정확한 실패 사유(어떤 컬럼을 못 찾았는지)를 놓치지 않게 한다.
-      const msg = err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.'
-      setWellnessReclaimError(msg)
-      alert(msg)
-    } finally {
-      setWellnessReclaimUploading(false)
-    }
-  }
-  async function handleWellnessReclaimDelete() {
-    setWellnessReclaimRaw([]); setWellnessReclaimFileName(null); setWellnessReclaimUploadedAt(null)
-    const { error } = await supabase.from('wellness_coin_reclaim_upload').upsert({
-      id: 'singleton', file_name: null, data: null, uploaded_at: null, updated_at: new Date().toISOString(),
-    }, { onConflict: 'id' })
-    if (error) setWellnessReclaimError('삭제 실패: ' + error.message)
   }
 
   async function handleSubmit() {
@@ -3304,8 +3288,9 @@ export default function HRDashboard() {
       filename: wellnessMailAttachmentFilename(new Date()),
     })
   }
-  // 웰니스코인 환수 "XLSX 첨부 메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessReclaimExcelRows
-  // 결과를 그대로 사용(화면 체크 대상 = 엑셀 다운로드 대상 = 메일 첨부 엑셀 대상 일치 원칙 유지).
+  // 웰니스코인 환수 "XLSX 첨부 메일 보내기" — 엑셀 다운로드(handleWellnessReclaimCoinDownload)와
+  // 동일한 fillWellnessReclaimCoinTemplate 생성 경로를 그대로 사용(화면 체크 대상 = 엑셀
+  // 다운로드 대상 = 메일 첨부 엑셀 대상 일치 원칙 유지).
   function openWellnessReclaimMailModal(entries: WellnessReclaimEntry[]) {
     if (entries.length === 0) { alert('메일로 보낼 환수 대상자를 선택해주세요.'); return }
     setWellnessReclaimMailModal({
@@ -3313,6 +3298,14 @@ export default function HRDashboard() {
       totalAmount: sumWellnessReclaimAmount(entries),
       filename: wellnessReclaimMailAttachmentFilename(new Date()),
     })
+  }
+  async function handleWellnessReclaimCoinDownload(entries: WellnessReclaimEntry[]) {
+    if (entries.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+    setWellnessReclaimDownloading(true)
+    setWellnessReclaimError(null)
+    const err = await downloadWellnessReclaimCoinExcel(entries)
+    setWellnessReclaimDownloading(false)
+    if (err) setWellnessReclaimError(err)
   }
   async function handleWellnessCoinDownload() {
     if (!wellnessCoinModal) return
@@ -4474,45 +4467,18 @@ export default function HRDashboard() {
                   <button onClick={() => setWellnessSubTab('reclaim')}
                     className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${wellnessSubTab === 'reclaim' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                     웰니스코인 환수
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimMatchedRows.length}</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimOwedRows.length}</span>
                   </button>
                 </div>
                 {wellnessSubTab === 'reclaim' ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      {wellnessReclaimFileName && (
-                        <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">
-                          ✓ {wellnessReclaimFileName}{wellnessReclaimUploadedAt ? ` (${new Date(wellnessReclaimUploadedAt).toLocaleString('ko-KR')})` : ''}
-                        </span>
-                      )}
-                      {/* 이 업로드는 "환수 대상자를 정하는" 파일이 아니라, 체크한 퇴사자의 환수금액을
-                          조회할 때 쓰는 금액 데이터 소스일 뿐이다(요청 사양: 대상 결정과 분리) —
-                          아무도 업로드하지 않아도 퇴사자 전체는 그대로 체크 가능하다. */}
-                      <HectoUploadButton label={wellnessReclaimUploading ? '파싱 중...' : '웰니스 환수금액 데이터 업로드'} uploading={wellnessReclaimUploading} onFile={handleWellnessReclaimUpload} />
-                      {wellnessReclaimFileName && (
-                        <button onClick={handleWellnessReclaimDelete}
-                          className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg transition-colors">
-                          파일 삭제
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400">
-                      환수 엑셀 매칭 {wellnessReclaimMatchedRows.length}명 · 금액 합계 {wellnessReclaimMatchedTotal.toLocaleString()}원
-                    </p>
-                  </div>
+                  {/* 업로드/매칭 로직 없음 — 환수금액은 항상 지급 탭과 동일한 calcWellnessLeave()
+                      계산 결과(환수금)를 그대로 가져온다(요청 사양). 별도 입력 파일이 없으므로
+                      퇴사자 전체가 항상 화면에 보이고 전원 체크 가능하다. */}
+                  <p className="text-xs text-gray-400">
+                    {wellnessReclaimGroup.length}명{hasFilter ? ' (필터 적용)' : ''} · 환수금액 있는 인원 {wellnessReclaimOwedRows.length}명 · 금액 합계 {wellnessReclaimOwedTotal.toLocaleString()}원
+                  </p>
                   {wellnessReclaimError && <p className="text-xs text-red-500">{wellnessReclaimError}</p>}
-                  {wellnessReclaimUnmatched.length > 0 && (
-                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      엑셀 쪽 이름이 퇴사자 명단과 매칭되지 않음({wellnessReclaimUnmatched.length}건): {wellnessReclaimUnmatched.map(e => `${e.name}(${e.amount.toLocaleString()}원)`).join(', ')}
-                    </p>
-                  )}
-                  {/* 지급 탭과 동일한 구조: 퇴사자 전체를 화면 목록으로 먼저 보여주고(카드/월별 그룹/
-                      기간 필터), 체크박스는 환수금액 매칭 여부와 무관하게 항상 활성 — 사용자가
-                      퇴사자 아무나 직접 체크할 수 있다(요청 사양). "전체 선택"도 현재 필터에
-                      보이는 퇴사자 전체(wellnessReclaimGroup)를 대상으로 한다. 메일/엑셀에는
-                      선택된 사람의 실제 금액(매칭 안 됐으면 0원)이 그대로 들어간다. */}
-                  <p className="text-xs text-gray-400">{wellnessReclaimGroup.length}명{hasFilter ? ' (필터 적용)' : ''}</p>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-400 ml-1">기간</span>
                     <PeriodFilterChips value={wellnessReclaimMonthFilter} onChange={setWellnessReclaimMonthFilter} />
@@ -4536,17 +4502,13 @@ export default function HRDashboard() {
                     )} />
                   <div className="flex justify-end gap-2 mt-1">
                     <button
-                      onClick={() => {
-                        if (selReclaim.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
-                        const rows = buildWellnessReclaimExcelRows(selReclaim)
-                        const today = new Date().toISOString().slice(0, 10)
-                        exportToExcel(rows, `웰니스코인_환수내역_${today}.xlsx`)
-                      }}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                      onClick={() => handleWellnessReclaimCoinDownload(selReclaim)}
+                      disabled={wellnessReclaimDownloading}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                      웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
+                      {wellnessReclaimDownloading ? '생성 중...' : `웰니스코인 환수 엑셀 다운로드${selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}`}
                     </button>
                     <button
                       onClick={() => openWellnessReclaimMailModal(selReclaim)}
