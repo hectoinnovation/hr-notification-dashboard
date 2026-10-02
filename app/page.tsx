@@ -14,6 +14,11 @@ import {
   type WellnessCoinRow, type WellnessCoinExcluded,
 } from '@/lib/wellness-coin'
 import {
+  parseWellnessReclaimExcelFile, buildWellnessReclaimEntries, buildWellnessReclaimExcelRows,
+  sumWellnessReclaimAmount, formatMonthDayLabel, wellnessReclaimMailAttachmentFilename,
+  type WellnessReclaimEntry, type WellnessReclaimRawRow,
+} from '@/lib/wellness-reclaim'
+import {
   parseHectoCoinExcelFile, parseHectoCoinRosterFile, computeHectoCoinEntries, hectoCoinFilename,
   validateHectoCoinOverrideAmount, validateHectoCoinDataOverride, validateHectoCoinCustomerId,
   mergeHectoCoinRosterOnUpload, upsertHectoCoinRosterManualEntry, parseHectoCoinLeaveExcludedInput,
@@ -467,6 +472,86 @@ function textToMailHtml(text: string): string {
   return `<div style="font-family:sans-serif;font-size:14px;color:#374151;white-space:pre-wrap">${esc}</div>`
 }
 // wellnessMailAttachmentFilename은 @/lib/wellness-mail에서 가져와 사용
+
+/** 'YYYY.MM.DD' (환수 메일 제목의 "충전(회수)요청일"에 사용) */
+function formatDotDate(d: Date): string {
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}.${mm}.${dd}`
+}
+/**
+ * 웰니스코인 환수 요청 메일 기본 본문 — 지급 메일(buildWellnessMailBody)과 동일한 구조를
+ * 재사용하되, 거래구분/구분상세를 환수용으로 바꾸고 "충전/회수일자"는 입력 필드가 아니라
+ * 대상자별 퇴사일+1일을 자동 계산해 "n. 이름_M.D" 목록으로 나열한다(요청 사양).
+ */
+function buildWellnessReclaimMailBody(
+  payDate: string, recoupList: Array<{ name: string; recoupDate: string }>, count: number, totalAmount: number,
+): string {
+  const recoupLines = recoupList.length > 0
+    ? recoupList.map((r, i) => `${i + 1}. ${r.name}_${formatMonthDayLabel(r.recoupDate)}`).join('\n')
+    : '(대상자 없음)'
+  return `안녕하세요.
+
+헥토이노베이션 인재협업팀 입니다.
+
+[요청내용(공통)]
+
+- 거래구분 : 포인트회수
+- 구분상세 : 웰니스코인
+- 요청건수 : ${count}명
+- 요청금액 : ${totalAmount.toLocaleString()}원
+- 입금일자 : ${formatKoreanDateWithWeekday(payDate) || '(미선택)'}
+- 충전/회수일자 :
+${recoupLines}
+
+감사합니다.
+인재협업팀 드림`
+}
+/**
+ * 웰니스포인트 탭 "웰니스코인 환수" → "통합 메일 발송" 전용 HTML — 기존 makeBulkWellnessHtml과
+ * 동일한 톤/스타일(TS/TH/TD, closingP)을 재사용하되 환수 대상자 상세 표(성명/구분/입사일/
+ * 퇴사일/환수금액)만 보여준다. 지급 쪽 makeBulkWellnessHtml은 전혀 수정하지 않는다.
+ */
+function makeBulkWellnessReclaimHtml(entries: WellnessReclaimEntry[]): string {
+  const rows = entries.map(({ emp, amount }) => {
+    const 구분 = empLabel(emp)
+    return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${emp.join_date ?? '-'}</td><td style="${TD}">${emp.exit_date ?? '-'}</td><td style="${TD}">${amount.toLocaleString()}원</td></tr>`
+  }).join('')
+  return `<h3 style="color:#ea580c">[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${entries.length}명)</h3>
+<p style="${PP}">안녕하세요.<br>인재협업팀입니다.<br><br>웰니스포인트 환수 대상자 정보를 공유드립니다.</p>
+<div style="overflow-x:auto"><table style="${TS}"><thead><tr><th style="${TH}">성명</th><th style="${TH}">구분</th><th style="${TH}">입사일</th><th style="${TH}">퇴사일</th><th style="${TH}">환수금액</th></tr></thead><tbody>${rows}</tbody></table></div>
+${closingP}`
+}
+/**
+ * 웰니스포인트 탭 "웰니스코인 환수" → "XLSX 첨부 메일 보내기" 전용 — /api/wellness-reclaim-mail
+ * 호출. 기존 sendWellnessMailApi(/api/wellness-mail, 지급용)와 완전히 분리된 별도 경로.
+ */
+async function sendWellnessReclaimMailApi(
+  to: string[], subject: string, html: string,
+  entries: WellnessReclaimEntry[], attachmentFilename: string, cc?: string[],
+): Promise<string | null> {
+  try {
+    const res = await fetch('/api/wellness-reclaim-mail', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, cc, subject, html, entries, attachmentFilename }),
+    })
+    if (res.redirected) {
+      try {
+        const finalPath = new URL(res.url).pathname
+        if (finalPath === '/login') return '세션이 만료되었습니다. 페이지를 새로고침한 후 다시 로그인해주세요.'
+      } catch { /* URL 파싱 실패 시 무시 */ }
+    }
+    if (!res.ok) {
+      let errMsg = '메일 발송에 실패했습니다.'
+      try { const data = await res.json() as { error?: string }; errMsg = data.error ?? errMsg } catch { /* JSON 파싱 실패 시 기본 메시지 사용 */ }
+      return errMsg
+    }
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : '네트워크 오류로 메일 발송에 실패했습니다.'
+  }
+}
 
 // ─── HTML 생성 ────────────────────────────────────────────────────────────────
 const TS = 'border-collapse:collapse;font-family:sans-serif;font-size:14px'
@@ -2198,6 +2283,172 @@ function WellnessMailModal({ entries, sentKeys, count, totalAmount, filename, on
   )
 }
 
+/**
+ * 웰니스포인트 탭 "웰니스코인 환수" → "XLSX 첨부 메일 보내기" 모달 — 기존 WellnessMailModal과
+ * 동일한 UI/수신자 선택/CC 선택/메일 미리보기/모달 구조(확인→발송→완료)를 그대로 재사용하되,
+ * 제목/본문만 환수용(buildWellnessReclaimMailBody)으로 생성하고 "충전일자" 단일 입력 대신
+ * 대상자별 회수일자(퇴사일+1일) 자동 목록을 읽기 전용으로 보여준다. 기존 WellnessMailModal은
+ * 전혀 수정하지 않는다 — /api/wellness-reclaim-mail(환수 전용)만 호출한다.
+ */
+function WellnessReclaimMailModal({ entries, count, totalAmount, filename, onClose }: {
+  entries: WellnessReclaimEntry[]; count: number; totalAmount: number; filename: string
+  onClose: () => void
+}) {
+  const recoupList = entries.map(e => ({ name: e.emp.name, recoupDate: e.recoupDate }))
+  const defaultSubject = `[헥토이노베이션] 헥토/웰니스 코인 지급(회수) 요청_${formatDotDate(new Date())}`
+
+  const [activeTo, setActiveTo] = useState<string[]>(FR.wellness.map(r => r.email))
+  const [activeCC, setActiveCC] = useState<string[]>(FR.wellnessCC.map(r => r.email))
+  const [extraTo,  setExtraTo]  = useState('')
+  const [extraCC,  setExtraCC]  = useState('')
+  const [subject,    setSubject]    = useState(defaultSubject)
+  const [payDate,    setPayDate]    = useState('')
+  const [attachName, setAttachName] = useState(filename)
+  const [body,      setBody]      = useState(() => buildWellnessReclaimMailBody('', recoupList, count, totalAmount))
+  const [bodyDirty, setBodyDirty] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [sending,   setSending]   = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+  const [success,   setSuccess]   = useState(false)
+
+  // 입금일자가 바뀌면(사용자가 본문을 직접 수정하기 전까지) 본문을 다시 채워준다.
+  // WellnessMailModal과 동일한 "렌더 중 조건부 setState" 패턴.
+  const [prevPayDate, setPrevPayDate] = useState(payDate)
+  if (!bodyDirty && payDate !== prevPayDate) {
+    setPrevPayDate(payDate)
+    setBody(buildWellnessReclaimMailBody(payDate, recoupList, count, totalAmount))
+  }
+
+  const to = [...activeTo, ...extraTo.split(',').map(s => s.trim()).filter(Boolean)]
+  const cc = [...activeCC, ...extraCC.split(',').map(s => s.trim()).filter(Boolean)]
+  const finalFilename = (() => {
+    const n = attachName.trim() || filename
+    return n.toLowerCase().endsWith('.xlsx') ? n : `${n}.xlsx`
+  })()
+
+  function handleProceed() {
+    setError(null)
+    if (to.length === 0) { setError('받는 사람을 최소 1명 이상 입력해주세요.'); return }
+    if (!subject.trim()) { setError('메일 제목을 입력해주세요.'); return }
+    setConfirming(true)
+  }
+
+  async function handleConfirmSend() {
+    if (sending) return
+    setSending(true); setError(null)
+    const err = await sendWellnessReclaimMailApi(to, subject, textToMailHtml(body), entries, finalFilename, cc.length ? cc : undefined)
+    setSending(false)
+    if (err) { setError(err); return }
+    setSuccess(true)
+  }
+
+  if (success) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
+          <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 16 16" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3 3 7-7"/></svg>
+          </div>
+          <p className="text-sm font-semibold text-gray-800">메일이 정상적으로 발송되었습니다.</p>
+          <button onClick={onClose} className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold w-full">확인</button>
+        </div>
+      </div>
+    )
+  }
+
+  if (confirming) {
+    return (
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+          <h3 className="font-bold text-gray-900">웰니스코인 환수 요청 메일을 발송하시겠습니까?</h3>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3 space-y-1.5 text-xs text-gray-600">
+            <p><span className="text-gray-400">수신자(To):</span> {to.join(', ')}</p>
+            {cc.length > 0 && <p><span className="text-gray-400">참조(CC):</span> {cc.join(', ')}</p>}
+            <p><span className="text-gray-400">대상자:</span> {count}명</p>
+            <p><span className="text-gray-400">총 환수금액:</span> {totalAmount.toLocaleString()}원</p>
+            <p><span className="text-gray-400">첨부파일:</span> {finalFilename}</p>
+          </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirming(false)} disabled={sending}
+              className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-40">취소</button>
+            <button onClick={handleConfirmSend} disabled={sending}
+              className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold disabled:opacity-40 transition-colors">
+              {sending ? '발송 중...' : '발송'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between sticky top-0 bg-white">
+          <h3 className="font-bold text-gray-900">웰니스코인 환수 요청 메일 보내기</h3>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">✕</button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-xs text-gray-500">대상자 {count}명 · 총 환수금액 {totalAmount.toLocaleString()}원</p>
+
+          <RcpChips items={FR.wellness} active={activeTo} onToggle={e => setActiveTo(p => p.includes(e) ? p.filter(x => x !== e) : [...p, e])} label="받는 사람(To)" />
+          <input type="text" value={extraTo} onChange={e => setExtraTo(e.target.value)}
+            placeholder="추가 To (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+
+          <RcpChips items={FR.wellnessCC} active={activeCC} onToggle={e => setActiveCC(p => p.includes(e) ? p.filter(x => x !== e) : [...p, e])} label="참조(CC, 선택)" />
+          <input type="text" value={extraCC} onChange={e => setExtraCC(e.target.value)}
+            placeholder="추가 CC (쉼표 구분)"
+            className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 placeholder:text-gray-300" />
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">제목</p>
+            <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">입금일자</p>
+            <input type="date" value={payDate} onChange={e => setPayDate(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">충전/회수일자 (자동 계산 — 퇴사일 + 1일)</p>
+            <div className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5 max-h-28 overflow-y-auto">
+              {recoupList.length === 0
+                ? <p className="text-gray-400">대상자 없음</p>
+                : recoupList.map((r, i) => <p key={i}>{i + 1}. {r.name}_{formatMonthDayLabel(r.recoupDate)}</p>)}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">본문</p>
+            <textarea value={body} onChange={e => { setBody(e.target.value); setBodyDirty(true) }} rows={12}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400 font-mono leading-relaxed" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-400 mb-1.5">첨부파일명</p>
+            <input type="text" value={attachName} onChange={e => setAttachName(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-orange-400" />
+          </div>
+
+          {error && <p className="text-xs text-red-500">{error}</p>}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+          <button onClick={onClose} className="text-sm px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">취소</button>
+          <button onClick={handleProceed}
+            className="text-sm px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-semibold transition-colors">
+            메일 보내기
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function EmptyState({ label }: { label: string }) {
   return (
     <div className="bg-white rounded-xl border border-dashed border-gray-200 py-12 flex items-center justify-center">
@@ -2380,6 +2631,15 @@ export default function HRDashboard() {
   const [wellnessMailModal, setWellnessMailModal] = useState<{ entries: WellnessMailEntryInput[]; sentKeys: string[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
+  // 웰니스코인 환수 — 기존 웰니스코인 지급(위 상태들)과 완전히 분리된 별도 업로드/목록/메일 상태.
+  // 지급 대상/금액/메일/다운로드 로직에는 전혀 영향을 주지 않는다.
+  const [wellnessSubTab,           setWellnessSubTab]           = useState<'pay' | 'reclaim'>('pay')
+  const [wellnessReclaimRaw,       setWellnessReclaimRaw]       = useState<WellnessReclaimRawRow[]>([])
+  const [wellnessReclaimFileName,  setWellnessReclaimFileName]  = useState<string | null>(null)
+  const [wellnessReclaimUploadedAt, setWellnessReclaimUploadedAt] = useState<string | null>(null)
+  const [wellnessReclaimUploading, setWellnessReclaimUploading] = useState(false)
+  const [wellnessReclaimError,     setWellnessReclaimError]     = useState<string | null>(null)
+  const [wellnessReclaimMailModal, setWellnessReclaimMailModal] = useState<{ entries: WellnessReclaimEntry[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
   const [stageDoneAt,    setStageDoneAt]    = useState<Record<string, string>>({})
   const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
@@ -2554,6 +2814,10 @@ export default function HRDashboard() {
     ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
+  // 웰니스코인 환수 — 업로드된 환수 원본(wellnessReclaimRaw)을 employees와 이름으로 매칭해
+  // 화면에 표시할 대상자를 매번 다시 계산한다. allWellness(지급)와는 완전히 분리된 별도 목록.
+  const { included: wellnessReclaimEntries, excluded: wellnessReclaimExcluded } =
+    buildWellnessReclaimEntries(wellnessReclaimRaw, employees)
 
   // notify tab: sub-tabs handle type separation, so skip typeF here — 단, 상단 검색창의
   // "전적" 필터만은 예외로 적용한다. 하이어사이드 전적(join_reason==='전적')과 퇴사사이드
@@ -2722,13 +2986,14 @@ export default function HRDashboard() {
 
   async function fetchAllData() {
     setLoading(true); setError(null)
-    const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes] = await Promise.all([
+    const [empRes, taskRes, notifRes, pointRes, excelRes, sentMailRes, reclaimRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
       supabase.from('onboarding_tasks').select('employee_id,stage_id,is_done,mail_sent,done_at'),
       supabase.from('notifications').select('employee_id,notification_type,mail_sent'),
       supabase.from('point_requests').select('employee_id,employee_type,point_type,mail_sent'),
       supabase.from('cafe_excel_data').select('file_name,data').eq('id', 'singleton').maybeSingle(),
       supabase.from('scheduled_mails').select('subject,sent_at').eq('status', 'sent').like('subject', '[온보딩 알림]%'),
+      supabase.from('wellness_coin_reclaim_upload').select('file_name,data,uploaded_at').eq('id', 'singleton').maybeSingle(),
     ])
     if (empRes.error) { setError(empRes.error.message); setLoading(false); return }
     const empData = empRes.data ?? []
@@ -2766,6 +3031,11 @@ export default function HRDashboard() {
       setCafeExcel(excelRes.data.data as Record<number, ExcelSheetData>)
       setCafeExcelFileName(excelRes.data.file_name ?? null)
     }
+    if (reclaimRes.data) {
+      setWellnessReclaimRaw((reclaimRes.data.data as WellnessReclaimRawRow[] | null) ?? [])
+      setWellnessReclaimFileName(reclaimRes.data.file_name ?? null)
+      setWellnessReclaimUploadedAt(reclaimRes.data.uploaded_at ?? null)
+    }
     setStageDone(newDone); setStageDoneAt(newDoneAt); setMailSent(newMail); setOnboardSentAt(newSentAt); setLoading(false)
   }
 
@@ -2776,6 +3046,36 @@ export default function HRDashboard() {
       id: 'singleton', file_name: fileName, data, uploaded_at: new Date().toISOString(),
     }, { onConflict: 'id' })
     if (error) setError('엑셀 저장 실패: ' + error.message)
+  }
+
+  // 웰니스코인 환수 — 헥토에서 받는 웰니스 관련 엑셀을 업로드해 "환수" 금액이 있는 직원만
+  // 추출한다. 지급(allWellness/handleCafeExcelUpload 등)과는 완전히 분리된 별도 저장소
+  // (wellness_coin_reclaim_upload)를 쓰며, 업로드해도 기존 지급 대상/금액/메일/다운로드에는
+  // 전혀 영향을 주지 않는다.
+  async function handleWellnessReclaimUpload(file: File) {
+    setWellnessReclaimUploading(true); setWellnessReclaimError(null)
+    try {
+      const { rows } = parseWellnessReclaimExcelFile(await file.arrayBuffer())
+      const nowIso = new Date().toISOString()
+      setWellnessReclaimRaw(rows)
+      setWellnessReclaimFileName(file.name)
+      setWellnessReclaimUploadedAt(nowIso)
+      const { error } = await supabase.from('wellness_coin_reclaim_upload').upsert({
+        id: 'singleton', file_name: file.name, data: rows, uploaded_at: nowIso, updated_at: nowIso,
+      }, { onConflict: 'id' })
+      if (error) setWellnessReclaimError('엑셀 저장 실패: ' + error.message)
+    } catch (err) {
+      setWellnessReclaimError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
+    } finally {
+      setWellnessReclaimUploading(false)
+    }
+  }
+  async function handleWellnessReclaimDelete() {
+    setWellnessReclaimRaw([]); setWellnessReclaimFileName(null); setWellnessReclaimUploadedAt(null)
+    const { error } = await supabase.from('wellness_coin_reclaim_upload').upsert({
+      id: 'singleton', file_name: null, data: null, uploaded_at: null, updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' })
+    if (error) setWellnessReclaimError('삭제 실패: ' + error.message)
   }
 
   async function handleSubmit() {
@@ -2913,6 +3213,16 @@ export default function HRDashboard() {
       entries, sentKeys, count: entries.length,
       totalAmount: sumWellnessFinalAmount(rows),
       filename: wellnessMailAttachmentFilename(new Date()),
+    })
+  }
+  // 웰니스코인 환수 "XLSX 첨부 메일 보내기" — 엑셀 다운로드와 동일한 buildWellnessReclaimExcelRows
+  // 결과를 그대로 사용(화면 체크 대상 = 엑셀 다운로드 대상 = 메일 첨부 엑셀 대상 일치 원칙 유지).
+  function openWellnessReclaimMailModal(entries: WellnessReclaimEntry[]) {
+    if (entries.length === 0) { alert('메일로 보낼 환수 대상자를 선택해주세요.'); return }
+    setWellnessReclaimMailModal({
+      entries, count: entries.length,
+      totalAmount: sumWellnessReclaimAmount(entries),
+      filename: wellnessReclaimMailAttachmentFilename(new Date()),
     })
   }
   async function handleWellnessCoinDownload() {
@@ -3538,6 +3848,13 @@ export default function HRDashboard() {
           onClose={() => setWellnessMailModal(null)} />
       )}
 
+      {wellnessReclaimMailModal && (
+        <WellnessReclaimMailModal
+          entries={wellnessReclaimMailModal.entries} count={wellnessReclaimMailModal.count}
+          totalAmount={wellnessReclaimMailModal.totalAmount} filename={wellnessReclaimMailModal.filename}
+          onClose={() => setWellnessReclaimMailModal(null)} />
+      )}
+
       {/* OTP 추가 등록 모달 */}
       {otpEnrollOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -4052,8 +4369,129 @@ export default function HRDashboard() {
                     onSelect={checked => toggleSelect(entry.mailKey, checked)} />
                 )
               }
+              const selReclaim = wellnessReclaimEntries.filter(e => selectedKeys.has(e.mailKey))
               return (
               <div className="space-y-3">
+                {/* 웰니스코인 지급 / 환수 — 완전히 분리된 두 하위 목록(선택·메일 발송 흐름은 재사용) */}
+                <div className="flex items-center gap-1 border-b border-gray-100 -mx-4 sm:-mx-5 px-4 sm:px-5">
+                  <button onClick={() => setWellnessSubTab('pay')}
+                    className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${wellnessSubTab === 'pay' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                    웰니스코인 지급
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'pay' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{allWellness.length}</span>
+                  </button>
+                  <button onClick={() => setWellnessSubTab('reclaim')}
+                    className={`flex items-center gap-1 px-3 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap ${wellnessSubTab === 'reclaim' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                    웰니스코인 환수
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimEntries.length}</span>
+                  </button>
+                </div>
+                {wellnessSubTab === 'reclaim' ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {wellnessReclaimFileName && (
+                        <span className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">
+                          ✓ {wellnessReclaimFileName}{wellnessReclaimUploadedAt ? ` (${new Date(wellnessReclaimUploadedAt).toLocaleString('ko-KR')})` : ''}
+                        </span>
+                      )}
+                      <HectoUploadButton label={wellnessReclaimUploading ? '파싱 중...' : '환수 대상 엑셀 업로드'} uploading={wellnessReclaimUploading} onFile={handleWellnessReclaimUpload} />
+                      {wellnessReclaimFileName && (
+                        <button onClick={handleWellnessReclaimDelete}
+                          className="text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded-lg transition-colors">
+                          파일 삭제
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      환수 대상 {wellnessReclaimEntries.length}명 · 총 환수금액 {sumWellnessReclaimAmount(wellnessReclaimEntries).toLocaleString()}원
+                    </p>
+                  </div>
+                  {wellnessReclaimError && <p className="text-xs text-red-500">{wellnessReclaimError}</p>}
+                  {wellnessReclaimExcluded.length > 0 && (
+                    <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      제외됨({wellnessReclaimExcluded.length}건): {wellnessReclaimExcluded.map(e => `${e.name}(${e.reason})`).join(', ')}
+                    </p>
+                  )}
+                  {wellnessReclaimEntries.length === 0 ? (
+                    <EmptyState label="업로드된 엑셀에 환수 대상(환수 금액이 있는 직원)이 없습니다." />
+                  ) : (
+                    <>
+                      <BulkControls
+                        total={wellnessReclaimEntries.length}
+                        selectedCount={selReclaim.length}
+                        onSelectAll={() => selectAll(wellnessReclaimEntries.map(e => e.mailKey))}
+                        onDeselectAll={deselectAll}
+                        bulkSending={bulkSending} bulkResult={bulkResult}
+                        previewHtml={selReclaim.length > 0 ? makeBulkWellnessReclaimHtml(selReclaim) : ''}
+                        defaultRecipients={FR.wellness}
+                        defaultCC={FR.wellnessCC}
+                        onBulkSend={(to, cc) => handleBulkSend(
+                          to,
+                          `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
+                          makeBulkWellnessReclaimHtml(selReclaim),
+                          selReclaim.map(e => e.mailKey),
+                          cc
+                        )} />
+                      <div className="flex justify-end gap-2 mt-1">
+                        <button
+                          onClick={() => {
+                            if (selReclaim.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+                            const rows = buildWellnessReclaimExcelRows(selReclaim)
+                            const today = new Date().toISOString().slice(0, 10)
+                            exportToExcel(rows, `웰니스코인_환수내역_${today}.xlsx`)
+                          }}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
+                        </button>
+                        <button
+                          onClick={() => openWellnessReclaimMailModal(selReclaim)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
+                          </svg>
+                          XLSX 첨부 메일 보내기{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
+                        </button>
+                      </div>
+                      <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-50">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap"></th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성명</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">구분</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">회수일자</th>
+                              <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">환수금액</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {wellnessReclaimEntries.map(entry => (
+                              <tr key={entry.mailKey} className="border-t border-gray-100 hover:bg-gray-50">
+                                <td className="px-3 py-2">
+                                  <input type="checkbox" checked={selectedKeys.has(entry.mailKey)}
+                                    onChange={e => toggleSelect(entry.mailKey, e.target.checked)}
+                                    className="w-4 h-4 accent-orange-500 cursor-pointer" />
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-700">{entry.emp.name}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{empLabel(entry.emp)}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.join_date ?? '-'}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.exit_date ?? '-'}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.recoupDate}</td>
+                                <td className="px-3 py-2 whitespace-nowrap text-right font-semibold text-red-600">{entry.amount.toLocaleString()}원</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+                ) : (
+                <>
                 <p className="text-xs text-gray-400">{wellnessVisibleAll.length}명{hasFilter || wellnessGroupF !== '전체' ? ' (필터 적용)' : ''}</p>
                 <div className="flex items-center gap-2 flex-wrap">
                   <PointGroupChips value={wellnessGroupF} onChange={setWellnessGroupF} counts={wellnessGroupCounts} />
@@ -4150,6 +4588,8 @@ export default function HRDashboard() {
                         </div>
                       )} />
                   </AccordionSection>
+                )}
+                </>
                 )}
               </div>
               )
