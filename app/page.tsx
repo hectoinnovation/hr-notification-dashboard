@@ -473,13 +473,6 @@ function textToMailHtml(text: string): string {
 }
 // wellnessMailAttachmentFilename은 @/lib/wellness-mail에서 가져와 사용
 
-/** 'YYYY.MM.DD' (환수 메일 제목의 "충전(회수)요청일"에 사용) */
-function formatDotDate(d: Date): string {
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${yyyy}.${mm}.${dd}`
-}
 /**
  * 웰니스코인 환수 요청 메일 기본 본문 — 지급 메일(buildWellnessMailBody)과 동일한 구조를
  * 재사용하되, 거래구분/구분상세를 환수용으로 바꾸고 "충전/회수일자"는 입력 필드가 아니라
@@ -2382,7 +2375,8 @@ function WellnessReclaimMailModal({ entries, count, totalAmount, filename, onClo
   onClose: () => void
 }) {
   const recoupList = entries.map(e => ({ name: e.emp.name, recoupDate: e.recoupDate }))
-  const defaultSubject = `[헥토이노베이션] 헥토/웰니스 코인 지급(회수) 요청_${formatDotDate(new Date())}`
+  // 요청 사양: 날짜를 붙이지 않는 고정 문구. 사용자가 모달에서 직접 수정하는 건 그대로 가능.
+  const defaultSubject = '[헥토이노베이션] 웰니스 코인 환수 요청'
 
   const [activeTo, setActiveTo] = useState<string[]>(FR.wellness.map(r => r.email))
   const [activeCC, setActiveCC] = useState<string[]>(FR.wellnessCC.map(r => r.email))
@@ -2898,9 +2892,12 @@ export default function HRDashboard() {
     ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_cafe_${e.id}`   })),
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_cafe_${e.id}`   })),
   ]
+  // 웰니스코인 지급 탭은 퇴사자(departures, status==='resigned')를 포함하지 않는다(요청
+  // 사양) — 퇴사자는 이제 웰니스코인 환수 탭에서만 다룬다. 입사자/전적/휴직복귀자(newHires)와
+  // 휴직자(onLeave, status는 여전히 'active')는 지금까지와 동일하게 그대로 둔다 — 지급
+  // 금액 계산/메일/엑셀 로직(buildWellnessExcelRows 등)은 전혀 건드리지 않았다.
   const allWellness: PointEntry[] = [
     ...newHires.map(e  => ({ emp: e, empType: 'hire'  as const, mailKey: `hire_wellness_${e.id}`  })),
-    ...departures.map(e => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
     ...onLeave.map(e   => ({ emp: e, empType: 'leave' as const, mailKey: `leave_wellness_${e.id}` })),
   ]
   // 웰니스코인 환수 — 지급 탭(allWellness)과 똑같이 "퇴사자 전체"를 화면 목록으로 구성한다.
@@ -4622,12 +4619,15 @@ export default function HRDashboard() {
                   </AccordionSection>
                 )}
                 {showWellnessLeave && (
-                  <AccordionSection title="퇴사/휴직자" count={wellnessLeaveGroup.length} color="purple"
+                  // 퇴사자(departures)는 allWellness 구성에서 이미 제외했으므로(요청 사양) 이
+                  // 섹션은 이제 휴직자만 포함한다 — cafe 탭의 동일한 이름의 AccordionSection과는
+                  // 완전히 별개 JSX라 라벨을 바꿔도 cafe 쪽에는 전혀 영향 없다.
+                  <AccordionSection title="휴직자" count={wellnessLeaveGroup.length} color="purple"
                     collapsed={wellnessSectCollapsed.has('leave')}
                     onToggle={() => setWellnessSectCollapsed(p => toggleSetMember(p, 'leave'))}
-                    hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 퇴사자가 없습니다'}>
+                    hasFilter={hasFilter} emptyLabel={hasFilter ? '검색 결과가 없습니다' : '등록된 휴직자가 없습니다'}>
                     <MonthGroupList groups={groupByMonth(wellnessLeaveGroup, pointEntryDate)} sectionKey="wellness:leave"
-                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 퇴사자가 없습니다"
+                      toggledKeys={monthToggled} onToggle={toggleMonth} forceExpandAll={searchActive} emptyLabel="등록된 휴직자가 없습니다"
                       renderItems={(items: PointEntry[]) => (
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                           {items.map(renderWellnessCard)}
