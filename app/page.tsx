@@ -4412,83 +4412,88 @@ export default function HRDashboard() {
                       제외됨({wellnessReclaimExcluded.length}건): {wellnessReclaimExcluded.map(e => `${e.name}(${e.reason})`).join(', ')}
                     </p>
                   )}
-                  {wellnessReclaimEntries.length === 0 ? (
-                    <EmptyState label="업로드된 엑셀에 환수 대상(환수 금액이 있는 직원)이 없습니다." />
-                  ) : (
-                    <>
-                      <BulkControls
-                        total={wellnessReclaimEntries.length}
-                        selectedCount={selReclaim.length}
-                        onSelectAll={() => selectAll(wellnessReclaimEntries.map(e => e.mailKey))}
-                        onDeselectAll={deselectAll}
-                        bulkSending={bulkSending} bulkResult={bulkResult}
-                        previewHtml={selReclaim.length > 0 ? makeBulkWellnessReclaimHtml(selReclaim) : ''}
-                        defaultRecipients={FR.wellness}
-                        defaultCC={FR.wellnessCC}
-                        onBulkSend={(to, cc) => handleBulkSend(
-                          to,
-                          `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
-                          makeBulkWellnessReclaimHtml(selReclaim),
-                          selReclaim.map(e => e.mailKey),
-                          cc
-                        )} />
-                      <div className="flex justify-end gap-2 mt-1">
-                        <button
-                          onClick={() => {
-                            if (selReclaim.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
-                            const rows = buildWellnessReclaimExcelRows(selReclaim)
-                            const today = new Date().toISOString().slice(0, 10)
-                            exportToExcel(rows, `웰니스코인_환수내역_${today}.xlsx`)
-                          }}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                          </svg>
-                          웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
-                        </button>
-                        <button
-                          onClick={() => openWellnessReclaimMailModal(selReclaim)}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
-                          </svg>
-                          XLSX 첨부 메일 보내기{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
-                        </button>
-                      </div>
-                      <div className="overflow-x-auto border border-gray-200 rounded-xl">
-                        <table className="w-full text-xs">
-                          <thead className="bg-gray-50">
-                            <tr>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap"></th>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성명</th>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">구분</th>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
-                              <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">회수일자</th>
-                              <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">환수금액</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {wellnessReclaimEntries.map(entry => (
-                              <tr key={entry.mailKey} className="border-t border-gray-100 hover:bg-gray-50">
-                                <td className="px-3 py-2">
-                                  <input type="checkbox" checked={selectedKeys.has(entry.mailKey)}
-                                    onChange={e => toggleSelect(entry.mailKey, e.target.checked)}
-                                    className="w-4 h-4 accent-orange-500 cursor-pointer" />
-                                </td>
-                                <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-700">{entry.emp.name}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{empLabel(entry.emp)}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.join_date ?? '-'}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.exit_date ?? '-'}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.recoupDate}</td>
-                                <td className="px-3 py-2 whitespace-nowrap text-right font-semibold text-red-600">{entry.amount.toLocaleString()}원</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </>
+                  {wellnessReclaimEntries.length === 0 && (
+                    <p className="text-xs text-gray-400 bg-gray-50 border border-dashed border-gray-200 rounded-lg px-3 py-2">
+                      업로드된 엑셀에 환수 대상(환수 금액이 있는 직원)이 아직 없습니다. 위 &quot;환수 대상 엑셀 업로드&quot;로 파일을 올려주세요.
+                      대상자가 없어도 아래 메일 발송 UI는 항상 표시됩니다(선택 가능한 대상자가 없으면 버튼 클릭 시 안내 메시지가 뜹니다).
+                    </p>
                   )}
+                  {/* 지급 탭과 동일하게, 대상자가 0명이어도 체크박스/선택 인원/통합 메일 발송/XLSX 첨부
+                      메일 보내기/엑셀 다운로드 UI 자체는 항상 보이도록 EmptyState로 전체를 가리지 않는다.
+                      대상자가 없을 때 클릭하면 각 버튼의 기존 alert 가드가 그대로 동작한다. */}
+                  <BulkControls
+                    total={wellnessReclaimEntries.length}
+                    selectedCount={selReclaim.length}
+                    onSelectAll={() => selectAll(wellnessReclaimEntries.map(e => e.mailKey))}
+                    onDeselectAll={deselectAll}
+                    bulkSending={bulkSending} bulkResult={bulkResult}
+                    previewHtml={selReclaim.length > 0 ? makeBulkWellnessReclaimHtml(selReclaim) : ''}
+                    defaultRecipients={FR.wellness}
+                    defaultCC={FR.wellnessCC}
+                    onBulkSend={(to, cc) => handleBulkSend(
+                      to,
+                      `[헥토이노베이션] 웰니스포인트 환수 요청의 건 (${selReclaim.length}명)`,
+                      makeBulkWellnessReclaimHtml(selReclaim),
+                      selReclaim.map(e => e.mailKey),
+                      cc
+                    )} />
+                  <div className="flex justify-end gap-2 mt-1">
+                    <button
+                      onClick={() => {
+                        if (selReclaim.length === 0) { alert('다운로드할 대상자를 선택해주세요.'); return }
+                        const rows = buildWellnessReclaimExcelRows(selReclaim)
+                        const today = new Date().toISOString().slice(0, 10)
+                        exportToExcel(rows, `웰니스코인_환수내역_${today}.xlsx`)
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      웰니스코인 환수 엑셀 다운로드{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
+                    </button>
+                    <button
+                      onClick={() => openWellnessReclaimMailModal(selReclaim)}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3 py-1.5 rounded-lg transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l9 6 9-6M3 8v10a2 2 0 002 2h14a2 2 0 002-2V8M3 8a2 2 0 012-2h14a2 2 0 012 2" />
+                      </svg>
+                      XLSX 첨부 메일 보내기{selReclaim.length > 0 ? ` (${selReclaim.length}명 선택)` : ' (대상자 선택 필요)'}
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto border border-gray-200 rounded-xl">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap"></th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">성명</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">구분</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">입사일</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">퇴사일</th>
+                          <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">회수일자</th>
+                          <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">환수금액</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {wellnessReclaimEntries.length === 0 ? (
+                          <tr><td colSpan={7} className="px-3 py-6 text-center text-gray-400">환수 대상자가 없습니다.</td></tr>
+                        ) : wellnessReclaimEntries.map(entry => (
+                          <tr key={entry.mailKey} className="border-t border-gray-100 hover:bg-gray-50">
+                            <td className="px-3 py-2">
+                              <input type="checkbox" checked={selectedKeys.has(entry.mailKey)}
+                                onChange={e => toggleSelect(entry.mailKey, e.target.checked)}
+                                className="w-4 h-4 accent-orange-500 cursor-pointer" />
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap font-medium text-gray-700">{entry.emp.name}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{empLabel(entry.emp)}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.join_date ?? '-'}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.emp.exit_date ?? '-'}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-gray-500">{entry.recoupDate}</td>
+                            <td className="px-3 py-2 whitespace-nowrap text-right font-semibold text-red-600">{entry.amount.toLocaleString()}원</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
                 ) : (
                 <>
