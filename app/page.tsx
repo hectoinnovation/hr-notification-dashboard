@@ -1127,19 +1127,24 @@ function MailPanel({ fixedRecipients, fixedCC = [], defaultSubject, mailSent, ht
 }
 
 // ─── 공통 카드 헤더 ───────────────────────────────────────────────────────────
-function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete, selected, onSelect }: {
+function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onToggle, onEdit, onDelete, selected, onSelect, checkboxDisabled }: {
   emp: Employee; typeLabel: string; date: string; dateLabel: string
   mailSent: boolean; expanded: boolean
   onToggle: () => void; onEdit?: () => void; onDelete?: () => void
   selected?: boolean; onSelect?: (checked: boolean) => void
+  // true면 체크박스를 숨기지 않고 그대로 보여주되 비활성화한다(웰니스코인 환수 탭 전용 —
+  // 환수금액이 없는 퇴사자도 체크박스 자체는 보이되 선택만 못 하게 해야 하는 요구사항).
+  // 생략 시(기존 카페/웰니스 지급 PointCard 호출부) 동작은 전혀 바뀌지 않는다.
+  checkboxDisabled?: boolean
 }) {
   const orgParts = [emp.department, emp.division, emp.team].filter(Boolean)
   return (
     <div className="flex items-stretch">
       {onSelect !== undefined && (
-        <label className="flex items-center justify-center px-3 border-r border-gray-100 bg-gray-50/50 flex-shrink-0 cursor-pointer" onClick={e => e.stopPropagation()}>
-          <input type="checkbox" checked={selected ?? false} onChange={e => onSelect(e.target.checked)}
-            className="w-4 h-4 accent-orange-500 cursor-pointer" />
+        <label className={`flex items-center justify-center px-3 border-r border-gray-100 bg-gray-50/50 flex-shrink-0 ${checkboxDisabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}
+          onClick={e => e.stopPropagation()}>
+          <input type="checkbox" checked={selected ?? false} disabled={checkboxDisabled} onChange={e => onSelect(e.target.checked)}
+            className={`w-4 h-4 accent-orange-500 ${checkboxDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`} />
         </label>
       )}
       <div
@@ -1590,7 +1595,7 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <CardHeader emp={emp} typeLabel={typeLabel} date={emp.exit_date ?? '-'} dateLabel="퇴사일"
         mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
-        selected={reclaimable ? selected : undefined} onSelect={reclaimable ? onSelect : undefined} />
+        selected={selected} onSelect={onSelect} checkboxDisabled={!reclaimable} />
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
