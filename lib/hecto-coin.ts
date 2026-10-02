@@ -434,6 +434,19 @@ export type HectoReferenceComparisonSummary = {
  * 처리까지 끝난, 화면에 실제로 보이는 목록 그대로)를 이름 기준으로 비교한다. 순수
  * 비교 함수라 아무 것도 저장/변경하지 않는다 — computeHectoCoinEntries 결과와
  * hecto_reference_rows를 그대로 입력받아 매번 새로 계산한다.
+ *
+ * 매칭 키는 반드시 e.rawName(업로드 원본 이름, 영문 제거 전)을 쓴다 — e.name(정규화된
+ * 이름, 영문 제거됨)을 쓰면 두 가지 실제 버그가 생긴다:
+ *   1) 헥토 기준 엑셀 쪽 이름은 원본 그대로(앞뒤 공백만 제거) 저장되므로, 만약 헥토
+ *      파일도 "황지현B" 같은 동명이인 구분용 영문 접미사를 그대로 쓰면 대시보드 쪽
+ *      "황지현"(접미사 제거됨)과 절대 일치하지 않아 같은 사람이 dashboard_only +
+ *      hecto_only로 쪼개져 보인다.
+ *   2) 접미사가 다른 두 명(예: "이지윤A"/"이지윤B")이 같은 정규화 이름으로 겹치면
+ *      e.name을 키로 쓰는 Map이 한쪽을 조용히 덮어써 버려, 전혀 다른 두 사람의
+ *      payCap이 뒤섞여 엉뚱한 "금액 불일치"가 나올 수 있다.
+ * rawName은 포인트 파일 원본 이름이든 employees UNION 경로든 항상 영문 접미사가
+ * 보존된 원본이라(computeHectoCoinEntries 참고) 두 버그 모두 이 키 하나로 해결된다.
+ * 기존 정산 계산(computeHectoCoinEntries/buildEntry) 자체는 전혀 건드리지 않았다.
  */
 export function compareHectoReference(
   settlementMonth: string,
@@ -449,7 +462,7 @@ export function compareHectoReference(
     if (!byName.has(name)) byName.set(name, [])
     byName.get(name)!.push(r)
   }
-  const dashboardByName = new Map(dashboardEntries.map(e => [e.name, e]))
+  const dashboardByName = new Map(dashboardEntries.map(e => [e.rawName.trim(), e]))
   const allNames = new Set<string>([...byName.keys(), ...dashboardByName.keys()])
 
   const rows: HectoReferenceComparisonRow[] = []
