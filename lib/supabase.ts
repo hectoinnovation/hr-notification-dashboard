@@ -14,6 +14,7 @@ export type Employee = {
   join_date?: string
   leave_date?: string
   exit_date?: string
+  return_date?: string | null  // 퇴사자 전용: 같은 정산월 안의 휴직복귀일(퇴사 전 복귀한 경우에만 값이 있음) — 헥토코인 인정 시작일로 쓰인다
   department?: string   // 부서
   division?: string     // 실
   team?: string         // 팀

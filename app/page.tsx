@@ -69,7 +69,7 @@ const FR = {
 }
 
 interface EmployeeForm {
-  name: string; join_date: string; leave_date: string; exit_date: string
+  name: string; join_date: string; leave_date: string; exit_date: string; return_date: string
   department: string; division: string; team: string; leader: string
   position: string; phone: string; customer_id: string
   join_reason: string; status: 'active' | 'resigned'
@@ -77,7 +77,7 @@ interface EmployeeForm {
   is_transfer: boolean  // 퇴사자 전적 여부(일반 퇴사=false/전적 퇴사=true) — status/join_reason과 별개
 }
 const EMPTY_FORM: EmployeeForm = {
-  name: '', join_date: '', leave_date: '', exit_date: '',
+  name: '', join_date: '', leave_date: '', exit_date: '', return_date: '',
   department: '', division: '', team: '', leader: '',
   position: '', phone: '', customer_id: '',
   join_reason: '입사', status: 'active',
@@ -1189,10 +1189,14 @@ function CardHeader({ emp, typeLabel, date, dateLabel, mailSent, expanded, onTog
               {emp.is_transfer && (
                 <span className="text-xs font-semibold px-2 py-0.5 rounded border flex-shrink-0 bg-amber-50 text-amber-700 border-amber-200">전적</span>
               )}
+              {emp.status === 'resigned' && emp.return_date && (
+                <span className="text-xs font-semibold px-2 py-0.5 rounded border flex-shrink-0 bg-emerald-50 text-emerald-700 border-emerald-200">휴직복귀</span>
+              )}
               <SentBadge sent={mailSent} />
             </div>
             <p className="text-xs text-gray-400 mt-0.5 truncate">
               {dateLabel} {date}
+              {emp.status === 'resigned' && emp.return_date && ` · 휴직복귀일 ${emp.return_date}`}
               {emp.position && ` · ${emp.position}`}
               {orgParts.length > 0 && ` · ${orgParts.join(' · ')}`}
             </p>
@@ -1348,6 +1352,7 @@ function NotifCard({ emp, type, mailSent, onSend, onEdit, onDelete, selected, on
           <div className="space-y-0">
             <InfoRow label={dateLabel}><span className="text-xs font-semibold text-gray-700">{date}</span></InfoRow>
             {type === 'leave' && !isOnLeave && <InfoRow label="마지막 출근일"><span className="text-xs font-semibold text-gray-700">{emp.leave_date ?? '-'}</span></InfoRow>}
+            {emp.status === 'resigned' && emp.return_date && <InfoRow label="휴직복귀일"><span className="text-xs font-semibold text-gray-700">{emp.return_date}</span></InfoRow>}
             <InfoRow label="구분"><TypeBadge type={typeLabel} /></InfoRow>
             {emp.position   && <InfoRow label="직책/직급"><span className="text-xs text-gray-700">{emp.position}</span></InfoRow>}
             {emp.department && <InfoRow label="부서"><span className="text-xs text-gray-700">{emp.department}</span></InfoRow>}
@@ -2034,6 +2039,10 @@ function EmployeeModal({ show, isEdit, form, submitting, onChange, onToggle, onS
                 <FormField label="마지막 출근일" type="date" value={form.leave_date} onChange={v => onChange('leave_date', v)} />
                 <FormField label="퇴사일" type="date" value={form.exit_date} onChange={v => onChange('exit_date', v)} />
               </div>
+              <FormField label="휴직복귀일 (선택)" type="date" value={form.return_date} onChange={v => onChange('return_date', v)} />
+              <p className="text-xs text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
+                퇴사 전에 휴직복귀한 경우에만 입력하세요. 입력하면 헥토코인 인정 기간이 휴직복귀일~퇴사일로 계산됩니다(같은 날 복귀·퇴사면 1일 인정).
+              </p>
               <div>
                 <label className="text-xs font-semibold text-gray-500 block mb-1.5">퇴사 구분</label>
                 <select value={form.is_transfer ? '전적' : '일반'} onChange={e => onToggle('is_transfer', e.target.value === '전적')}
@@ -3170,6 +3179,8 @@ export default function HRDashboard() {
     const payload = {
       name: form.name.trim(), join_date: form.join_date || null, leave_date: form.leave_date || null,
       exit_date: form.exit_date || null,
+      // 휴직복귀일은 퇴사자에게만 의미가 있으므로 퇴사 상태일 때만 저장한다(재직자 저장 경로는 이 컬럼을 건드리지 않음)
+      ...(form.status === 'resigned' ? { return_date: form.return_date || null } : {}),
       department: form.department || null, division: form.division || null, team: form.team || null,
       position: form.position || null, leader: form.leader || null,
       phone: form.phone || null, customer_id: form.customer_id.trim() || null,
@@ -3810,7 +3821,7 @@ export default function HRDashboard() {
   function openEdit(emp: Employee) {
     setEditTarget(emp)
     setForm({ name: emp.name, join_date: emp.join_date ?? '', leave_date: emp.leave_date ?? '',
-      exit_date: emp.exit_date ?? '',
+      exit_date: emp.exit_date ?? '', return_date: emp.return_date ?? '',
       department: emp.department ?? '', division: emp.division ?? '', team: emp.team ?? '',
       position: emp.position ?? '', leader: emp.leader ?? '',
       phone: emp.phone ?? '', customer_id: emp.customer_id ?? '',

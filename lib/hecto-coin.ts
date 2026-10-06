@@ -587,6 +587,11 @@ export type HectoCoinDbCalc = {
  * "정산월 이전부터 이어진 휴직 후 이번 달 복귀"와 DB상 구분이 불가능하다 —
  * 이 경우도 그냥 복귀일 기준으로 계산되며(가장 흔한 케이스에서는 정확), 상태 라벨에
  * "휴직복귀"로만 표시되어 담당자가 필요 시 육안으로 확인할 수 있게 한다.
+ *
+ * 예외: 퇴사자에게 return_date(같은 정산월 안의 휴직복귀일)가 있으면 한 행 안에서
+ * 휴직복귀 + 퇴사 두 이벤트를 함께 가진 것으로 보고, 인정 시작일 = return_date,
+ * 인정 종료일 = exit_date로 계산한다(예: 복귀·퇴사 모두 10/31이면 1일만 인정).
+ * return_date가 없는 퇴사자는 기존처럼 입사일~퇴사일로 계산한다.
  */
 export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string): HectoCoinDbCalc {
   const { start: monthStart, end: monthEnd, dim } = ymdMonthBounds(settlementMonth)
@@ -594,6 +599,7 @@ export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string
   const isReturnee = emp.status === 'active' && emp.join_reason === '휴직복귀'
   const isOnLeave = emp.status === 'active' && emp.join_reason === '휴직'
   const isResigned = emp.status === 'resigned'
+  const resignedReturnDate = isResigned && emp.return_date ? emp.return_date : null
 
   const inMonth = (d: string | null | undefined): boolean => !!d && d >= monthStart && d <= monthEnd
 
@@ -602,14 +608,16 @@ export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string
   // 완전히 별개다. 예: 7월에 입사해 9월까지 계속 재직 중이면 일할계산은 정상재직(30일)으로
   // 정확히 동작하지만, joinedMid는 false이므로 9월 화면의 "입사일" 칸에는 7월 날짜를
   // 보여주지 않고 '-'로 비워둔다(표시 전용 게이팅 — 계산 결과에는 영향 없음).
-  const joinedMid   = !isReturnee && inMonth(emp.join_date)
-  const returnedMid = isReturnee && inMonth(emp.join_date)
+  const joinedMid   = !isReturnee && !resignedReturnDate && inMonth(emp.join_date)
+  const returnedMid = isReturnee ? inMonth(emp.join_date) : inMonth(resignedReturnDate)
   const leaveMid    = isOnLeave && inMonth(emp.exit_date)
   const exitMid     = isResigned && inMonth(emp.exit_date)
 
+  const returnDisplayDate = isReturnee ? emp.join_date! : resignedReturnDate!
+
   const baseDisplay = {
     displayJoinDate: joinedMid ? emp.join_date! : null,
-    displayReturnDate: returnedMid ? emp.join_date! : null,
+    displayReturnDate: returnedMid ? returnDisplayDate : null,
     displayLeaveDate: leaveMid ? emp.exit_date! : null,
     displayExitDate: exitMid ? emp.exit_date! : null,
     hasMonthEvent: joinedMid || returnedMid || leaveMid || exitMid,
@@ -619,7 +627,7 @@ export function calcHectoCoinFromEmployee(emp: Employee, settlementMonth: string
   let rawEnd: string | null = null
 
   if (isResigned) {
-    rawStart = emp.join_date ?? null
+    rawStart = resignedReturnDate ?? emp.join_date ?? null
     if (!emp.exit_date) {
       return { payableDays: 0, payCap: 0, statusLabel: '퇴사일 미입력', excludeReason: '퇴사일이 입력되지 않아 계산할 수 없습니다.', ...baseDisplay }
     }
