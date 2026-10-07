@@ -30,6 +30,8 @@ export type WellnessReclaimEntry = {
 export type WellnessReclaimDisplayRow = {
   emp: Employee
   amount: number | null        // null = 계산 불가(퇴사일/휴직시작일 미입력), 0 이상 = 계산된 환수금액
+  prePaid: number | null       // 선지급금액 — 화면 확인용만. 엑셀/메일에는 절대 포함하지 않는다(selectedReclaimEntries가 제외)
+  recognized: number | null    // 인정금액 — 화면 확인용만. 엑셀/메일에는 절대 포함하지 않는다(selectedReclaimEntries가 제외)
   recoupDate: string | null    // 'YYYY-MM-DD' — 퇴사일 + 1일(퇴사일 없으면 null)
   mailKey: string
 }
@@ -44,9 +46,16 @@ export function buildWellnessReclaimDisplayRows(employees: Employee[]): Wellness
     .filter(e => e.status === 'resigned')
     .map(emp => {
       const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.exit_date ?? null
-      const amount = leaveDateForCalc ? calcWellnessLeave(emp.join_date ?? null, leaveDateForCalc).reclaim : null
+      const calc = leaveDateForCalc ? calcWellnessLeave(emp.join_date ?? null, leaveDateForCalc) : null
       const recoupDate = emp.exit_date ? addOneDayToDateStr(emp.exit_date) : null
-      return { emp, amount, recoupDate, mailKey: `reclaim_wellness_${emp.id}` }
+      return {
+        emp,
+        amount: calc ? calc.reclaim : null,
+        prePaid: calc ? calc.prePaid : null,
+        recognized: calc ? calc.recognized : null,
+        recoupDate,
+        mailKey: `reclaim_wellness_${emp.id}`,
+      }
     })
 }
 

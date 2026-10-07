@@ -1616,7 +1616,7 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
   onSelect: (checked: boolean) => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const { emp, amount, recoupDate } = row
+  const { emp, amount, prePaid, recognized, recoupDate } = row
   const typeLabel = empLabel(emp)
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1626,6 +1626,19 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
       <CardHeader emp={emp} typeLabel={typeLabel} date={emp.exit_date ?? '-'} dateLabel="퇴사일"
         mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
         selected={selected} onSelect={onSelect} />
+      {/* 선지급/인정/환수는 관리 화면 확인용 — 엑셀·메일에는 환수금액(amount)만 들어간다
+          (selectedReclaimEntries가 선지급/인정을 제외한 WellnessReclaimEntry만 만든다) */}
+      {amount == null || prePaid == null || recognized == null ? (
+        <p className="px-4 pb-3 text-xs text-gray-400">환수금액 계산 불가(입사일 또는 퇴사일 미입력) — 직원 정보를 확인해주세요.</p>
+      ) : (
+        <div className="px-4 pb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+          <span>선지급 <b className="text-gray-800">{prePaid.toLocaleString()}원</b></span>
+          <span>/</span>
+          <span>인정 <b className="text-gray-800">{recognized.toLocaleString()}원</b></span>
+          <span>/</span>
+          <span>환수 <b className={amount > 0 ? 'text-red-600' : 'text-gray-400'}>{amount.toLocaleString()}원</b></span>
+        </div>
+      )}
       {expanded && (
         <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-4">
           <div className="space-y-0">
@@ -1639,16 +1652,9 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
             {emp.division   && <InfoRow label="실">  <span className="text-xs text-gray-700">{emp.division}</span>  </InfoRow>}
             {emp.team       && <InfoRow label="팀">  <span className="text-xs text-gray-700">{emp.team}</span>      </InfoRow>}
           </div>
-          {amount == null ? (
-            <p className="text-xs text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">환수금액 계산 불가(입사일 또는 퇴사일 미입력) — 직원 정보를 확인해주세요.</p>
-          ) : (
-            <div className="space-y-0">
-              <InfoRow label="환수금액">
-                <span className={`text-xs font-bold ${amount > 0 ? 'text-red-600' : 'text-gray-400'}`}>{amount.toLocaleString()}원</span>
-              </InfoRow>
-              <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate ?? '확인 필요'}</span></InfoRow>
-            </div>
-          )}
+          <div className="space-y-0">
+            <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate ?? '확인 필요'}</span></InfoRow>
+          </div>
         </div>
       )}
     </div>
