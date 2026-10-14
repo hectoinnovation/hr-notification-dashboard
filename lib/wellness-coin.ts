@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs'
 import path from 'path'
 import type { Employee } from './supabase'
-import { calcEffectiveLeaveDate, calcWellnessHire, calcWellnessLeave } from './wellness-mail'
+import { calcEffectiveLeaveDate, calcWellnessHire, calcWellnessLeave, wellnessTransferPointsAmount } from './wellness-mail'
 
 // ─── 웰니스코인 지급 엑셀(선불 관리자 거래 요청 양식) — 화면 "웰니스코인 엑셀 다운로드"
 // (app/api/wellness-coin-excel)와 메일 첨부(app/api/wellness-mail)가 이 파일을 그대로
@@ -35,7 +35,14 @@ export function buildWellnessCoinRows(
     const isTransfer = emp.join_reason === '전적'
     const isLeaveType = empType === 'leave' || emp.join_reason === '휴직'
     if (isTransfer) {
-      excluded.push({ emp, reason: '전적자는 웰니스코인 지급 대상이 아닙니다.' })
+      // 전적자는 자동 계산 대상이 아니라 관리자가 직접 입력한 금액(employees.
+      // wellness_transfer_points)을 그대로 지급액으로 쓴다 — 미입력이면 기존처럼 제외.
+      const transferAmt = wellnessTransferPointsAmount(emp)
+      if (transferAmt != null) {
+        included.push({ emp, amount: transferAmt })
+      } else {
+        excluded.push({ emp, reason: '전적자 웰니스 부여포인트가 입력되지 않았습니다.' })
+      }
     } else if (isLeaveType) {
       if (!emp.join_date) {
         excluded.push({ emp, reason: '입사일이 입력되지 않아 계산할 수 없습니다.' })

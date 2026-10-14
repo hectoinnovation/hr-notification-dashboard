@@ -38,6 +38,16 @@ export function calcEffectiveLeaveDate(emp: Employee): string | null {
   return d.toISOString().slice(0, 10)
 }
 
+/**
+ * 전적자(입사 전적) 웰니스 부여포인트 — 자동 계산 대상이 아니라 관리자가 직접 입력한
+ * 값(employees.wellness_transfer_points)을 그대로 쓴다. 미입력(null/undefined)이면
+ * null — "아직 입력 안 함"과 "0원"을 구분해서, 화면/엑셀/메일이 전부 동일하게 "해당
+ * 없음"과 "0원"을 다르게 표시할 수 있게 한다. 전적자가 아닌 직원에는 쓰이지 않는다.
+ */
+export function wellnessTransferPointsAmount(emp: Employee): number | null {
+  return emp.wellness_transfer_points ?? null
+}
+
 export function calcWellnessHire(joinDateStr: string): number {
   const d = new Date(joinDateStr)
   const month = d.getMonth() + 1
@@ -127,8 +137,16 @@ export function buildWellnessExcelRows(
     let 계산기준설명 = '-'
 
     if (isTransfer) {
-      지급환수구분 = '해당 없음'
-      계산기준설명 = '전적자는 웰니스포인트 계산 대상 아님'
+      const transferAmt = wellnessTransferPointsAmount(emp)
+      if (transferAmt != null) {
+        지급예정금액 = `${transferAmt.toLocaleString()}원`
+        최종처리금액 = 지급예정금액
+        지급환수구분 = '지급'
+        계산기준설명 = '전적자 수기 입력 웰니스포인트'
+      } else {
+        지급환수구분 = '해당 없음'
+        계산기준설명 = '전적자 웰니스포인트 미입력'
+      }
     } else if (!isLeaveType) {
       // 입사자 / 휴직복귀자
       if (emp.join_date) {

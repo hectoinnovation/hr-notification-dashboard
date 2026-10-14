@@ -7,7 +7,7 @@ import { STAGES, TRANSFER_STAGES, type Stage, calcDday, makeOnboardingMailHtml, 
 import {
   daysInMonth, empLabel, calcEffectiveLeaveDate, calcWellnessHire, calcWellnessLeave,
   buildXlsxWorkbook, buildWellnessExcelRows, sumWellnessFinalAmount,
-  wellnessMailAttachmentFilename, type WellnessMailEntryInput,
+  wellnessMailAttachmentFilename, wellnessTransferPointsAmount, type WellnessMailEntryInput,
 } from '@/lib/wellness-mail'
 import {
   buildWellnessCoinRows, wellnessCoinFilename,
@@ -681,8 +681,11 @@ ${closingP}`
     }
   }
 
-  // 전적자 / 날짜 없는 경우
-  const hireAmt = (emp.join_date && !isTransfer) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
+  // 전적자 / 날짜 없는 경우 — 전적자는 자동계산 대신 관리자가 수기 입력한 금액을 쓴다(미입력이면 해당 없음)
+  const transferAmt = isTransfer ? wellnessTransferPointsAmount(emp) : null
+  const hireAmt = isTransfer
+    ? (transferAmt != null ? transferAmt.toLocaleString() + '원' : '해당 없음')
+    : (emp.join_date ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : '-')
   return `<h3 style="color:#ea580c">[웰니스포인트 안내] ${emp.name} (${구분})</h3>
 ${greetingP(type, emp.join_reason)}
 <table style="${TS}"><tr><th style="${TH}">성명</th><th style="${TH}">${dateLabel}</th><th style="${TH}">휴대폰번호</th><th style="${TH}">부여포인트</th><th style="${TH}">구분</th></tr>
@@ -764,7 +767,10 @@ function makeBulkWellnessHtml(entries: Array<{ emp: Employee; empType: 'hire' | 
     const hireRows = hires.map(({ emp, isTransfer }) => {
       const 구분  = empLabel(emp)
       const dateLabel = emp.join_reason === '휴직복귀' ? '복귀일' : '입사일자'
-      const amt = (!isTransfer && emp.join_date) ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : (isTransfer ? '해당 없음' : '-')
+      const transferAmt = isTransfer ? wellnessTransferPointsAmount(emp) : null
+      const amt = isTransfer
+        ? (transferAmt != null ? transferAmt.toLocaleString() + '원' : '해당 없음')
+        : (emp.join_date ? calcWellnessHire(emp.join_date).toLocaleString() + '원' : '-')
       return `<tr><td style="${TD}">${emp.name}</td><td style="${TD}">${구분}</td><td style="${TD}">${emp.join_date??'-'}</td><td style="${TD}">${emp.phone??''}</td><td style="${TD}">${amt}</td></tr>`
     }).join('')
     const sectionTitle = hires.some(e => e.emp.join_reason === '휴직복귀') ? '[입사자 · 휴직복귀자]' : '[입사자]'
@@ -1490,12 +1496,66 @@ function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone
 }
 
 // ─── 포인트 카드 ──────────────────────────────────────────────────────────────
-function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, fixedCC = [], points, isTransfer, selected, onSelect }: {
+/**
+ * 전적자 "웰니스 부여포인트" 수기 입력기 — 전적자는 자동 계산 대상이 아니므로
+ * 관리자가 금액을 직접 입력/수정한다. 저장은 employees.wellness_transfer_points에
+ * 바로 반영되어 새로고침 후에도 유지된다(요청 사양). 다른 인라인 편집기(예:
+ * HectoEditableCustomerIdCell)와 동일한 편집 모드 패턴을 쓴다.
+ */
+function WellnessTransferPointsEditor({ amount, saving, onSave }: {
+  amount: number | null; saving: boolean; onSave: (amount: number) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  function startEdit() { setDraft(amount != null ? String(amount) : ''); setErr(null); setEditing(true) }
+  function handleSave() {
+    const n = Number(draft.replace(/,/g, '').trim())
+    if (draft.trim() === '' || !Number.isFinite(n) || n < 0) { setErr('0 이상의 숫자를 입력해주세요.'); return }
+    onSave(Math.round(n))
+    setEditing(false)
+  }
+  function handleCancel() { setEditing(false); setErr(null) }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <input autoFocus inputMode="numeric" value={draft} disabled={saving} placeholder="예) 50000"
+            onChange={e => { setDraft(e.target.value); setErr(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel() }}
+            className="w-28 text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+          <span className="text-xs text-gray-400">원</span>
+          <button onClick={handleSave} disabled={saving} className="text-emerald-600 text-xs font-semibold hover:underline disabled:opacity-50">
+            {saving ? '저장 중…' : '저장'}
+          </button>
+          <button onClick={handleCancel} disabled={saving} className="text-gray-400 text-xs hover:underline disabled:opacity-50">취소</button>
+        </div>
+        {err && <span className="text-red-500 text-[10px]">{err}</span>}
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`text-xs font-bold ${amount != null ? 'text-emerald-600' : 'text-gray-300'}`}>
+        {amount != null ? amount.toLocaleString() + '원' : '미입력'}
+      </span>
+      <button onClick={startEdit} className="text-xs font-semibold text-blue-600 hover:text-blue-800">
+        {amount != null ? '수정' : '입력'}
+      </button>
+    </div>
+  )
+}
+
+function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, fixedCC = [], points, isTransfer, selected, onSelect, wellnessTransferSaving, onSaveWellnessTransferPoints }: {
   emp: Employee; type: 'hire' | 'leave'; variant: 'cafe' | 'wellness'
   mailSent: boolean; onSendMail: () => void
   fixedRecipients: readonly Recipient[]; fixedCC?: readonly Recipient[]
   points: DayPointData | null; isTransfer: boolean
   selected?: boolean; onSelect?: (checked: boolean) => void
+  wellnessTransferSaving?: boolean
+  onSaveWellnessTransferPoints?: (amount: number) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = empLabel(emp)
@@ -1589,8 +1649,15 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
             )
           })()}
           {variant === 'wellness' && isTransfer && (
-            <div className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              ℹ️ 전적자는 웰니스포인트 계산 대상이 아닙니다.
+            <div className="space-y-1.5">
+              <div className="text-xs text-gray-500 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                ℹ️ 전적자는 자동 계산 대상이 아닙니다. 지급할 웰니스 부여포인트를 직접 입력해주세요.
+              </div>
+              <InfoRow label="웰니스 부여포인트">
+                <WellnessTransferPointsEditor amount={emp.wellness_transfer_points ?? null}
+                  saving={wellnessTransferSaving ?? false}
+                  onSave={amount => onSaveWellnessTransferPoints?.(amount)} />
+              </InfoRow>
             </div>
           )}
           <PreviewToggle htmlBody={htmlBody} />
@@ -2731,6 +2798,9 @@ export default function HRDashboard() {
   const [wellnessMailModal, setWellnessMailModal] = useState<{ entries: WellnessMailEntryInput[]; sentKeys: string[]; count: number; totalAmount: number; filename: string } | null>(null)
   const [wellnessCoinDownloading, setWellnessCoinDownloading] = useState(false)
   const [wellnessCoinError, setWellnessCoinError] = useState<string | null>(null)
+  // 전적자 웰니스 부여포인트 수기 입력 저장 상태 — employees.wellness_transfer_points
+  const [wellnessTransferSavingId, setWellnessTransferSavingId] = useState<number | null>(null)
+  const [wellnessTransferError,    setWellnessTransferError]    = useState<string | null>(null)
   // 웰니스코인 환수 — 기존 웰니스코인 지급(위 상태들)과 완전히 분리된 별도 목록/메일 상태.
   // 지급 대상/금액/메일/다운로드 로직에는 전혀 영향을 주지 않는다. 별도 업로드 파일이
   // 없다 — 환수금액은 employees 데이터로부터 매번 다시 계산한다(buildWellnessReclaimDisplayRows).
@@ -3275,6 +3345,21 @@ export default function HRDashboard() {
     closeForm()
     setSubmitting(false)
     fetchAllData()
+  }
+
+  /**
+   * 전적자 웰니스 부여포인트 수기 입력 저장 — employees.wellness_transfer_points에
+   * 직접 저장한다(정산월과 무관한 직원 고정값). 저장 후 전체 재조회(fetchAllData) 대신
+   * 해당 직원 객체만 서버 응답으로 교체해 화면이 즉시 최신값을 반영하게 한다.
+   */
+  async function saveWellnessTransferPoints(id: number, amount: number) {
+    setWellnessTransferSavingId(id); setWellnessTransferError(null)
+    const { data, error } = await supabase
+      .from('employees').update({ wellness_transfer_points: amount }).eq('id', id)
+      .select('*').single()
+    setWellnessTransferSavingId(null)
+    if (error) { setWellnessTransferError('저장 실패: ' + error.message); return }
+    setEmployees(prev => prev.map(e => e.id === id ? (data as Employee) : e))
   }
 
   async function handleDelete(id: string, name: string) {
@@ -4502,7 +4587,9 @@ export default function HRDashboard() {
                     mailSent={!!mailSent[entry.mailKey]} onSendMail={() => sendMail(entry.mailKey)}
                     fixedRecipients={FR.wellness} fixedCC={FR.wellnessCC} points={null} isTransfer={isTransfer}
                     selected={selectedKeys.has(entry.mailKey)}
-                    onSelect={checked => toggleSelect(entry.mailKey, checked)} />
+                    onSelect={checked => toggleSelect(entry.mailKey, checked)}
+                    wellnessTransferSaving={wellnessTransferSavingId === entry.emp.id}
+                    onSaveWellnessTransferPoints={amount => saveWellnessTransferPoints(entry.emp.id, amount)} />
                 )
               }
               // 환수 탭: 퇴사자 전체가 항상 선택 가능하다(요청 사양) — 체크 상태는 현재 화면에
@@ -4524,6 +4611,7 @@ export default function HRDashboard() {
                     <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${wellnessSubTab === 'reclaim' ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>{wellnessReclaimOwedRows.length}</span>
                   </button>
                 </div>
+                {wellnessTransferError && <p className="text-xs text-red-500">{wellnessTransferError}</p>}
                 {wellnessSubTab === 'reclaim' ? (
                 <div className="space-y-3">
                   {/* 업로드/매칭 로직 없음 — 환수금액은 항상 지급 탭과 동일한 calcWellnessLeave()

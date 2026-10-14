@@ -30,4 +30,5 @@ export type Employee = {
   is_transfer?: boolean  // 전적 여부(입사/퇴사 status·join_reason과 별개 값) — 퇴사자에게만 노출/저장.
                           // 입사자의 전적 여부는 기존처럼 join_reason==='전적'이 그대로 담당하므로
                           // 여기서는 건드리지 않는다(중복 신호로 인한 혼선 방지)
+  wellness_transfer_points?: number | null  // 입사 전적자(join_reason==='전적') 웰니스 부여포인트 수기 입력값 — 있으면 자동계산 대신 이 값을 씀
 }
