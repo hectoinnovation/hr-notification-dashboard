@@ -1503,17 +1503,22 @@ function OnboardingCard({ hire, stageDone, mailSent, onboardSentAt, onToggleDone
  * HectoEditableCustomerIdCell)와 동일한 편집 모드 패턴을 쓴다.
  */
 function WellnessTransferPointsEditor({ amount, saving, onSave }: {
-  amount: number | null; saving: boolean; onSave: (amount: number) => void
+  amount: number | null; saving: boolean
+  onSave: (amount: number) => Promise<string | null>  // null = 저장 성공, string = 실패 사유(그대로 화면에 표시)
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [err, setErr] = useState<string | null>(null)
 
   function startEdit() { setDraft(amount != null ? String(amount) : ''); setErr(null); setEditing(true) }
-  function handleSave() {
+  async function handleSave() {
     const n = Number(draft.replace(/,/g, '').trim())
     if (draft.trim() === '' || !Number.isFinite(n) || n < 0) { setErr('0 이상의 숫자를 입력해주세요.'); return }
-    onSave(Math.round(n))
+    // 저장이 끝날 때까지(성공/실패 응답을 받을 때까지) 입력 모드를 유지한다 — 실패했는데
+    // 바로 "미입력" 표시로 돌아가면 저장이 조용히 무시된 것처럼 보인다(실제 신고된 증상).
+    // 성공했을 때만 입력 모드를 닫는다.
+    const errMsg = await onSave(Math.round(n))
+    if (errMsg) { setErr(errMsg); return }
     setEditing(false)
   }
   function handleCancel() { setEditing(false); setErr(null) }
@@ -1555,7 +1560,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
   points: DayPointData | null; isTransfer: boolean
   selected?: boolean; onSelect?: (checked: boolean) => void
   wellnessTransferSaving?: boolean
-  onSaveWellnessTransferPoints?: (amount: number) => void
+  onSaveWellnessTransferPoints?: (amount: number) => Promise<string | null>
 }) {
   const [expanded, setExpanded] = useState(false)
   const typeLabel  = empLabel(emp)
@@ -1656,7 +1661,7 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
               <InfoRow label="웰니스 부여포인트">
                 <WellnessTransferPointsEditor amount={emp.wellness_transfer_points ?? null}
                   saving={wellnessTransferSaving ?? false}
-                  onSave={amount => onSaveWellnessTransferPoints?.(amount)} />
+                  onSave={async amount => (await onSaveWellnessTransferPoints?.(amount)) ?? null} />
               </InfoRow>
             </div>
           )}
@@ -3351,15 +3356,28 @@ export default function HRDashboard() {
    * 전적자 웰니스 부여포인트 수기 입력 저장 — employees.wellness_transfer_points에
    * 직접 저장한다(정산월과 무관한 직원 고정값). 저장 후 전체 재조회(fetchAllData) 대신
    * 해당 직원 객체만 서버 응답으로 교체해 화면이 즉시 최신값을 반영하게 한다.
+   *
+   * 반환값은 null(성공) 또는 실패 사유 문자열 — 호출부(WellnessTransferPointsEditor)가
+   * 실패 시 입력 모드를 닫지 않고 그 사유를 입력란 바로 아래에 표시해, "저장 눌렀는데
+   * 조용히 미입력으로 돌아가는" 것처럼 보이지 않게 한다. PGRST204/42703은 둘 다
+   * "DB에 이 컬럼 자체가 없다"는 뜻(PostgREST 스키마 캐시에 컬럼이 없을 때의 코드)이라
+   * 원본 에러 대신 바로 조치할 수 있는 안내문으로 바꿔서 보여준다.
    */
-  async function saveWellnessTransferPoints(id: number, amount: number) {
+  async function saveWellnessTransferPoints(id: number, amount: number): Promise<string | null> {
     setWellnessTransferSavingId(id); setWellnessTransferError(null)
     const { data, error } = await supabase
       .from('employees').update({ wellness_transfer_points: amount }).eq('id', id)
       .select('*').single()
     setWellnessTransferSavingId(null)
-    if (error) { setWellnessTransferError('저장 실패: ' + error.message); return }
+    if (error) {
+      const msg = (error.code === 'PGRST204' || error.code === '42703')
+        ? 'DB에 아직 컬럼이 없어 저장할 수 없습니다. 관리자에게 supabase-employees-wellness-transfer-points.sql 실행을 요청해주세요.'
+        : '저장 실패: ' + error.message
+      setWellnessTransferError(msg)
+      return msg
+    }
     setEmployees(prev => prev.map(e => e.id === id ? (data as Employee) : e))
+    return null
   }
 
   async function handleDelete(id: string, name: string) {
