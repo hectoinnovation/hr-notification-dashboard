@@ -29,32 +29,57 @@ export type WellnessReclaimEntry = {
  */
 export type WellnessReclaimDisplayRow = {
   emp: Employee
-  amount: number | null        // null = 계산 불가(퇴사일/휴직시작일 미입력), 0 이상 = 계산된 환수금액
+  amount: number | null        // null = 계산 불가, 0 이상 = 최종 환수금액(수기 입력이 있으면 그 값, 없으면 자동계산)
   prePaid: number | null       // 선지급금액 — 화면 확인용만. 엑셀/메일에는 절대 포함하지 않는다(selectedReclaimEntries가 제외)
-  recognized: number | null    // 인정금액 — 화면 확인용만. 엑셀/메일에는 절대 포함하지 않는다(selectedReclaimEntries가 제외)
+  recognized: number | null    // 최종 인정금액(수기 입력이 있으면 그 값, 없으면 자동계산) — 화면 확인용만
   recoupDate: string | null    // 'YYYY-MM-DD' — 퇴사일 + 1일(퇴사일 없으면 null)
   mailKey: string
+  endDate: string | null       // 실제로 계산에 쓰인 인정 종료일(수기 지정이 있으면 그 값, 없으면 기존 자동 기준일)
+  autoEndDate: string | null   // 수기 지정이 없었다면 쓰였을 자동 기준일(편집기 placeholder/참고용)
+  endDateOverride: string | null       // 수기 지정값 자체(없으면 null = 자동 기준일 사용 중)
+  recognizedOverride: number | null    // 인정금액 수기 입력값 자체(없으면 null = 자동계산 사용 중)
+  reclaimOverride: number | null       // 환수금액 수기 입력값 자체(없으면 null = 자동계산 사용 중)
 }
 
 /**
  * employees 테이블의 퇴사자(status==='resigned') 전체를 기준으로 화면 목록을 구성한다.
  * 환수금액은 지급 탭과 동일한 calcWellnessLeave(join_date, 계산기준일).reclaim을 그대로
  * 재사용하며, 별도 엑셀 업로드/이름 매칭은 전혀 쓰지 않는다(요청 사양).
+ *
+ * 휴직 후 복직 없이 퇴사한 직원처럼 "퇴사일 ≠ 실제 웰니스 인정 종료일"인 경우를 위해,
+ * emp.wellness_recognize_end_date(수기 지정)가 있으면 퇴사일/휴직시작일-1 기준(기존
+ * calcEffectiveLeaveDate 결과) 대신 그 날짜를 그대로 계산 기준일로 쓴다. 이 값은
+ * exit_date 자체나 헥토코인 계산(lib/hecto-coin.ts)에는 전혀 영향을 주지 않는다 —
+ * 오직 이 함수 안에서만 읽는다.
+ *
+ * 인정금액/환수금액도 emp.wellness_recognized_override/wellness_reclaim_override가
+ * 있으면 자동계산값 대신 그 값을 그대로 쓴다. 환수금액(reclaim)은 selectedReclaimEntries를
+ * 거쳐 최종 정산·엑셀·메일에 그대로 반영된다 — 그쪽 로직은 이 함수가 돌려주는 amount만
+ * 그대로 읽으므로 별도로 손댈 필요가 없다(요청 사양: "최종 정산 및 엑셀 다운로드에 반영").
  */
 export function buildWellnessReclaimDisplayRows(employees: Employee[]): WellnessReclaimDisplayRow[] {
   return employees
     .filter(e => e.status === 'resigned')
     .map(emp => {
-      const leaveDateForCalc = calcEffectiveLeaveDate(emp) ?? emp.exit_date ?? null
-      const calc = leaveDateForCalc ? calcWellnessLeave(emp.join_date ?? null, leaveDateForCalc) : null
+      const autoEndDate = calcEffectiveLeaveDate(emp) ?? emp.exit_date ?? null
+      const endDateOverride = emp.wellness_recognize_end_date ?? null
+      const endDate = endDateOverride || autoEndDate
+      const calc = endDate ? calcWellnessLeave(emp.join_date ?? null, endDate) : null
       const recoupDate = emp.exit_date ? addOneDayToDateStr(emp.exit_date) : null
+      const recognizedOverride = emp.wellness_recognized_override ?? null
+      const reclaimOverride = emp.wellness_reclaim_override ?? null
       return {
         emp,
-        amount: calc ? calc.reclaim : null,
+        amount: reclaimOverride ?? (calc ? calc.reclaim : null),
         prePaid: calc ? calc.prePaid : null,
-        recognized: calc ? calc.recognized : null,
+        recognized: recognizedOverride ?? (calc ? calc.recognized : null),
         recoupDate,
         mailKey: `reclaim_wellness_${emp.id}`,
+        endDate,
+        autoEndDate,
+        endDateOverride,
+        recognizedOverride,
+        reclaimOverride,
       }
     })
 }

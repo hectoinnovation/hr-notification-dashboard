@@ -1675,6 +1675,126 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
 }
 
 /**
+ * 웰니스코인 환수 — "인정 종료일" 수기 지정 입력기. 휴직 후 복직 없이 퇴사한 직원처럼
+ * 퇴사일과 실제 웰니스 인정 종료일이 다른 경우에만 쓴다. 미지정 상태에서는 자동
+ * 기준일(autoValue)을 참고용으로 보여주고, 지정하면 "자동계산 사용"으로 되돌릴 수 있다.
+ */
+function WellnessReclaimEndDateEditor({ value, autoValue, saving, onSave, onClear }: {
+  value: string | null; autoValue: string | null; saving: boolean
+  onSave: (date: string) => Promise<string | null>
+  onClear: () => Promise<string | null>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  function startEdit() { setDraft(value ?? autoValue ?? ''); setErr(null); setEditing(true) }
+  async function handleSave() {
+    if (!draft) { setErr('날짜를 입력해주세요.'); return }
+    const errMsg = await onSave(draft)
+    if (errMsg) { setErr(errMsg); return }
+    setEditing(false)
+  }
+  async function handleClear() {
+    setErr(null)
+    const errMsg = await onClear()
+    if (errMsg) { setErr(errMsg); return }
+    setEditing(false)
+  }
+  function handleCancel() { setEditing(false); setErr(null) }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <input autoFocus type="date" value={draft} disabled={saving}
+            onChange={e => { setDraft(e.target.value); setErr(null) }}
+            className="text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+          <button onClick={handleSave} disabled={saving} className="text-emerald-600 text-xs font-semibold hover:underline disabled:opacity-50">
+            {saving ? '저장 중…' : '저장'}
+          </button>
+          {value != null && (
+            <button onClick={handleClear} disabled={saving} className="text-amber-600 text-xs font-semibold hover:underline disabled:opacity-50">자동계산 사용</button>
+          )}
+          <button onClick={handleCancel} disabled={saving} className="text-gray-400 text-xs hover:underline disabled:opacity-50">취소</button>
+        </div>
+        {err && <span className="text-red-500 text-[10px]">{err}</span>}
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-semibold text-gray-700">
+        {value ?? autoValue ?? '확인 필요'}
+        {value == null && <span className="text-gray-400 font-normal"> (자동)</span>}
+      </span>
+      <button onClick={startEdit} className="text-xs font-semibold text-blue-600 hover:text-blue-800">
+        {value != null ? '수정' : '직접 지정'}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * 웰니스코인 환수 — 인정금액/환수금액 수기 수정 입력기. 자동계산값을 덮어쓰며, 지정한
+ * 금액이 있으면 "수동입력" 배지를 보여주고 "자동계산 사용"으로 되돌릴 수 있다.
+ */
+function WellnessOverrideAmountEditor({ effectiveValue, isOverride, saving, onSave, onClear }: {
+  effectiveValue: number | null; isOverride: boolean; saving: boolean
+  onSave: (amount: number) => Promise<string | null>
+  onClear: () => Promise<string | null>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+
+  function startEdit() { setDraft(effectiveValue != null ? String(effectiveValue) : ''); setErr(null); setEditing(true) }
+  async function handleSave() {
+    const n = Number(draft.replace(/,/g, '').trim())
+    if (draft.trim() === '' || !Number.isFinite(n) || n < 0) { setErr('0 이상의 숫자를 입력해주세요.'); return }
+    const errMsg = await onSave(Math.round(n))
+    if (errMsg) { setErr(errMsg); return }
+    setEditing(false)
+  }
+  async function handleClear() {
+    setErr(null)
+    const errMsg = await onClear()
+    if (errMsg) { setErr(errMsg); return }
+    setEditing(false)
+  }
+  function handleCancel() { setEditing(false); setErr(null) }
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <input autoFocus inputMode="numeric" value={draft} disabled={saving} placeholder="예) 161667"
+            onChange={e => { setDraft(e.target.value); setErr(null) }}
+            onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') handleCancel() }}
+            className="w-28 text-xs border border-orange-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-orange-400 disabled:opacity-50" />
+          <span className="text-xs text-gray-400">원</span>
+          <button onClick={handleSave} disabled={saving} className="text-emerald-600 text-xs font-semibold hover:underline disabled:opacity-50">
+            {saving ? '저장 중…' : '저장'}
+          </button>
+          {isOverride && (
+            <button onClick={handleClear} disabled={saving} className="text-amber-600 text-xs font-semibold hover:underline disabled:opacity-50">자동계산 사용</button>
+          )}
+          <button onClick={handleCancel} disabled={saving} className="text-gray-400 text-xs hover:underline disabled:opacity-50">취소</button>
+        </div>
+        {err && <span className="text-red-500 text-[10px]">{err}</span>}
+      </div>
+    )
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-bold text-gray-700">{effectiveValue != null ? effectiveValue.toLocaleString() + '원' : '-'}</span>
+      {isOverride && <span className="text-[10px] text-amber-600 font-semibold">수동입력</span>}
+      <button onClick={startEdit} className="text-xs font-semibold text-blue-600 hover:text-blue-800">수정</button>
+    </div>
+  )
+}
+
+/**
  * 웰니스코인 환수 탭 전용 카드 — 지급 탭의 PointCard와 똑같은 CardHeader/InfoRow/
  * TypeBadge를 그대로 재사용해 동일한 UI로 보이게 하되, PointCard 자체는 전혀
  * 수정하지 않는다(카페포인트/웰니스코인 지급 양쪽에서 쓰는 공용 컴포넌트라 건드리면
@@ -1682,14 +1802,22 @@ function PointCard({ emp, type, variant, mailSent, onSendMail, fixedRecipients, 
  * 무관하다(요청 사양) — 퇴사자 전원이 항상 체크 가능하고, 매칭 안 된 사람은 본문에
  * "환수 없음"만 표시한다.
  */
-function WellnessReclaimCard({ row, selected, onSelect }: {
+function WellnessReclaimCard({ row, selected, onSelect, savingKey, onSaveField }: {
   row: WellnessReclaimDisplayRow
   selected: boolean
   onSelect: (checked: boolean) => void
+  /** 현재 저장 중인 "{직원id}:{필드명}" 키(전체 중 하나만 동시에 저장 가능) — 없으면 null */
+  savingKey: string | null
+  onSaveField: (
+    id: number,
+    field: 'wellness_recognize_end_date' | 'wellness_recognized_override' | 'wellness_reclaim_override',
+    value: string | number | null,
+  ) => Promise<string | null>
 }) {
   const [expanded, setExpanded] = useState(false)
   const { emp, amount, prePaid, recognized, recoupDate } = row
   const typeLabel = empLabel(emp)
+  const isSaving = (field: string) => savingKey === `${emp.id}:${field}`
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* 체크박스는 환수금액 유무와 무관하게 항상 활성 — 퇴사자 전체를 사용자가 직접
@@ -1699,16 +1827,19 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
         mailSent={false} expanded={expanded} onToggle={() => setExpanded(p => !p)}
         selected={selected} onSelect={onSelect} />
       {/* 선지급/인정/환수는 관리 화면 확인용 — 엑셀·메일에는 환수금액(amount)만 들어간다
-          (selectedReclaimEntries가 선지급/인정을 제외한 WellnessReclaimEntry만 만든다) */}
-      {amount == null || prePaid == null || recognized == null ? (
+          (selectedReclaimEntries가 선지급/인정을 제외한 WellnessReclaimEntry만 만든다).
+          인정/환수는 수기 입력이 있으면 그 값(row.amount/row.recognized에 이미 반영됨),
+          없으면 자동계산값 — 셋 중 하나라도 값이 있으면 보여준다(수기 입력만 있고 자동계산이
+          불가능한 경우도 표시되어야 하므로 "전부 없을 때만" 안내 문구로 바꾼다). */}
+      {amount == null && prePaid == null && recognized == null ? (
         <p className="px-4 pb-3 text-xs text-gray-400">환수금액 계산 불가(입사일 또는 퇴사일 미입력) — 직원 정보를 확인해주세요.</p>
       ) : (
         <div className="px-4 pb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
-          <span>선지급 <b className="text-gray-800">{prePaid.toLocaleString()}원</b></span>
+          <span>선지급 <b className="text-gray-800">{prePaid != null ? prePaid.toLocaleString() + '원' : '-'}</b></span>
           <span>/</span>
-          <span>인정 <b className="text-gray-800">{recognized.toLocaleString()}원</b></span>
+          <span>인정 <b className="text-gray-800">{recognized != null ? recognized.toLocaleString() + '원' : '-'}</b></span>
           <span>/</span>
-          <span>환수 <b className={amount > 0 ? 'text-red-600' : 'text-gray-400'}>{amount.toLocaleString()}원</b></span>
+          <span>환수 <b className={amount != null && amount > 0 ? 'text-red-600' : 'text-gray-400'}>{amount != null ? amount.toLocaleString() + '원' : '-'}</b></span>
         </div>
       )}
       {expanded && (
@@ -1726,6 +1857,21 @@ function WellnessReclaimCard({ row, selected, onSelect }: {
           </div>
           <div className="space-y-0">
             <InfoRow label="회수일자"><span className="text-xs font-semibold text-gray-700">{recoupDate ?? '확인 필요'}</span></InfoRow>
+            <InfoRow label="웰니스 인정 종료일">
+              <WellnessReclaimEndDateEditor value={row.endDateOverride} autoValue={row.autoEndDate} saving={isSaving('wellness_recognize_end_date')}
+                onSave={date => onSaveField(emp.id, 'wellness_recognize_end_date', date)}
+                onClear={() => onSaveField(emp.id, 'wellness_recognize_end_date', null)} />
+            </InfoRow>
+            <InfoRow label="인정금액">
+              <WellnessOverrideAmountEditor effectiveValue={recognized} isOverride={row.recognizedOverride != null} saving={isSaving('wellness_recognized_override')}
+                onSave={amt => onSaveField(emp.id, 'wellness_recognized_override', amt)}
+                onClear={() => onSaveField(emp.id, 'wellness_recognized_override', null)} />
+            </InfoRow>
+            <InfoRow label="환수금액">
+              <WellnessOverrideAmountEditor effectiveValue={amount} isOverride={row.reclaimOverride != null} saving={isSaving('wellness_reclaim_override')}
+                onSave={amt => onSaveField(emp.id, 'wellness_reclaim_override', amt)}
+                onClear={() => onSaveField(emp.id, 'wellness_reclaim_override', null)} />
+            </InfoRow>
           </div>
         </div>
       )}
@@ -2817,6 +2963,10 @@ export default function HRDashboard() {
   // 매칭해 표시한다 — 월별 그룹/기간 필터/접기 상태도 지급 탭과 같은 구조로 따로 둔다.
   const [wellnessReclaimMonthFilter,    setWellnessReclaimMonthFilter]    = useState<PeriodFilter>('3m')
   const [wellnessReclaimSectCollapsed,  setWellnessReclaimSectCollapsed]  = useState<Set<string>>(new Set())
+  // 웰니스 인정 종료일/인정금액/환수금액 수기 입력 저장 상태 — employees의 wellness_recognize_end_date/
+  // wellness_recognized_override/wellness_reclaim_override. key는 `${empId}:${field}` 형태.
+  const [wellnessReclaimFieldSavingKey, setWellnessReclaimFieldSavingKey] = useState<string | null>(null)
+  const [wellnessReclaimFieldError,     setWellnessReclaimFieldError]     = useState<string | null>(null)
   const [stageDone,      setStageDone]      = useState<Record<string, boolean>>({})
   const [stageDoneAt,    setStageDoneAt]    = useState<Record<string, string>>({})
   const [mailSent,       setMailSent]       = useState<Record<string, boolean>>({})
@@ -3374,6 +3524,33 @@ export default function HRDashboard() {
         ? 'DB에 아직 컬럼이 없어 저장할 수 없습니다. 관리자에게 supabase-employees-wellness-transfer-points.sql 실행을 요청해주세요.'
         : '저장 실패: ' + error.message
       setWellnessTransferError(msg)
+      return msg
+    }
+    setEmployees(prev => prev.map(e => e.id === id ? (data as Employee) : e))
+    return null
+  }
+
+  /**
+   * 웰니스코인 환수 — 인정 종료일/인정금액/환수금액 수기 입력 저장(employees의 세 컬럼
+   * 중 하나를 바로 update). null을 넘기면 수기 입력을 지우고 자동계산으로 되돌린다.
+   * 반환값은 null(성공) 또는 실패 사유 문자열 — WellnessTransferPointsEditor와 동일한
+   * "성공해야만 입력 모드를 닫는다" 패턴을 쓰기 위함이다.
+   */
+  async function saveWellnessReclaimField(
+    id: number,
+    field: 'wellness_recognize_end_date' | 'wellness_recognized_override' | 'wellness_reclaim_override',
+    value: string | number | null,
+  ): Promise<string | null> {
+    setWellnessReclaimFieldSavingKey(`${id}:${field}`); setWellnessReclaimFieldError(null)
+    const { data, error } = await supabase
+      .from('employees').update({ [field]: value }).eq('id', id)
+      .select('*').single()
+    setWellnessReclaimFieldSavingKey(null)
+    if (error) {
+      const msg = (error.code === 'PGRST204' || error.code === '42703')
+        ? 'DB에 아직 컬럼이 없어 저장할 수 없습니다. 관리자에게 supabase-employees-wellness-reclaim-overrides.sql 실행을 요청해주세요.'
+        : '저장 실패: ' + error.message
+      setWellnessReclaimFieldError(msg)
       return msg
     }
     setEmployees(prev => prev.map(e => e.id === id ? (data as Employee) : e))
@@ -4639,6 +4816,7 @@ export default function HRDashboard() {
                     {wellnessReclaimGroup.length}명{hasFilter ? ' (필터 적용)' : ''} · 환수금액 있는 인원 {wellnessReclaimOwedRows.length}명 · 금액 합계 {wellnessReclaimOwedTotal.toLocaleString()}원
                   </p>
                   {wellnessReclaimError && <p className="text-xs text-red-500">{wellnessReclaimError}</p>}
+                  {wellnessReclaimFieldError && <p className="text-xs text-red-500">{wellnessReclaimFieldError}</p>}
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-400 ml-1">기간</span>
                     <PeriodFilterChips value={wellnessReclaimMonthFilter} onChange={setWellnessReclaimMonthFilter} />
@@ -4690,7 +4868,9 @@ export default function HRDashboard() {
                           {items.map(row => (
                             <WellnessReclaimCard key={row.mailKey} row={row}
                               selected={selectedKeys.has(row.mailKey)}
-                              onSelect={checked => toggleSelect(row.mailKey, checked)} />
+                              onSelect={checked => toggleSelect(row.mailKey, checked)}
+                              savingKey={wellnessReclaimFieldSavingKey}
+                              onSaveField={saveWellnessReclaimField} />
                           ))}
                         </div>
                       )} />

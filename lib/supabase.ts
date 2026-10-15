@@ -31,4 +31,9 @@ export type Employee = {
                           // 입사자의 전적 여부는 기존처럼 join_reason==='전적'이 그대로 담당하므로
                           // 여기서는 건드리지 않는다(중복 신호로 인한 혼선 방지)
   wellness_transfer_points?: number | null  // 입사 전적자(join_reason==='전적') 웰니스 부여포인트 수기 입력값 — 있으면 자동계산 대신 이 값을 씀
+  // 아래 3개는 웰니스코인 "환수" 전용 수기 입력값 — 퇴사일(exit_date)이나 헥토코인 계산에는
+  // 전혀 영향을 주지 않는다(lib/wellness-reclaim.ts에서만 읽음).
+  wellness_recognize_end_date?: string | null  // 웰니스 인정 종료일 수기 지정(미입력 시 기존처럼 퇴사일/휴직시작일-1 기준)
+  wellness_recognized_override?: number | null // 인정금액 수기 입력(있으면 자동계산 대신 이 값)
+  wellness_reclaim_override?: number | null    // 환수금액 수기 입력(있으면 자동계산 대신 이 값 — 최종 정산/엑셀에도 반영)
 }
