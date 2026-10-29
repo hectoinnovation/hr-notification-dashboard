@@ -11,15 +11,14 @@ export const runtime = 'nodejs'
 // 같은 스타일 보존 로직 — 복제하지 않음).
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as {
-    rows?: WellnessCoinTemplateRowInput[]; settlementMonth?: string; kind?: 'first' | 'additional'
+    rows?: WellnessCoinTemplateRowInput[]; settlementMonth?: string
   } | null
   const rows = body?.rows
   const settlementMonth = body?.settlementMonth
-  const kind = body?.kind
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: '다운로드할 대상자가 없습니다.' }, { status: 400 })
   }
-  if (!settlementMonth || (kind !== 'first' && kind !== 'additional')) {
+  if (!settlementMonth) {
     return NextResponse.json({ error: '잘못된 요청입니다.' }, { status: 400 })
   }
 
@@ -32,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: err instanceof Error ? err.message : '엑셀 생성에 실패했습니다.' }, { status: 400 })
   }
 
-  const filename = hectoCoinFilename(settlementMonth, kind)
+  const filename = hectoCoinFilename(settlementMonth)
   const encodedFilename = encodeURIComponent(filename)
 
   return new NextResponse(buffer as unknown as BodyInit, {

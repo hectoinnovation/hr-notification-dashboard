@@ -5,11 +5,16 @@ import { hectoCoinDetailFilename, type HectoCoinDetailRow, type HectoCoinDetailS
 // exceljs는 Node.js 전용 파일시스템/버퍼 API를 사용 — Edge runtime에서 실행 시 오류
 export const runtime = 'nodejs'
 
-// 지급용 엑셀(1차/추가, fillWellnessCoinTemplate)과 달리 고정 템플릿이 없는 새
-// workbook을 만든다 — "실제 지급 시스템 업로드용"이 아니라 "월 전체 정산 내역
-// 검토/보관용"이라 화면에 보이는 행(고객아이디 미매칭/동명이인/휴직 등 포함) 전부를
-// 담고, 스타일도 기본 서식(헤더 bold+배경, freeze pane, autofilter, 숫자 천단위)만
-// 적용한다. 지급용 엑셀 로직/템플릿은 이 라우트가 전혀 건드리지 않는다.
+// 지급용 엑셀(fillWellnessCoinTemplate)과 달리 고정 템플릿이 없는 새 workbook을
+// 만든다 — "실제 지급 시스템 업로드용"이 아니라 "월 전체 정산 내역 검토/보관용"이라
+// 화면에 보이는 행(고객아이디 미매칭/동명이인/휴직 등 포함) 전부를 담고, 스타일도
+// 기본 서식(헤더 bold+배경, freeze pane, autofilter, 숫자 천단위)만 적용한다.
+// 지급용 엑셀 로직/템플릿은 이 라우트가 전혀 건드리지 않는다.
+//
+// 2026-10부터 1차/추가 2단계 지급이 없어져 "최종 포인트"/"최종 지급액" 하나만 남았다
+// (lib/hecto-coin.ts HectoCoinDetailRow 참고) — 2026-09까지의 과거 정산월을 이 엑셀로
+// 다시 내려받아도 1차/추가 세부 breakdown 컬럼은 더 이상 나오지 않고, 이미 두 단계가
+// 합산된 최종 지급액(finalAmount = 기존 totalAmount)만 보인다.
 
 const NUM_FMT = '#,##0'
 const HEADER_FILL: { type: 'pattern'; pattern: 'solid'; fgColor: { argb: string } } = {
@@ -18,19 +23,20 @@ const HEADER_FILL: { type: 'pattern'; pattern: 'solid'; fgColor: { argb: string 
 
 const DETAIL_HEADERS = [
   '이름', '고객아이디', '입사일', '퇴사일', '휴직일', '복귀일', '월 누적 걸음수', '지급대상 일수',
-  '지급 상한', '1차 포인트', '1차 지급액', '최종 포인트', '추가 지급액', '월 최종 지급액', '상태',
-  '1차 지급 수동수정 여부', '1차 자동 계산액', '추가 지급 수동수정 여부', '추가 자동 계산액',
-  '1차 데이터 수동입력 여부', '최종 데이터 수동입력 여부',
+  '지급 상한', '최종 포인트', '최종 지급액', '상태',
+  '지급액 수동수정 여부', '자동 계산액', '포인트 데이터 수동입력 여부',
 ] as const
-const DETAIL_COL_WIDTHS = [12, 24, 12, 12, 12, 12, 14, 12, 12, 12, 12, 12, 12, 14, 30, 18, 14, 18, 14, 18, 18]
+const DETAIL_COL_WIDTHS = [12, 24, 12, 12, 12, 12, 14, 12, 12, 12, 12, 30, 18, 14, 18]
 // 천 단위 쉼표(#,##0)를 적용할 컬럼 번호(1-based) — 월누적걸음수/지급대상일수/지급상한/
-// 1차포인트/1차지급액/최종포인트/추가지급액/월최종지급액/1차자동계산액/추가자동계산액
-const NUMERIC_COLS = [7, 8, 9, 10, 11, 12, 13, 14, 17, 19]
+// 최종포인트/최종지급액/자동계산액
+const NUMERIC_COLS = [7, 8, 9, 10, 11, 14]
 
 function numOrDash(v: number | null): number | string {
   return v ?? '-'
 }
-/** 최종 파일 미업로드 상태(pointsMatchStatus==='first_only')면 화면과 동일하게 '미정산' 표시 */
+/** 2026-09까지의 과거 정산월에서 최종 파일 자체에 이 사람이 없는 경우
+ *  (pointsMatchStatus==='first_only') 화면과 동일하게 '미정산' 표시 — 2026-10부터는
+ *  구조적으로 발생하지 않는 상태다(1차 파일 자체가 없어 first_only가 생길 수 없음). */
 function pointsOrDash(v: number | null, pointsMatchStatus: string): number | string {
   if (v != null) return v
   return pointsMatchStatus === 'first_only' ? '미정산' : '-'
@@ -61,11 +67,8 @@ export async function POST(req: NextRequest) {
 
   const summaryRows: Array<[string, number | string]> = [
     ['정산월', summary.settlementMonth],
-    ['1차 지급 대상 인원', summary.firstCount],
-    ['1차 지급 총액', summary.firstTotal],
-    ['추가 지급 대상 인원', summary.additionalCount],
-    ['추가 지급 총액', summary.additionalTotal],
-    ['월 최종 지급 총액', summary.finalTotal],
+    ['최종 지급 대상 인원', summary.finalCount],
+    ['최종 지급 총액', summary.finalTotal],
     ['고객아이디 매칭 완료 인원', summary.customerIdMatchedCount],
     ['고객아이디 미매칭 인원', summary.customerIdUnmatchedCount],
     ['정산 제외 인원', summary.excludedCount],
@@ -108,18 +111,12 @@ export async function POST(req: NextRequest) {
     row.getCell(7).value = numOrDash(r.steps)
     row.getCell(8).value = numOrDash(r.payableDays)
     row.getCell(9).value = numOrDash(r.payCap)
-    row.getCell(10).value = numOrDash(r.firstPoints)
-    row.getCell(11).value = numOrDash(r.firstAmount)
-    row.getCell(12).value = pointsOrDash(r.finalPoints, r.pointsMatchStatus)
-    row.getCell(13).value = pointsOrDash(r.additionalAmount, r.pointsMatchStatus)
-    row.getCell(14).value = numOrDash(r.totalAmount)
-    row.getCell(15).value = r.statusText
-    row.getCell(16).value = r.firstOverrideAmount != null ? 'Y' : 'N'
-    row.getCell(17).value = numOrDash(r.firstAutoAmount)
-    row.getCell(18).value = r.additionalOverrideAmount != null ? 'Y' : 'N'
-    row.getCell(19).value = numOrDash(r.additionalAutoAmount)
-    row.getCell(20).value = r.firstDataIsManual ? 'Y' : 'N'
-    row.getCell(21).value = r.finalDataIsManual ? 'Y' : 'N'
+    row.getCell(10).value = pointsOrDash(r.finalPoints, r.pointsMatchStatus)
+    row.getCell(11).value = numOrDash(r.finalAmount)
+    row.getCell(12).value = r.statusText
+    row.getCell(13).value = r.finalOverrideAmount != null ? 'Y' : 'N'
+    row.getCell(14).value = numOrDash(r.finalAutoAmount)
+    row.getCell(15).value = r.finalDataIsManual ? 'Y' : 'N'
     NUMERIC_COLS.forEach(c => {
       const cell = row.getCell(c)
       if (typeof cell.value === 'number') cell.numFmt = NUM_FMT

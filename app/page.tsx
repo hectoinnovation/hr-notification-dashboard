@@ -2978,9 +2978,9 @@ export default function HRDashboard() {
   const [hectoSettlementMonth, setHectoSettlementMonth] = useState<string>(() => todayKstDateStr().slice(0, 7))
   const [hectoSettlement,      setHectoSettlement]      = useState<HectoCoinSettlementRow | null>(null)
   const [hectoLoading,         setHectoLoading]         = useState(false)
-  const [hectoUploading,       setHectoUploading]       = useState<'first' | 'final' | null>(null)
-  const [hectoDeletingStage,   setHectoDeletingStage]   = useState<'first' | 'final' | 'roster' | 'reference' | null>(null)
-  const [hectoDownloading,     setHectoDownloading]     = useState<'first' | 'additional' | null>(null)
+  const [hectoUploading,       setHectoUploading]       = useState(false)
+  const [hectoDeletingStage,   setHectoDeletingStage]   = useState<'final' | 'roster' | 'reference' | null>(null)
+  const [hectoDownloading,     setHectoDownloading]     = useState(false)
   const [hectoDetailDownloading, setHectoDetailDownloading] = useState(false)
   const [hectoError,           setHectoError]           = useState<string | null>(null)
   const [hectoNotice,          setHectoNotice]          = useState<string | null>(null)
@@ -3307,14 +3307,18 @@ export default function HRDashboard() {
     : hectoReferenceComparison.rows.filter(r => r.result === hectoRefFilter)
   // 요약 카드/상세 엑셀 공용 — 둘이 서로 다른 계산식을 쓰면 화면 총액과 엑셀 총액이
   // 어긋날 수 있으므로 반드시 같은 변수를 그대로 재사용한다(hecto 탭 렌더 블록과
-  // downloadHectoCoinDetailExcel 양쪽에서 참조).
-  const hectoFirstReady      = hectoEntries.filter(e => !e.excludeReason && e.firstAmount != null)
-  const hectoFirstTotal      = hectoFirstReady.reduce((sum, e) => sum + (e.firstAmount ?? 0), 0)
-  const hectoAdditionalReady = hectoEntries.filter(e => !e.excludeReason && (e.additionalAmount ?? 0) > 0)
-  const hectoAdditionalTotal = hectoAdditionalReady.reduce((sum, e) => sum + (e.additionalAmount ?? 0), 0)
-  const hectoFinalTotal      = hectoFirstTotal + hectoAdditionalTotal
+  // downloadHectoCoinDetailExcel 양쪽에서 참조). 2026-10부터 1차/추가 구분이 없어져
+  // totalAmount(최종 지급액) 하나로 집계한다 — 2026-09까지의 과거 정산월도 totalAmount가
+  // 이미 1차+추가를 합산한 값이라 그대로 정확하다.
+  const hectoFinalReady = hectoEntries.filter(e => !e.excludeReason && (e.totalAmount ?? 0) > 0)
+  const hectoFinalTotal = hectoFinalReady.reduce((sum, e) => sum + (e.totalAmount ?? 0), 0)
   const hectoCustomerIdMatchedCount   = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch === 'matched').length
   const hectoCustomerIdUnmatchedCount = hectoEntries.filter(e => !e.excludeReason && e.customerIdMatch !== 'matched').length
+  // 이 정산월에 1차 파일이 애초에 한 번도 업로드되지 않았으면(2026-10부터 기본값) "1회
+  // 업로드" 모드다 — computeHectoCoinEntries 내부 판정과 동일 기준(first_rows 비어있음).
+  // 상태 배지/경고 문구가 과거(2026-09까지)의 "1차 미매칭" 의미를 새 흐름에 잘못 붙이지
+  // 않도록 화면 렌더링에서 이 값으로 분기한다.
+  const hectoSingleUploadMonth = (hectoSettlement?.first_rows?.length ?? 0) === 0
 
   const TABS = [
     { id: 'notify'   as TabId, label: '입사/퇴사 관리', count: allNotify.length },
@@ -3629,25 +3633,23 @@ export default function HRDashboard() {
   }
 
   /**
-   * 헥토코인 정산 1차/최종 파일 업로드. 같은 정산월에 재업로드하면 해당 단계(1차 또는
-   * 최종)의 원본만 새 파일로 통째로 교체된다 — hecto_coin_settlements는 "원본"만 저장하고
-   * 화면 지급액은 항상 그 원본에서 다시 계산되므로(computeHectoCoinEntries), 이전 계산값과
-   * 새 계산값이 섞일 여지가 없다. 1차를 재업로드했을 때 이미 최종이 업로드되어 있었다면
-   * 추가지급액/최종지급액도 자동으로 함께 다시 계산된다.
+   * 헥토코인 정산 걸음수/포인트 파일 업로드. 2026-10부터 1차/추가 2단계가 없어져 한 번만
+   * 업로드하면 그대로 최종 지급액이 된다 — final_rows/final_file_name/final_uploaded_at
+   * 컬럼에만 쓴다(first_* 컬럼은 더 이상 새로 쓰지 않는다 — 2026-09까지의 과거 정산월에만
+   * 남아있는 값). 같은 정산월에 재업로드하면 원본만 새 파일로 통째로 교체된다 —
+   * hecto_coin_settlements는 "원본"만 저장하고 화면 지급액은 항상 그 원본에서 다시
+   * 계산되므로(computeHectoCoinEntries) 이전 계산값과 섞일 여지가 없다.
    */
-  async function handleHectoUpload(file: File, stage: 'first' | 'final') {
-    setHectoUploading(stage); setHectoError(null); setHectoNotice(null); setHectoSkipped([])
+  async function handleHectoUpload(file: File) {
+    setHectoUploading(true); setHectoError(null); setHectoNotice(null); setHectoSkipped([])
     try {
       const buffer = await file.arrayBuffer()
       const { rows, skippedRows } = parseHectoCoinExcelFile(buffer)
       const nowIso = new Date().toISOString()
-      const wasReupload = stage === 'first' ? !!hectoSettlement?.first_uploaded_at : !!hectoSettlement?.final_uploaded_at
-      const hadFinalAlready = !!hectoSettlement?.final_uploaded_at
-      const payload: Record<string, unknown> = { settlement_month: hectoSettlementMonth, updated_at: nowIso }
-      if (stage === 'first') {
-        payload.first_file_name = file.name; payload.first_uploaded_at = nowIso; payload.first_rows = rows
-      } else {
-        payload.final_file_name = file.name; payload.final_uploaded_at = nowIso; payload.final_rows = rows
+      const wasReupload = !!hectoSettlement?.final_uploaded_at
+      const payload: Record<string, unknown> = {
+        settlement_month: hectoSettlementMonth, updated_at: nowIso,
+        final_file_name: file.name, final_uploaded_at: nowIso, final_rows: rows,
       }
       const { data, error } = await supabase
         .from('hecto_coin_settlements')
@@ -3659,13 +3661,8 @@ export default function HRDashboard() {
       setHectoSkipped(skippedRows)
       // 재업로드로 자동 계산값이 달라져도 기존 수동 수정값(override)은 조용히 지우지 않고
       // 그대로 유지된다(payload에 override 컬럼을 아예 포함하지 않음) — 있었다면 안내만 표시.
-      const hadOverrides = Object.keys(hectoSettlement?.first_payment_overrides ?? {}).length > 0
-        || Object.keys(hectoSettlement?.additional_payment_overrides ?? {}).length > 0
-      const baseNotice = stage === 'first'
-        ? (wasReupload
-            ? (hadFinalAlready ? '1차 파일이 재업로드되어 1차·추가·최종 지급액이 모두 다시 계산되었습니다.' : '1차 파일이 재업로드되어 다시 계산되었습니다.')
-            : '1차 파일이 업로드되어 1차 지급액이 계산되었습니다.')
-        : (wasReupload ? '최종 파일이 재업로드되어 추가·최종 지급액이 다시 계산되었습니다.' : '최종 파일이 업로드되어 추가 지급액이 계산되었습니다.')
+      const hadOverrides = Object.keys(hectoSettlement?.additional_payment_overrides ?? {}).length > 0
+      const baseNotice = wasReupload ? '파일이 재업로드되어 지급액이 다시 계산되었습니다.' : '파일이 업로드되어 지급액이 계산되었습니다.'
       setHectoNotice(
         wasReupload && hadOverrides
           ? `${baseNotice} 원본 파일이 변경되었지만 기존 수동 수정값은 유지되고 있습니다. 필요하면 "자동계산으로 복원"으로 되돌릴 수 있습니다.`
@@ -3674,32 +3671,30 @@ export default function HRDashboard() {
     } catch (err) {
       setHectoError(err instanceof Error ? err.message : '엑셀 파싱에 실패했습니다.')
     } finally {
-      setHectoUploading(null)
+      setHectoUploading(false)
     }
   }
 
   /**
-   * 1차/추가 지급 엑셀 다운로드 대상 — 포인트파일 내 중복이름/지급대상 일수 없음
-   * (excludeReason 존재) 및 고객아이디 미매칭·중복확정불가는 전부 제외한다.
-   * employees에 기록이 없는 것 자체는 제외 사유가 아니다(정상재직 기본 처리) —
-   * 실제 지급 대상 여부는 사원리스트/고객아이디 매칭이 결정한다. 추가 지급 엑셀은
-   * 추가지급액이 0원인 사람도 추가로 제외한다.
+   * 지급 엑셀 다운로드 대상 — 포인트파일 내 중복이름/지급대상 일수 없음(excludeReason
+   * 존재) 및 고객아이디 미매칭·중복확정불가는 전부 제외한다. employees에 기록이 없는
+   * 것 자체는 제외 사유가 아니다(정상재직 기본 처리) — 실제 지급 대상 여부는 사원리스트/
+   * 고객아이디 매칭이 결정한다. 최종 지급액(totalAmount)이 0원인 사람도 제외한다.
    */
-  function hectoExcelEligible(e: HectoCoinEntry, kind: 'first' | 'additional'): boolean {
+  function hectoExcelEligible(e: HectoCoinEntry): boolean {
     if (e.excludeReason || e.customerIdMatch !== 'matched' || !e.customerId) return false
-    const amount = kind === 'first' ? e.firstAmount : e.additionalAmount
-    return (amount ?? 0) > 0
+    return (e.totalAmount ?? 0) > 0
   }
-  async function downloadHectoCoinExcel(kind: 'first' | 'additional', entries: HectoCoinEntry[]) {
+  async function downloadHectoCoinExcel(entries: HectoCoinEntry[]) {
     const rows = entries
-      .filter(e => hectoExcelEligible(e, kind))
-      .map(e => ({ name: e.name, customerId: e.customerId!, amount: (kind === 'first' ? e.firstAmount : e.additionalAmount)! }))
+      .filter(hectoExcelEligible)
+      .map(e => ({ name: e.name, customerId: e.customerId!, amount: e.totalAmount! }))
     if (rows.length === 0) { alert('다운로드할 대상자가 없습니다.'); return }
-    setHectoDownloading(kind); setHectoError(null)
+    setHectoDownloading(true); setHectoError(null)
     try {
       const res = await fetch('/api/hecto-coin-excel', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows, settlementMonth: hectoSettlementMonth, kind }),
+        body: JSON.stringify({ rows, settlementMonth: hectoSettlementMonth }),
       })
       if (!res.ok) {
         let errMsg = '엑셀 생성에 실패했습니다.'
@@ -3709,36 +3704,33 @@ export default function HRDashboard() {
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      a.href = url; a.download = hectoCoinFilename(hectoSettlementMonth, kind)
+      a.href = url; a.download = hectoCoinFilename(hectoSettlementMonth)
       document.body.appendChild(a); a.click(); a.remove()
       URL.revokeObjectURL(url)
     } catch (err) {
       setHectoError(err instanceof Error ? err.message : '네트워크 오류로 엑셀 생성에 실패했습니다.')
     } finally {
-      setHectoDownloading(null)
+      setHectoDownloading(false)
     }
   }
 
   /**
-   * 정산 상세 엑셀 다운로드 — 실제 지급 시스템 업로드용(1차/추가 지급 엑셀)과 완전히
-   * 별개인 검토/보관용 파일. 지급 대상 여부와 무관하게 화면에 보이는 hectoEntries
-   * 전체를 담고(고객아이디 미매칭자도 포함), 요약 총액도 화면 카드와 동일한 변수
-   * (hectoFirstTotal 등)를 그대로 보낸다.
+   * 정산 상세 엑셀 다운로드 — 실제 지급 시스템 업로드용(지급 엑셀)과 완전히 별개인
+   * 검토/보관용 파일. 지급 대상 여부와 무관하게 화면에 보이는 hectoEntries 전체를
+   * 담고(고객아이디 미매칭자도 포함), 요약 총액도 화면 카드와 동일한 변수
+   * (hectoFinalTotal 등)를 그대로 보낸다.
    */
   async function downloadHectoCoinDetailExcel() {
     if (hectoEntries.length === 0) { alert('다운로드할 정산 데이터가 없습니다.'); return }
     const summary: HectoCoinDetailSummary = {
       settlementMonth: hectoSettlementMonth,
-      firstCount: hectoFirstReady.length,
-      firstTotal: hectoFirstTotal,
-      additionalCount: hectoAdditionalReady.length,
-      additionalTotal: hectoAdditionalTotal,
+      finalCount: hectoFinalReady.length,
       finalTotal: hectoFinalTotal,
       customerIdMatchedCount: hectoCustomerIdMatchedCount,
       customerIdUnmatchedCount: hectoCustomerIdUnmatchedCount,
       excludedCount: hectoExcludedNames.length,
     }
-    const rows = hectoEntries.map(toHectoCoinDetailRow)
+    const rows = hectoEntries.map(e => toHectoCoinDetailRow(e, hectoSingleUploadMonth))
     setHectoDetailDownloading(true); setHectoError(null)
     try {
       const res = await fetch('/api/hecto-coin-detail-excel', {
@@ -3859,30 +3851,27 @@ export default function HRDashboard() {
   }
 
   /**
-   * 1차/최종 업로드 파일 삭제 — 해당 단계의 파일명/업로드일시/원본 데이터(rows)만
-   * null로 초기화하고 그 즉시 해당 영역은 최초 업로드 전 상태로 돌아간다. 반대편
-   * 단계(1차↔최종)나 다른 정산월 행, 지급액 수동수정(payment_overrides)/걸음수·
-   * 포인트 수동입력(data_overrides)/정산 제외(excluded_employees)/사원리스트는
-   * "그 파일로 생성·반영된" 데이터가 아니라 관리자가 화면에서 별도로 저장한 값이라
+   * 업로드 파일 삭제 — 해당 영역의 파일명/업로드일시/원본 데이터(rows)만 null로
+   * 초기화하고 그 즉시 해당 영역은 최초 업로드 전 상태로 돌아간다. 다른 정산월 행,
+   * 지급액 수동수정(additional_payment_overrides)/걸음수·포인트 수동입력
+   * (additional_data_overrides)/정산 제외(excluded_employees)/사원리스트는 "그
+   * 파일로 생성·반영된" 데이터가 아니라 관리자가 화면에서 별도로 저장한 값이라
    * 건드리지 않는다 — 파일 재업로드 시 수동 수정값이 보존되는 것과 동일한 원칙이며,
    * 덕분에 삭제 후 같은/다른 파일을 다시 업로드하면 그대로 정상적으로 이어서 계산된다.
    * 이 페이지 자체가 이미 로그인 세션(관리자)으로만 접근 가능하므로 별도 권한 체크
    * 없이 기존 업로드/수정 기능들과 동일한 보호 수준으로 동작한다.
    */
-  async function deleteHectoUpload(stage: 'first' | 'final' | 'reference') {
+  async function deleteHectoUpload(stage: 'final' | 'reference') {
     if (!hectoSettlement) return
-    const alreadyUploaded = stage === 'first' ? hectoSettlement.first_uploaded_at
-      : stage === 'final' ? hectoSettlement.final_uploaded_at
+    const alreadyUploaded = stage === 'final' ? hectoSettlement.final_uploaded_at
       : hectoSettlement.hecto_reference_uploaded_at
     if (!alreadyUploaded) return
     if (!confirm('업로드된 파일과 해당 파일을 기준으로 반영된 데이터를 삭제하시겠습니까?')) return
-    const payload = stage === 'first'
-      ? { first_file_name: null, first_uploaded_at: null, first_rows: null }
-      : stage === 'final'
+    const payload = stage === 'final'
       ? { final_file_name: null, final_uploaded_at: null, final_rows: null }
-      // 헥토 기준 파일은 비교 전용이라 지워도 first_rows/final_rows/지급상한 등
-      // 기존 정산 계산에는 애초에 전혀 영향이 없다 — 비교 결과만 사라진다. 기준월도
-      // 함께 초기화해서, 다음 업로드 때 다시 화면 정산월을 기본값으로 쓰게 한다.
+      // 헥토 기준 파일은 비교 전용이라 지워도 final_rows/지급상한 등 기존 정산 계산에는
+      // 애초에 전혀 영향이 없다 — 비교 결과만 사라진다. 기준월도 함께 초기화해서,
+      // 다음 업로드 때 다시 화면 정산월을 기본값으로 쓰게 한다.
       : { hecto_reference_file_name: null, hecto_reference_uploaded_at: null, hecto_reference_rows: null, hecto_reference_month: null }
     setHectoDeletingStage(stage); setHectoError(null)
     const { data, error } = await supabase
@@ -3895,8 +3884,7 @@ export default function HRDashboard() {
     if (error) { setHectoError('삭제 실패: ' + error.message); return }
     setHectoSettlement(data as HectoCoinSettlementRow)
     setHectoNotice(
-      stage === 'first' ? '1차 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
-        : stage === 'final' ? '최종 파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
+      stage === 'final' ? '파일과 그 파일로 반영된 데이터가 삭제되었습니다. 필요하면 다시 업로드해주세요.'
         : '헥토 기준 파일이 삭제되었습니다. 필요하면 다시 업로드해주세요.'
     )
   }
@@ -3931,9 +3919,11 @@ export default function HRDashboard() {
 
   /**
    * 지급금액 수동 수정 저장/복원. first_payment_overrides/additional_payment_overrides는
-   * 정산월 행(hecto_coin_settlements)의 컬럼이라 해당 행이 이미 있어야 하며(1차 파일을
-   * 업로드해야 지급액을 수정할 수 있음), 그 컬럼만 갱신한다 — first_rows/final_rows 등
-   * 다른 컬럼은 건드리지 않으므로 자동 계산 원본은 그대로 유지된다.
+   * 정산월 행(hecto_coin_settlements)의 컬럼이라 해당 행이 이미 있어야 하며(걸음수
+   * 파일을 업로드해야 지급액을 수정할 수 있음), 그 컬럼만 갱신한다 — first_rows/
+   * final_rows 등 다른 컬럼은 건드리지 않으므로 자동 계산 원본은 그대로 유지된다.
+   * 2026-10부터는 화면에서 kind='additional'만 쓴다 — kind='first'는 2026-09까지의
+   * 과거 데이터 재계산 경로로만 남아 있다(lib/hecto-coin.ts 상단 주석 참고).
    */
   async function saveHectoOverride(kind: 'first' | 'additional', name: string, amount: number) {
     if (!hectoSettlement) return
@@ -4083,9 +4073,9 @@ export default function HRDashboard() {
   /**
    * 휴직자 제외 명단 저장 — 텍스트 원본을 정규화·중복제거(parseHectoCoinLeaveExcludedInput)
    * 한 뒤 hecto_coin_settlements.leave_excluded_names(정산월별)에 통째로 저장한다.
-   * 아직 1차 파일도 업로드되지 않아 이번 달 행 자체가 없을 수도 있으므로(명단을 미리
-   * 등록해두는 용도) update가 아니라 upsert를 쓴다 — 다른 컬럼은 payload에 없으므로
-   * 원본 파일/override/제외 플래그 등 기존 값은 전혀 건드리지 않는다.
+   * 아직 걸음수 파일도 업로드되지 않아 이번 달 행 자체가 없을 수도 있으므로(명단을
+   * 미리 등록해두는 용도) update가 아니라 upsert를 쓴다 — 다른 컬럼은 payload에
+   * 없으므로 원본 파일/override/제외 플래그 등 기존 값은 전혀 건드리지 않는다.
    */
   async function saveHectoLeaveExcludedNames(raw: string) {
     const names = parseHectoCoinLeaveExcludedInput(raw)
@@ -5166,20 +5156,22 @@ export default function HRDashboard() {
             : activeTab === 'hecto' ? (() => {
               // 상단 요약 카드와 "정산 상세 엑셀 다운로드"가 총액이 어긋나지 않도록
               // 컴포넌트 최상단에서 미리 계산해둔 값을 그대로 재사용한다(중복 계산 금지).
-              const firstReady      = hectoFirstReady
-              const firstTotal      = hectoFirstTotal
-              const additionalReady = hectoAdditionalReady
-              const additionalTotal = hectoAdditionalTotal
-              const finalTotal      = hectoFinalTotal
+              const finalReady = hectoFinalReady
+              const finalTotal = hectoFinalTotal
               // 화면 표시용 경고: 포인트파일 중복이름/지급대상 없음 등 지급 계산 자체가
-              // 불가능한 사유(excludeReason) + 최종파일에만 있어 1차와 매칭 안 되는 경우 +
-              // employees에 동명이인이 있어 일할계산 이벤트를 확정할 수 없는 경우(정상재직
-              // 기본값으로 계산은 되지만 실제로 예외가 있을 수 있어 담당자 확인 필요)
-              const warnEntries = hectoEntries.filter(e => e.excludeReason || e.pointsMatchStatus === 'final_only' || e.employeeMatch === 'duplicate')
+              // 불가능한 사유(excludeReason) + employees에 동명이인이 있어 일할계산
+              // 이벤트를 확정할 수 없는 경우(정상재직 기본값으로 계산은 되지만 실제로
+              // 예외가 있을 수 있어 담당자 확인 필요). "최종파일에만 있어 1차와 매칭 안
+              // 되는 경우"(final_only)는 2026-09까지처럼 실제로 1차 파일을 올렸던 과거
+              // 정산월에서만 진짜 이상 케이스다 — 1회 업로드 정산월(hectoSingleUploadMonth)
+              // 에서는 모든 사람이 구조적으로 final_only이므로 경고 대상에서 제외한다.
+              const warnEntries = hectoEntries.filter(e =>
+                e.excludeReason
+                || (!hectoSingleUploadMonth && e.pointsMatchStatus === 'final_only')
+                || e.employeeMatch === 'duplicate')
               const customerIdMatchedCount   = hectoCustomerIdMatchedCount
               const customerIdUnmatchedCount = hectoCustomerIdUnmatchedCount
-              const canDownloadFirst      = hectoEntries.some(e => hectoExcelEligible(e, 'first'))
-              const canDownloadAdditional = hectoEntries.some(e => hectoExcelEligible(e, 'additional'))
+              const canDownloadHecto = hectoEntries.some(hectoExcelEligible)
 
               return (
                 <div className="space-y-4">
@@ -5239,38 +5231,19 @@ export default function HRDashboard() {
                     </div>
                   )}
 
-                  {/* 1차/최종 파일 업로드 + 사원리스트 업로드 + 헥토 기준 파일 업로드 */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-gray-800">1차 파일 업로드</p>
-                        <HectoUploadButton label="엑셀 업로드" uploading={hectoUploading === 'first'}
-                          onFile={file => handleHectoUpload(file, 'first')} />
-                      </div>
-                      {hectoSettlement?.first_uploaded_at ? (
-                        <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
-                          <span>✓ {hectoSettlement.first_file_name} · {new Date(hectoSettlement.first_uploaded_at).toLocaleString('ko-KR')} 정산 완료</span>
-                          <button onClick={() => deleteHectoUpload('first')}
-                            disabled={hectoDeletingStage === 'first' || hectoUploading === 'first'}
-                            className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
-                            {hectoDeletingStage === 'first' ? '삭제 중...' : '삭제'}
-                          </button>
-                        </p>
-                      ) : (
-                        <p className="text-xs text-gray-400">아직 업로드되지 않았습니다.</p>
-                      )}
-                    </div>
+                  {/* 걸음수 파일 업로드(1회) + 사원리스트 업로드 + 헥토 기준 파일 업로드 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-semibold text-gray-800">최종 파일 업로드</p>
-                        <HectoUploadButton label="엑셀 업로드" uploading={hectoUploading === 'final'}
-                          onFile={file => handleHectoUpload(file, 'final')} />
+                        <HectoUploadButton label="엑셀 업로드" uploading={hectoUploading}
+                          onFile={file => handleHectoUpload(file)} />
                       </div>
                       {hectoSettlement?.final_uploaded_at ? (
                         <p className="text-xs text-emerald-600 flex items-center justify-between gap-2">
                           <span>✓ {hectoSettlement.final_file_name} · {new Date(hectoSettlement.final_uploaded_at).toLocaleString('ko-KR')} 정산 완료</span>
                           <button onClick={() => deleteHectoUpload('final')}
-                            disabled={hectoDeletingStage === 'final' || hectoUploading === 'final'}
+                            disabled={hectoDeletingStage === 'final' || hectoUploading}
                             className="text-red-500 hover:text-red-700 font-semibold shrink-0 disabled:opacity-40">
                             {hectoDeletingStage === 'final' ? '삭제 중...' : '삭제'}
                           </button>
@@ -5362,13 +5335,10 @@ export default function HRDashboard() {
                   </div>
 
                   {/* 월별 요약 카드 */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     {[
-                      { label: '1차 지급 대상 인원', value: `${firstReady.length}명`,               color: 'text-blue-600'   },
-                      { label: '1차 지급 총액',       value: `${firstTotal.toLocaleString()}원`,      color: 'text-blue-600'   },
-                      { label: '추가 지급 대상 인원', value: `${additionalReady.length}명`,           color: 'text-purple-600' },
-                      { label: '추가 지급 총액',       value: `${additionalTotal.toLocaleString()}원`, color: 'text-purple-600' },
-                      { label: '월 최종 지급 총액',    value: `${finalTotal.toLocaleString()}원`,      color: 'text-orange-600' },
+                      { label: '최종 지급 대상 인원', value: `${finalReady.length}명`,          color: 'text-blue-600'   },
+                      { label: '최종 지급 총액',       value: `${finalTotal.toLocaleString()}원`, color: 'text-orange-600' },
                     ].map(c => (
                       <div key={c.label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
                         <p className={`text-xl font-black ${c.color}`}>{c.value}</p>
@@ -5516,21 +5486,13 @@ export default function HRDashboard() {
 
                   {/* 지급용 엑셀 다운로드 */}
                   <div className="flex justify-end gap-2">
-                    <button onClick={() => downloadHectoCoinExcel('first', hectoEntries)}
-                      disabled={!canDownloadFirst || hectoDownloading !== null}
+                    <button onClick={() => downloadHectoCoinExcel(hectoEntries)}
+                      disabled={!canDownloadHecto || hectoDownloading}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                      {hectoDownloading === 'first' ? '생성 중...' : '1차 지급 엑셀 다운로드'}
-                    </button>
-                    <button onClick={() => downloadHectoCoinExcel('additional', hectoEntries)}
-                      disabled={!canDownloadAdditional || hectoDownloading !== null}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                      {hectoDownloading === 'additional' ? '생성 중...' : '추가 지급 엑셀 다운로드'}
+                      {hectoDownloading ? '생성 중...' : '지급 엑셀 다운로드'}
                     </button>
                     <div className="w-px bg-gray-200 mx-1" />
                     <button onClick={downloadHectoCoinDetailExcel}
@@ -5559,7 +5521,7 @@ export default function HRDashboard() {
 
                   {/* 개인별 정산 테이블 */}
                   {hectoEntries.length === 0 ? (
-                    <EmptyState label={hectoLoading ? '불러오는 중...' : '업로드된 데이터가 없습니다. 1차 파일을 먼저 업로드해주세요.'} />
+                    <EmptyState label={hectoLoading ? '불러오는 중...' : '업로드된 데이터가 없습니다. 걸음수 파일을 먼저 업로드해주세요.'} />
                   ) : (
                     <div className="overflow-auto max-h-[70vh] border border-gray-200 rounded-xl">
                       <table className="w-full text-xs">
@@ -5589,11 +5551,8 @@ export default function HRDashboard() {
                             <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 누적 걸음수</th>
                             <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급대상 일수</th>
                             <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">지급 상한</th>
-                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 포인트</th>
-                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">1차 지급액</th>
                             <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 포인트</th>
-                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">추가 지급액</th>
-                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">월 최종 지급액</th>
+                            <th className="sticky top-0 z-10 bg-gray-50 text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">최종 지급액</th>
                             <th className="sticky top-0 z-10 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">상태</th>
                           </tr>
                         </thead>
@@ -5628,25 +5587,6 @@ export default function HRDashboard() {
                               <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{e.payCap != null ? e.payCap.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
                                 <HectoEditableDataCell
-                                  points={e.firstPoints} steps={e.firstStepsManual ?? e.firstStepsFile} isManual={e.firstDataIsManual}
-                                  filePoints={e.firstPointsFile} inPointsFile={e.firstInPointsFile}
-                                  disabled={!!e.excludeReason}
-                                  saving={hectoDataOverrideSavingKey === `first:${e.name}`}
-                                  onSave={entry => saveHectoDataOverride('first', e.name, entry)}
-                                  onRestore={() => clearHectoDataOverride('first', e.name)} />
-                              </td>
-                              <td className="px-3 py-2 text-right whitespace-nowrap">
-                                {e.excludeReason
-                                  ? <span className="text-gray-800">{e.firstAmount != null ? e.firstAmount.toLocaleString() + '원' : '-'}</span>
-                                  : <HectoEditableAmountCell
-                                      appliedAmount={e.firstAmount} autoAmount={e.firstAutoAmount} overrideAmount={e.firstOverrideAmount}
-                                      payCap={e.payCap} otherAppliedAmount={0}
-                                      saving={hectoOverrideSavingKey === `first:${e.name}`}
-                                      onSave={amt => saveHectoOverride('first', e.name, amt)}
-                                      onRestore={() => clearHectoOverride('first', e.name)} />}
-                              </td>
-                              <td className="px-3 py-2 text-right whitespace-nowrap">
-                                <HectoEditableDataCell
                                   points={e.finalPoints} steps={e.finalStepsManual ?? e.finalStepsFile} isManual={e.finalDataIsManual}
                                   filePoints={e.finalPointsFile} inPointsFile={e.finalInPointsFile}
                                   disabled={!!e.excludeReason}
@@ -5656,19 +5596,18 @@ export default function HRDashboard() {
                               </td>
                               <td className="px-3 py-2 text-right whitespace-nowrap">
                                 {e.excludeReason
-                                  ? <span className="text-gray-600">{e.additionalAmount != null ? e.additionalAmount.toLocaleString() + '원' : '-'}</span>
+                                  ? <span className="text-gray-800 font-bold">{e.totalAmount != null ? e.totalAmount.toLocaleString() + '원' : '-'}</span>
                                   : <HectoEditableAmountCell
-                                      appliedAmount={e.additionalAmount} autoAmount={e.additionalAutoAmount} overrideAmount={e.additionalOverrideAmount}
+                                      appliedAmount={e.totalAmount} autoAmount={e.additionalAutoAmount} overrideAmount={e.additionalOverrideAmount}
                                       payCap={e.payCap} otherAppliedAmount={e.firstAmount ?? 0}
                                       saving={hectoOverrideSavingKey === `additional:${e.name}`}
                                       onSave={amt => saveHectoOverride('additional', e.name, amt)}
                                       onRestore={() => clearHectoOverride('additional', e.name)} />}
                               </td>
-                              <td className="px-3 py-2 text-right font-bold text-orange-600 whitespace-nowrap">{e.totalAmount != null ? e.totalAmount.toLocaleString() + '원' : '-'}</td>
                               <td className="px-3 py-2 whitespace-nowrap">
                                 {e.excludeReason
                                   ? <span className="text-red-600 font-semibold">{e.excludeReason}</span>
-                                  : e.pointsMatchStatus === 'final_only'
+                                  : (!hectoSingleUploadMonth && e.pointsMatchStatus === 'final_only')
                                   ? <span className="text-red-600 font-semibold">1차 미매칭</span>
                                   : (
                                     <>
@@ -5678,7 +5617,7 @@ export default function HRDashboard() {
                                         ? (
                                           <span className="text-emerald-600 font-semibold">
                                             {e.statusLabel}
-                                            <span className="text-amber-600 font-semibold"> · {e.firstDataIsManual ? '1차 수동입력' : '1차 포인트 파일 미포함'}</span>
+                                            <span className="text-amber-600 font-semibold"> · {(e.firstDataIsManual || e.finalDataIsManual) ? '포인트 파일 미포함(수동입력 적용)' : '포인트 파일 미포함'}</span>
                                           </span>
                                         )
                                         : <span className="text-emerald-600 font-semibold">{e.statusLabel}</span>}

@@ -10,8 +10,22 @@ import { daysInMonth } from './wellness-mail'
 // "이름 + 월 누적 걸음수(참고용) + 월 누적 포인트(지급 기준)"만 제공한다.
 //
 // 저장 방식은 기존과 동일: 계산 결과가 아니라 "업로드 파일을 파싱한 원본"만
-// hecto_coin_settlements에 저장하고(first_rows/final_rows), 화면에 보이는 지급액은
-// 항상 computeHectoCoinEntries()가 그 원본 + employees 현재 상태에서 매번 다시 계산한다.
+// hecto_coin_settlements에 저장하고, 화면에 보이는 지급액은 항상
+// computeHectoCoinEntries()가 그 원본 + employees 현재 상태에서 매번 다시 계산한다.
+//
+// 2026-10부터: 걸음수 파일을 한 번만(최종 1회) 업로드하면 그대로 최종 지급액이 되는
+// 방식으로 바뀌었다 — 매달 30일 "1차" 파일을 올려 선지급하고 익월 1일 "최종" 파일로
+// "추가" 지급액을 top-up하던 2단계 절차가 없어졌다. 이 파일 자체의 first_rows/
+// first_payment_overrides/first_data_overrides 등 "1차 단계" 컬럼·필드는 전부
+// 그대로 남아 있다 — 삭제하지 않았다. 2026-09까지 실제로 2단계 절차로 처리된 과거
+// 정산월의 지급 총액(totalAmount)이 이 필드들에 의존하기 때문에, 과거 데이터를 전혀
+// 건드리지 않으면서 새 1회 업로드 방식을 추가하려면 이 필드들을 계속 읽어야 한다.
+// 대신 "1차 파일을 아예 올리지 않은(=first_rows가 비어 있는) 정산월"에서는
+// buildEntry가 1차 지급액을 자동으로 0으로 확정해, 최종(= 기존에 "추가"라 부르던)
+// 지급액이 곧 전체 지급액이 되도록 한다(singleUploadMonth 플래그, 아래 buildEntry 참고).
+// 화면/엑셀에서는 이제 "1차"라는 개념 자체를 보여주지 않는다 — 업로드 버튼도 하나뿐이고
+// (handleHectoUpload가 늘 final_rows 쪽에 쓴다), 지급액 수동 수정도 항상 기존
+// "추가"(additional) 슬롯 하나만 쓴다(saveHectoOverride('additional', ...)).
 
 export const HECTO_COIN_MONTHLY_CAP = 200000
 
@@ -885,6 +899,7 @@ function buildEntry(
   firstOverrides: HectoCoinPaymentOverrides, additionalOverrides: HectoCoinPaymentOverrides,
   finalFileUploaded: boolean,
   firstDataOverrides: HectoCoinDataOverrides, additionalDataOverrides: HectoCoinDataOverrides,
+  singleUploadMonth: boolean,
 ): HectoCoinEntry {
   // first/final 둘 다 null일 수 있다 — 헥토코인 포인트 파일에는 없지만 employees 이벤트만
   // 있어 새로 추가된 행(no_points_file). 이 경우 company/position/steps는 포인트 파일에서
@@ -950,9 +965,16 @@ function buildEntry(
   // 보정값도 없다면 1차 지급액을 0으로 확정한다(포인트/걸음수 칸은 '-'로 남기되 지급액은
   // 명확히 0원) — 관리자가 직접 걸음수/포인트를 입력하면 위 firstPoints가 그 값을 쓰므로
   // 이 0-fallback 이전에 이미 정상적으로 MIN(입력포인트, 지급상한)으로 계산된다.
+  //
+  // singleUploadMonth(1회 업로드 정산월, 2026-10부터 기본값)에서는 애초에 1차 파일을
+  // 올리지 않으므로 모든 사람이 final_only가 된다 — 이 경우에도 1차 지급액을 0으로
+  // 확정해야 최종(= 기존 "추가") 지급액이 곧 전체 지급액이 된다. 2026-09까지처럼 실제로
+  // 1차 파일을 올렸던 과거 정산월(singleUploadMonth=false)에서는 이 조건이 적용되지
+  // 않아 기존 동작(최종 파일에만 있는 사람은 1차 지급액 미확정 · "1차 미매칭")이 그대로
+  // 유지된다 — 과거 데이터 재계산 결과가 달라지지 않는다.
   const firstAutoAmount = payCap == null ? null
     : firstPoints != null ? Math.min(firstPoints, payCap)
-    : pointsMatchStatus === 'no_points_file' ? 0 : null
+    : (pointsMatchStatus === 'no_points_file' || (singleUploadMonth && pointsMatchStatus === 'final_only')) ? 0 : null
   // 지급액 수동 수정은 "자동 계산값이 존재하는(=실제 지급 계산이 가능한) 사람"에게만
   // 의미가 있다 — 포인트파일 중복/동명이인처럼 자동 계산 자체가 없는 행에는 적용하지
   // 않는다(어차피 화면에서도 편집 UI를 노출하지 않는다).
@@ -1039,6 +1061,12 @@ export function computeHectoCoinEntries(
   const finalByName = groupByNormalizedName(finalRows)
   const names = new Set<string>([...firstByName.keys(), ...finalByName.keys()])
   const finalFileUploaded = finalRows.length > 0
+  // 이 정산월에 1차 파일이 애초에 한 번도 업로드되지 않았으면(2026-10부터의 기본 흐름)
+  // "1회 업로드" 모드로 간주한다 — 이 경우 final_only인 모든 사람의 1차 지급액을
+  // buildEntry가 0으로 확정해, 최종(=추가) 지급액이 곧 전체 지급액이 되게 한다.
+  // 2026-09까지처럼 실제로 1차 파일을 올렸던 과거 정산월(firstRows.length > 0)은
+  // singleUploadMonth=false로 남아 기존 2단계 계산이 그대로 재현된다.
+  const singleUploadMonth = firstRows.length === 0
   const entries: HectoCoinEntry[] = []
 
   for (const name of names) {
@@ -1052,7 +1080,7 @@ export function computeHectoCoinEntries(
     const first = firsts.length > 1 ? mergeDuplicateRows(firsts) : (firsts[0] ?? null)
     const final = finals.length > 1 ? mergeDuplicateRows(finals) : (finals[0] ?? null)
     const rawName = (final ?? first)!.name
-    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, wasMergedFromDuplicates, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
+    entries.push(buildEntry(settlementMonth, name, name, rawName, first, final, wasMergedFromDuplicates, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides, singleUploadMonth))
   }
 
   // 헥토코인 포인트 파일에는 이름이 없지만, employees에 이번 정산월 입사/퇴사/휴직/복귀
@@ -1070,7 +1098,7 @@ export function computeHectoCoinEntries(
     const employeeMatch = matchEmployeeByName(empName, employees)
     if (employeeMatch.kind !== 'matched') continue
     if (!calcHectoCoinFromEmployee(employeeMatch.emp, settlementMonth).hasMonthEvent) continue
-    entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides))
+    entries.push(buildEntry(settlementMonth, empName, empName, emp.name, null, null, false, employees, roster, firstOverrides, additionalOverrides, finalFileUploaded, firstDataOverrides, additionalDataOverrides, singleUploadMonth))
   }
 
   // 정산 대상 제외 — 항상 UNION(포인트 파일 ∪ employees 이벤트)이 전부 만들어진 뒤
@@ -1088,9 +1116,9 @@ export function computeHectoCoinEntries(
   return visible.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 
-export function hectoCoinFilename(settlementMonth: string, kind: 'first' | 'additional'): string {
+export function hectoCoinFilename(settlementMonth: string): string {
   const [y, m] = settlementMonth.split('-')
-  return `헥토코인_${kind === 'first' ? '1차지급' : '추가지급'}_${y}년_${m}월.xlsx`
+  return `헥토코인_지급_${y}년_${m}월.xlsx`
 }
 
 // ─── 정산 상세 엑셀(검토/보관용 — 실제 지급 업로드용 엑셀과 완전히 별개) ────────────
@@ -1101,14 +1129,21 @@ export function hectoCoinFilename(settlementMonth: string, kind: 'first' | 'addi
 // app/api/hecto-coin-detail-excel/route.ts(서버 전용)에 둔다 — lib/hecto-coin.ts는
 // 클라이언트(app/page.tsx)에서도 import하므로 exceljs 의존성을 여기 들이지 않는다.
 
-/** 화면 "상태" 컬럼 + "고객아이디" 컬럼이 보여주는 상태/사유 정보를 한 문자열로 합친다
- *  — 상세 엑셀 O열에 그대로 쓰기 위함(화면에 흩어진 정보를 검토용 문서 한 칸에 정리). */
-export function hectoCoinStatusText(e: HectoCoinEntry): string {
+/**
+ * 화면 "상태" 컬럼 + "고객아이디" 컬럼이 보여주는 상태/사유 정보를 한 문자열로 합친다
+ * — 상세 엑셀 O열에 그대로 쓰기 위함(화면에 흩어진 정보를 검토용 문서 한 칸에 정리).
+ *
+ * singleUploadMonth가 true(1회 업로드 정산월)면 'final_only'는 더 이상 "1차와
+ * 매칭이 안 된 이상 케이스"가 아니라 모든 사람의 정상적인 상태이므로 "1차 미매칭"
+ * 문구를 붙이지 않는다 — 2026-09까지처럼 실제로 1차 파일을 올렸던 과거 정산월
+ * (singleUploadMonth=false)에서는 기존 그대로 "1차 미매칭"을 보여준다.
+ */
+export function hectoCoinStatusText(e: HectoCoinEntry, singleUploadMonth: boolean): string {
   const parts: string[] = [e.excludeReason ?? e.statusLabel]
-  if (e.pointsMatchStatus === 'final_only') parts.push('1차 미매칭')
+  if (e.pointsMatchStatus === 'final_only') { if (!singleUploadMonth) parts.push('1차 미매칭') }
   else if (e.pointsMatchStatus === 'first_only') parts.push('최종 미정산')
   else if (e.pointsMatchStatus === 'no_points_file') {
-    parts.push(e.firstDataIsManual ? '포인트 파일 미포함(수동입력 적용)' : '포인트 파일 미포함')
+    parts.push((e.firstDataIsManual || e.finalDataIsManual) ? '포인트 파일 미포함(수동입력 적용)' : '포인트 파일 미포함')
   }
   if (e.firstDataIsManual) parts.push('1차 데이터 수동입력')
   if (e.finalDataIsManual) parts.push('최종 데이터 수동입력')
@@ -1129,44 +1164,33 @@ export type HectoCoinDetailRow = {
   steps: number | null
   payableDays: number | null
   payCap: number | null
-  firstPoints: number | null
-  firstAmount: number | null
   finalPoints: number | null
-  additionalAmount: number | null
-  totalAmount: number | null
+  finalAmount: number | null   // 최종 지급액(= totalAmount) — 1차/추가 구분 없이 하나로 통합
   statusText: string
   pointsMatchStatus: HectoCoinPointsMatchStatus
-  firstOverrideAmount: number | null
-  firstAutoAmount: number | null
-  additionalOverrideAmount: number | null
-  additionalAutoAmount: number | null
-  firstDataIsManual: boolean       // 1차 걸음수/포인트 수동입력 여부(Y/N)
-  finalDataIsManual: boolean       // 최종 걸음수/포인트 수동입력 여부(Y/N)
+  finalOverrideAmount: number | null
+  finalAutoAmount: number | null
+  finalDataIsManual: boolean       // 포인트 데이터 수동입력 여부(Y/N)
 }
 
 /** HectoCoinEntry(화면에 쓰이는 전체 계산 결과) → 상세 엑셀 전송용 단순 row.
  *  화면과 값이 반드시 같아야 하므로 화면이 쓰는 필드를 그대로 옮겨 담기만 한다. */
-export function toHectoCoinDetailRow(e: HectoCoinEntry): HectoCoinDetailRow {
+export function toHectoCoinDetailRow(e: HectoCoinEntry, singleUploadMonth: boolean): HectoCoinDetailRow {
   return {
     name: e.name, customerId: e.customerId,
     displayJoinDate: e.displayJoinDate, displayExitDate: e.displayExitDate,
     displayLeaveDate: e.displayLeaveDate, displayReturnDate: e.displayReturnDate,
     steps: e.steps, payableDays: e.payableDays, payCap: e.payCap,
-    firstPoints: e.firstPoints, firstAmount: e.firstAmount,
-    finalPoints: e.finalPoints, additionalAmount: e.additionalAmount, totalAmount: e.totalAmount,
-    statusText: hectoCoinStatusText(e), pointsMatchStatus: e.pointsMatchStatus,
-    firstOverrideAmount: e.firstOverrideAmount, firstAutoAmount: e.firstAutoAmount,
-    additionalOverrideAmount: e.additionalOverrideAmount, additionalAutoAmount: e.additionalAutoAmount,
-    firstDataIsManual: e.firstDataIsManual, finalDataIsManual: e.finalDataIsManual,
+    finalPoints: e.finalPoints, finalAmount: e.totalAmount,
+    statusText: hectoCoinStatusText(e, singleUploadMonth), pointsMatchStatus: e.pointsMatchStatus,
+    finalOverrideAmount: e.additionalOverrideAmount, finalAutoAmount: e.additionalAutoAmount,
+    finalDataIsManual: e.finalDataIsManual,
   }
 }
 
 export type HectoCoinDetailSummary = {
   settlementMonth: string
-  firstCount: number
-  firstTotal: number
-  additionalCount: number
-  additionalTotal: number
+  finalCount: number
   finalTotal: number
   customerIdMatchedCount: number
   customerIdUnmatchedCount: number
