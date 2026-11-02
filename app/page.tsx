@@ -5455,7 +5455,7 @@ export default function HRDashboard() {
                                 <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">헥토 금액</th>
                                 <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">뚜벅투게더</th>
                                 <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">비교용 헥토 금액</th>
-                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">대시보드 지급상한</th>
+                                <th className="text-right px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">대시보드 지급액</th>
                                 <th className="text-left px-3 py-2 font-semibold text-gray-500 whitespace-nowrap">결과</th>
                               </tr>
                             </thead>
@@ -5470,7 +5470,7 @@ export default function HRDashboard() {
                                     <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.hectoAmount != null ? r.hectoAmount.toLocaleString() + '원' : '-'}</td>
                                     <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{r.result === 'hecto_only' || r.result === 'matched' || r.result === 'amount_mismatch' ? r.ttubeokAmount.toLocaleString() + '원' : '-'}</td>
                                     <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.comparisonHectoAmount != null ? r.comparisonHectoAmount.toLocaleString() + '원' : '-'}</td>
-                                    <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.dashboardPayCap != null ? r.dashboardPayCap.toLocaleString() + '원' : '-'}</td>
+                                    <td className="px-3 py-2 text-right text-gray-600 whitespace-nowrap">{r.dashboardAmount != null ? r.dashboardAmount.toLocaleString() + '원' : '-'}</td>
                                     <td className="px-3 py-2 whitespace-nowrap">
                                       <span className={`text-xs font-semibold px-2 py-0.5 rounded border ${cls}`}>{label}</span>
                                     </td>

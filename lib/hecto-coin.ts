@@ -463,17 +463,18 @@ export type HectoReferenceComparisonRow = {
   hectoAmount: number | null              // 헥토 기준 엑셀의 금액(헥토 파일에 없으면 null)
   ttubeokAmount: number                   // 비고에서 추출한 뚜벅투게더 금액(뚜벅투게더 지급월이 아니면 항상 0)
   comparisonHectoAmount: number | null    // 비교용 헥토 금액 = hectoAmount - ttubeokAmount(뚜벅투게더월만 차감)
-  // "대시보드 지급상한" 컬럼에 표시되는 값 — 이름과 달리 실제로는 e.payCap(일할계산으로
-  // 정해지는 이론상 상한, 정상재직자는 항상 200,000 고정)이 아니라 e.totalAmount(그
-  // 상한 안에서 실제로 계산된 지급액 = min(포인트 기준 금액, payCap))를 담는다. 헥토
-  // 기준 엑셀의 금액은 "그 달 실제로 지급된/지급할 금액"이므로, 비교 대상도 "실제 지급액"
-  // 이어야 맞다 — payCap과 비교하면 정상재직자는 포인트가 얼마든 상한(200,000)과만
-  // 비교돼, 지급액이 상한에 못 미치는 대부분의 사람이 전부 "불일치"로 잘못 뜬다(실제
-  // 2026-10 데이터로 확인: 22건의 "불일치" 중 21건이 이 버그였다). 일할계산으로 payCap
-  // 자체를 낮추는 로직(calcHectoCoinFromEmployee)은 전혀 건드리지 않았다 — totalAmount가
-  // 이미 그 낮아진 payCap 안에서 계산되므로 휴직/퇴사 등 일할계산 대상자도 자동으로
-  // 정확히 비교된다.
-  dashboardPayCap: number | null
+  // 화면 "대시보드 지급액" 컬럼에 표시되는 값 = e.totalAmount(실제로 계산된 지급액 =
+  // min(포인트 기준 금액, payCap)). 예전엔 e.payCap(일할계산으로 정해지는 이론상
+  // 상한 — 정상재직자는 항상 200,000 고정)과 비교했는데, 헥토 기준 엑셀의 금액은
+  // "그 달 실제로 지급된/지급할 금액"이므로 비교 대상도 "실제 지급액"이어야 맞다 —
+  // payCap과 비교하면 정상재직자는 포인트가 얼마든 상한(200,000)과만 비교돼, 지급액이
+  // 상한에 못 미치는 대부분의 사람이 전부 "불일치"로 잘못 뜬다(실제 2026-10 데이터로
+  // 확인: 22건의 "불일치" 중 21건이 이 버그였다). 일할계산으로 payCap 자체를 낮추는
+  // 로직(calcHectoCoinFromEmployee)은 전혀 건드리지 않았다 — totalAmount가 이미 그
+  // 낮아진 payCap 안에서 계산되므로 휴직/퇴사 등 일할계산 대상자도 자동으로 정확히
+  // 비교된다. 필드명도 처음엔 dashboardPayCap이었다가 "상한"이 아니라 "실제 지급액"을
+  // 담는다는 게 명확해지도록 dashboardAmount로 바꿨다.
+  dashboardAmount: number | null
   result: HectoReferenceComparisonResult
 }
 
@@ -538,7 +539,7 @@ export function compareHectoReference(
       // 같은 헥토 기준 파일 안에 동일 이름이 여러 번 — 임의로 합산하지 않고 확인 필요로 표시
       rows.push({
         name, hectoAmount: null, ttubeokAmount: 0, comparisonHectoAmount: null,
-        dashboardPayCap: dash?.totalAmount ?? null, result: 'duplicate',
+        dashboardAmount: dash?.totalAmount ?? null, result: 'duplicate',
       })
       continue
     }
@@ -547,18 +548,18 @@ export function compareHectoReference(
     if (ref && !dash) {
       rows.push({
         name, hectoAmount: ref.amount, ttubeokAmount: isTtubeok ? extractTtubeokTogetherAmount(ref.note) : 0,
-        comparisonHectoAmount: null, dashboardPayCap: null, result: 'hecto_only',
+        comparisonHectoAmount: null, dashboardAmount: null, result: 'hecto_only',
       })
     } else if (!ref && dash) {
       rows.push({
         name, hectoAmount: null, ttubeokAmount: 0, comparisonHectoAmount: null,
-        dashboardPayCap: dash.totalAmount, result: 'dashboard_only',
+        dashboardAmount: dash.totalAmount, result: 'dashboard_only',
       })
     } else if (ref && dash) {
       const ttubeokAmount = isTtubeok ? extractTtubeokTogetherAmount(ref.note) : 0
       const comparisonHectoAmount = ref.amount - ttubeokAmount
       const result: HectoReferenceComparisonResult = comparisonHectoAmount === dash.totalAmount ? 'matched' : 'amount_mismatch'
-      rows.push({ name, hectoAmount: ref.amount, ttubeokAmount, comparisonHectoAmount, dashboardPayCap: dash.totalAmount, result })
+      rows.push({ name, hectoAmount: ref.amount, ttubeokAmount, comparisonHectoAmount, dashboardAmount: dash.totalAmount, result })
     }
   }
   rows.sort((a, b) => a.name.localeCompare(b.name, 'ko'))
