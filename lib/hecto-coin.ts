@@ -302,6 +302,14 @@ export function parseHectoCoinExcelFile(buffer: ArrayBuffer): ParsedHectoCoinFil
 const ROSTER_ID_HEADERS = ['고객아이디', '아이디', 'id', '이메일', 'email']
 const ROSTER_NAME_HEADERS = ['이름', '성명', '고객명']
 
+/** 메일아이디 컬럼 헤더 인식 — 정확히 일치(ROSTER_ID_HEADERS)하지 않아도 "회사이메일"/
+ *  "사내이메일"/"이메일주소"처럼 "메일" 또는 "아이디"가 포함된 헤더도 인정한다(실제
+ *  업로드 파일에서 "이메일"이 아니라 "회사이메일"로 쓰는 경우가 확인됨). */
+function isRosterIdHeader(norm: string): boolean {
+  return ROSTER_ID_HEADERS.some(h => h.toLowerCase() === norm.toLowerCase())
+    || norm.includes('메일') || norm.includes('아이디')
+}
+
 /**
  * 사원리스트(이름 + 고객아이디 매핑) 엑셀 파싱. 실제 헤더명이 회사마다 다를 수 있어
  * 자주 쓰이는 헤더 후보군으로 유연하게 인식한다. 이름은 stripEnglishFromName으로
@@ -314,7 +322,12 @@ export function parseHectoCoinRosterFile(buffer: ArrayBuffer): { entries: HectoC
   const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
 
   let headerRow = -1
+  // 이름/고객아이디 둘 다 같은 행에서 찾지 못했을 때도 어느 쪽이 실제로 없는지 정확히
+  // 안내하기 위해, 완전히 일치하는 행을 못 찾으면 그중 가장 많이 맞은 행을 col에 남겨둔다
+  // (예: 이름은 찾았는데 고객아이디만 인식 못 한 경우 "이름을 찾을 수 없다"는 엉뚱한
+  // 메시지가 뜨던 문제를 고쳤다).
   let col = { name: -1, customerId: -1 }
+  let bestMatchCount = -1
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     const row = rows[r] as unknown[]
     const found = { name: -1, customerId: -1 }
@@ -322,12 +335,16 @@ export function parseHectoCoinRosterFile(buffer: ArrayBuffer): { entries: HectoC
       const norm = normalizeHeader(cell)
       if (!norm) return
       if (found.name === -1 && ROSTER_NAME_HEADERS.includes(norm)) found.name = c
-      if (found.customerId === -1 && ROSTER_ID_HEADERS.some(h => h.toLowerCase() === norm.toLowerCase())) found.customerId = c
+      if (found.customerId === -1 && isRosterIdHeader(norm)) found.customerId = c
     })
     if (found.name !== -1 && found.customerId !== -1) { headerRow = r; col = found; break }
+    const matchCount = (found.name !== -1 ? 1 : 0) + (found.customerId !== -1 ? 1 : 0)
+    if (matchCount > bestMatchCount) { bestMatchCount = matchCount; col = found }
   }
-  if (headerRow === -1 || col.name === -1) throw new Error('이름(성명/고객명) 컬럼을 찾을 수 없습니다.')
-  if (col.customerId === -1) throw new Error('고객아이디(아이디/ID/이메일) 컬럼을 찾을 수 없습니다.')
+  if (headerRow === -1) {
+    if (col.name === -1) throw new Error('이름(성명/고객명) 컬럼을 찾을 수 없습니다.')
+    throw new Error('고객아이디(아이디/ID/이메일 등 "메일"·"아이디"가 들어간 헤더) 컬럼을 찾을 수 없습니다.')
+  }
 
   const entries: HectoCoinRosterEntry[] = []
   const skippedRows: string[] = []
